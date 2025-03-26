@@ -4,12 +4,24 @@
 const { Pool } = require('pg');
 const dotenv = require('dotenv');
 
-// Load environment variables from .env file
+// Load environment variables from .env file (for local development)
 dotenv.config();
+
+/**
+ * Determine SSL settings:
+ * - If NODE_ENV === 'production', we often need { rejectUnauthorized: false }
+ *   for Render’s external database connection.
+ * - Otherwise, we can disable SSL locally.
+ */
+const sslConfig =
+  process.env.NODE_ENV === 'production'
+    ? { rejectUnauthorized: false }
+    : false;
 
 // Create a new PostgreSQL pool using the connection string from the environment
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL, // Make sure DATABASE_URL is defined in your .env file
+  connectionString: process.env.DATABASE_URL,
+  ssl: sslConfig,
 });
 
 /**
