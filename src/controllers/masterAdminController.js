@@ -14,7 +14,7 @@ const { generateUniqueID } = require('../utils/uniqueId'); // Helper to generate
  */
 const registerMasterAdmin = async (req, res, next) => {
   try {
-    const { secretKey, first_name, last_name, gender, email, password, phone, address, bank_id, custom_bank_name, account_number, account_name } = req.body;
+    const { secretKey, first_name, last_name, gender, email, password, address, bank_id, custom_bank_name, account_number, account_name } = req.body;
 
     // Check the secret key against the environment variable.
     if (secretKey !== process.env.MASTER_ADMIN_SECRET_KEY) {
