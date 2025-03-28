@@ -48,13 +48,16 @@ const salesReport = async (req, res, next) => {
 };
 
 /**
- * dailySalesProfitAnalysis - Computes daily sales totals and estimates profit.
- * For this demo, we assume profit is 70% of the total sales.
+ * dailySalesProfitAnalysis - Computes daily profit using the formula:
+ * Gross Profit = SUM(dealer_cost_price) - SUM(marketer_selling_price)
+ * (Assumes orders table contains dealer_cost_price and marketer_selling_price columns)
  */
 const dailySalesProfitAnalysis = async (req, res, next) => {
   try {
     const query = `
-      SELECT date_trunc('day', created_at) as day, SUM(price) as total_sales 
+      SELECT date_trunc('day', created_at) as day, 
+             COALESCE(SUM(dealer_cost_price), 0) as total_dealer_cost, 
+             COALESCE(SUM(marketer_selling_price), 0) as total_marketer_selling
       FROM orders 
       WHERE status = 'released_confirmed'
       GROUP BY day
@@ -63,12 +66,53 @@ const dailySalesProfitAnalysis = async (req, res, next) => {
     const result = await pool.query(query);
     const profitData = result.rows.map(row => ({
       day: row.day,
-      totalSales: row.total_sales,
-      profit: row.total_sales * 0.7  // assuming a 70% profit margin
+      totalDealerCost: row.total_dealer_cost,
+      totalMarketerSelling: row.total_marketer_selling,
+      grossProfit: row.total_dealer_cost - row.total_marketer_selling
     }));
     return res.status(200).json({
-      message: "Daily sales profit analysis retrieved successfully.",
+      message: "Daily profit report retrieved successfully.",
       data: profitData,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * getDeviceSalesReport - Retrieves a report on device sales, aggregated by device category
+ * and grouped over a specified interval (daily, weekly, monthly, or yearly).
+ * Query parameter: interval (defaults to daily)
+ */
+const getDeviceSalesReport = async (req, res, next) => {
+  try {
+    const { interval } = req.query; // e.g., daily, weekly, monthly, yearly
+    let groupByClause;
+    switch (interval) {
+      case "weekly":
+        groupByClause = "date_trunc('week', created_at)";
+        break;
+      case "monthly":
+        groupByClause = "date_trunc('month', created_at)";
+        break;
+      case "yearly":
+        groupByClause = "date_trunc('year', created_at)";
+        break;
+      case "daily":
+      default:
+        groupByClause = "date_trunc('day', created_at)";
+    }
+    const query = `
+      SELECT ${groupByClause} AS period, device_category, COUNT(*) AS devices_sold
+      FROM orders
+      WHERE status = 'released_confirmed'
+      GROUP BY period, device_category
+      ORDER BY period DESC
+    `;
+    const result = await pool.query(query);
+    return res.status(200).json({
+      message: "Device sales report retrieved successfully.",
+      data: result.rows,
     });
   } catch (error) {
     next(error);
@@ -134,6 +178,7 @@ const generalExpenses = async (req, res, next) => {
     next(error);
   }
 };
+
 /**
  * getSalesReport - Returns aggregated sales data.
  * This example aggregates orders by day, week, and month.
@@ -173,6 +218,7 @@ module.exports = {
   calculatorModule,
   salesReport,
   dailySalesProfitAnalysis,
+  getDeviceSalesReport,
   dealersPaymentHistory,
   marketersPaymentHistory,
   generalExpenses,

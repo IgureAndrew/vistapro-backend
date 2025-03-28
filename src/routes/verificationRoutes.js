@@ -1,14 +1,20 @@
-// src/routes/marketerVerificationRoutes.js
-const express = require('express');
+// routes/verificationRoutes.js
+const express = require("express");
 const router = express.Router();
-const { verifyToken } = require('../middlewares/authMiddleware');
-const { verifyRole } = require('../middlewares/roleMiddleware');
-const { getVerificationStatus, submitVerification } = require('../controllers/marketerVerificationController');
+const {
+  submitVerification,
+  getPendingVerifications,
+  approveVerification
+} = require("../controllers/verificationController");
 
-// Get current verification status (for the logged-in marketer)
-router.get('/', verifyToken, verifyRole(['Marketer']), getVerificationStatus);
+// Route for marketers to submit their verification forms.
+router.post("/submit", submitVerification);
 
-// Submit verification details (e.g., agreement signed, bank details)
-router.post('/', verifyToken, verifyRole(['Marketer']), submitVerification);
+// Route for the Master Admin to fetch pending verifications.
+router.get("/pending", getPendingVerifications);
+
+// Route for the Master Admin to approve a specific marketer's verification.
+// The marketer_id is passed as a route parameter.
+router.patch("/approve/:marketer_id", approveVerification);
 
 module.exports = router;

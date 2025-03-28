@@ -28,12 +28,27 @@ if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
 
-// Configure Multer storage settings.
+// Configure Multer storage settings with a file filter for images.
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadDir),
-  filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname),
+  destination: (req, file, cb) => {
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    cb(null, Date.now() + '-' + file.originalname);
+  },
 });
-const upload = multer({ storage });
+
+const upload = multer({
+  storage,
+  limits: { fileSize: 1024 * 1024 * 5 }, // 5 MB
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith("image/")) {
+      cb(null, true);
+    } else {
+      cb(new Error("Only image files are allowed."), false);
+    }
+  }
+});
 
 // Routes for Master Admin
 
@@ -58,7 +73,6 @@ router.patch('/users/:id/lock', verifyToken, verifyRole(['MasterAdmin']), lockUs
 router.patch('/users/:id/unlock', verifyToken, verifyRole(['MasterAdmin']), unlockUser);
 
 // PATCH endpoint to assign a marketer to an admin.
-// URL: /api/master-admin/marketers/:marketerId/assign
 router.patch(
   '/marketers/:marketerId/assign',
   verifyToken,
@@ -73,5 +87,11 @@ router.post(
   verifyRole(['MasterAdmin']),
   registerSuperAdmin
 );
+
+// Error handling middleware
+router.use((err, req, res, next) => {
+  console.error(err);
+  res.status(500).send({ message: 'Internal Server Error' });
+});
 
 module.exports = router;

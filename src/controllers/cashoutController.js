@@ -1,11 +1,16 @@
 // src/controllers/cashoutController.js
-// Controller functions for processing cash outs
+// Controller functions for processing cash outs based on commission rules
 
 const { pool } = require('../config/database');
 
 /**
  * processWeeklyCashout - Processes weekly cash out for a marketer.
- * Calculates 40% of the unprocessed incentive amount for the given week.
+ * Calculates the total commission for all unprocessed orders for the given week,
+ * where commission is:
+ *   - N15,000 for iPhone sales,
+ *   - N10,000 for all other (Android) device sales.
+ * 40% of the total commission is withdrawable immediately.
+ * After processing, marks those orders as commission_processed.
  * Expects marketerId and weekStartDate (YYYY-MM-DD) in req.body.
  */
 const processWeeklyCashout = async (req, res, next) => {
@@ -15,25 +20,35 @@ const processWeeklyCashout = async (req, res, next) => {
       return res.status(400).json({ message: 'marketerId and weekStartDate are required.' });
     }
 
-    // Calculate the total unprocessed incentive for the week for the marketer.
-    const incentiveQuery = `
-      SELECT COALESCE(SUM(incentive_amount), 0) AS total_incentive
-      FROM marketer_incentives
-      WHERE marketer_id = $1 AND week_start_date = $2 AND processed = false;
+    // Calculate total commission for the week from orders that are not yet processed
+    const commissionQuery = `
+      SELECT COALESCE(SUM(
+        CASE 
+          WHEN lower(device_category) = 'iphone' THEN 15000
+          ELSE 10000
+        END
+      ), 0) AS total_commission
+      FROM orders
+      WHERE marketer_id = $1 
+        AND week_start_date = $2 
+        AND status = 'released_confirmed'
+        AND commission_processed = false
     `;
-    const incentiveResult = await pool.query(incentiveQuery, [marketerId, weekStartDate]);
-    const totalIncentive = parseFloat(incentiveResult.rows[0].total_incentive);
-    const cashoutAmount = totalIncentive * 0.4;
+    const commissionResult = await pool.query(commissionQuery, [marketerId, weekStartDate]);
+    const totalCommission = parseFloat(commissionResult.rows[0].total_commission);
+    const cashoutAmount = totalCommission * 0.4;
 
-    // Mark these incentives as processed.
+    // Mark these orders as processed for commission
     const updateQuery = `
-      UPDATE marketer_incentives
-      SET processed = true
-      WHERE marketer_id = $1 AND week_start_date = $2 AND processed = false;
+      UPDATE orders
+      SET commission_processed = true
+      WHERE marketer_id = $1 
+        AND week_start_date = $2 
+        AND commission_processed = false
     `;
     await pool.query(updateQuery, [marketerId, weekStartDate]);
 
-    // Record the cashout in the cashouts table.
+    // Record the weekly cashout in the cashouts table
     const insertCashoutQuery = `
       INSERT INTO cashouts (marketer_id, type, amount, processed_at)
       VALUES ($1, 'weekly', $2, NOW())
@@ -52,9 +67,12 @@ const processWeeklyCashout = async (req, res, next) => {
 
 /**
  * processMonthlyCashout - Processes monthly cash out for a marketer.
- * Calculates monthly cash out as:
- *   - 100% of the incentive for the last week of the month, plus
- *   - 40% of the incentives for all previous weeks in the month.
+ * For the given month (format 'YYYY-MM'), calculates the commission as follows:
+ *   - For every week except the last of the month: 40% of the commission
+ *   - For the last week: 100% of the commission
+ * Commission is based on:
+ *   - N15,000 per iPhone sale and N10,000 per Android sale.
+ * After calculation, all unprocessed orders for that month are marked as processed.
  * Expects marketerId and month (format 'YYYY-MM') in req.body.
  */
 const processMonthlyCashout = async (req, res, next) => {
@@ -64,38 +82,48 @@ const processMonthlyCashout = async (req, res, next) => {
       return res.status(400).json({ message: 'marketerId and month are required.' });
     }
 
-    // Get all unprocessed incentives for the given month.
-    const incentiveQuery = `
-      SELECT week_start_date, incentive_amount
-      FROM marketer_incentives
-      WHERE marketer_id = $1 AND to_char(week_start_date, 'YYYY-MM') = $2 AND processed = false;
+    // Retrieve all unprocessed orders for the given marketer and month, aggregated by week_start_date
+    const commissionQuery = `
+      SELECT week_start_date,
+             COALESCE(SUM(
+               CASE 
+                 WHEN lower(device_category) = 'iphone' THEN 15000
+                 ELSE 10000
+               END
+             ), 0) AS total_commission
+      FROM orders
+      WHERE marketer_id = $1
+        AND to_char(week_start_date, 'YYYY-MM') = $2
+        AND status = 'released_confirmed'
+        AND commission_processed = false
+      GROUP BY week_start_date
+      ORDER BY week_start_date ASC
     `;
-    const incentiveResult = await pool.query(incentiveQuery, [marketerId, month]);
-    const incentives = incentiveResult.rows;
-    if (incentives.length === 0) {
-      return res.status(404).json({ message: 'No unprocessed incentives found for the specified month.' });
+    const commissionResult = await pool.query(commissionQuery, [marketerId, month]);
+    const rows = commissionResult.rows;
+    if (rows.length === 0) {
+      return res.status(404).json({ message: 'No unprocessed commissions found for the specified month.' });
     }
 
-    // Sort incentives by week_start_date to determine the last week.
-    incentives.sort((a, b) => new Date(a.week_start_date) - new Date(b.week_start_date));
-    const lastWeek = incentives[incentives.length - 1];
     let cashoutAmount = 0;
-    // For previous weeks, apply 40% of incentive.
-    for (let i = 0; i < incentives.length - 1; i++) {
-      cashoutAmount += parseFloat(incentives[i].incentive_amount) * 0.4;
+    // Apply 40% commission for all weeks except the last week of the month
+    for (let i = 0; i < rows.length - 1; i++) {
+      cashoutAmount += parseFloat(rows[i].total_commission) * 0.4;
     }
-    // For the last week, apply 100% of incentive.
-    cashoutAmount += parseFloat(lastWeek.incentive_amount);
+    // For the last week, apply 100% commission (i.e. withhold until approved)
+    cashoutAmount += parseFloat(rows[rows.length - 1].total_commission);
 
-    // Mark all incentives for the month as processed.
+    // Mark all orders for the month as processed for commission
     const updateQuery = `
-      UPDATE marketer_incentives
-      SET processed = true
-      WHERE marketer_id = $1 AND to_char(week_start_date, 'YYYY-MM') = $2 AND processed = false;
+      UPDATE orders
+      SET commission_processed = true
+      WHERE marketer_id = $1
+        AND to_char(week_start_date, 'YYYY-MM') = $2
+        AND commission_processed = false
     `;
     await pool.query(updateQuery, [marketerId, month]);
 
-    // Record the cashout in the cashouts table.
+    // Record the monthly cashout in the cashouts table
     const insertCashoutQuery = `
       INSERT INTO cashouts (marketer_id, type, amount, processed_at)
       VALUES ($1, 'monthly', $2, NOW())
