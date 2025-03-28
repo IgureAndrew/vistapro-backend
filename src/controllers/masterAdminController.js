@@ -8,15 +8,27 @@ const { generateUniqueID } = require('../utils/uniqueId'); // Helper to generate
 /**
  * registerMasterAdmin - Registers a new Master Admin using a secret key.
  * Expects in req.body:
- *   - secretKey, first_name, last_name, gender, email, password, phone, address, bank_id or custom_bank_name, account_number, account_name
+ *   - secretKey, first_name, last_name, gender, email, password, address, bank_id or custom_bank_name, account_number, account_name
  *
  * The password must be at least 12 alphanumeric characters.
  */
 const registerMasterAdmin = async (req, res, next) => {
   try {
-    const { secretKey, first_name, last_name, gender, email, password, address, bank_id, custom_bank_name, account_number, account_name } = req.body;
+    const { 
+      secretKey, 
+      first_name, 
+      last_name, 
+      gender, 
+      email, 
+      password, 
+      address, 
+      bank_id, 
+      custom_bank_name, 
+      account_number, 
+      account_name 
+    } = req.body;
 
-    // Check the secret key against the environment variable.
+    // Check the secret key
     if (secretKey !== process.env.MASTER_ADMIN_SECRET_KEY) {
       return res.status(403).json({ message: "Invalid secret key." });
     }
@@ -44,7 +56,6 @@ const registerMasterAdmin = async (req, res, next) => {
       gender,
       email,
       password: hashedPassword,
-      phone,
       address,
       bank_id,
       custom_bank_name,
