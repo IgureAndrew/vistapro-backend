@@ -6,72 +6,71 @@ const { createUser } = require('../models/userModel');
 const { generateUniqueID } = require('../utils/uniqueId'); // Helper to generate unique IDs
 
 /**
- * registerMasterAdmin - Registers a new Master Admin using a secret key.
- * Expects in req.body:
- *   - secretKey, first_name, last_name, gender, email, password, address, bank_id or custom_bank_name, account_number, account_name
- *
- * The password must be at least 12 alphanumeric characters.
- */
+* registerMasterAdmin - Registers a new Master Admin using a secret key.
+* Expects in req.body:
+*   - secretKey, first_name, last_name, gender, email, password, bank_id or custom_bank_name, account_number, account_name
+*
+* The password must be at least 12 alphanumeric characters.
+**/
 const registerMasterAdmin = async (req, res, next) => {
-  try {
-    const { 
-      secretKey, 
-      first_name, 
-      last_name, 
-      gender, 
-      email, 
-      password, 
-      address, 
-      bank_id, 
-      custom_bank_name, 
-      account_number, 
-      account_name 
-    } = req.body;
+ try {
+   const { 
+     secretKey, 
+     first_name, 
+     last_name, 
+     gender, 
+     email, 
+     password, 
+     bank_id, 
+     custom_bank_name, 
+     account_number, 
+     account_name 
+   } = req.body;
 
-    // Check the secret key
-    if (secretKey !== process.env.MASTER_ADMIN_SECRET_KEY) {
-      return res.status(403).json({ message: "Invalid secret key." });
-    }
+   // Check the secret key
+   if (secretKey !== process.env.MASTER_ADMIN_SECRET_KEY) {
+     return res.status(403).json({ message: "Invalid secret key." });
+   }
 
-    // Validate password: Must be at least 12 alphanumeric characters.
-    const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d]{12,}$/;
-    if (!passwordRegex.test(password)) {
-      return res.status(400).json({
-        message: "Password must be at least 12 alphanumeric characters (letters and numbers only)."
-      });
-    }
+   // Validate password: Must be at least 12 alphanumeric characters.
+   const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d]{12,}$/;
+   if (!passwordRegex.test(password)) {
+     return res.status(400).json({
+       message: "Password must be at least 12 alphanumeric characters (letters and numbers only)."
+     });
+   }
 
-    // Hash the password using bcrypt.
-    const saltRounds = 10;
-    const hashedPassword = await bcrypt.hash(password, saltRounds);
+   // Hash the password using bcrypt.
+   const saltRounds = 10;
+   const hashedPassword = await bcrypt.hash(password, saltRounds);
 
-    // Generate a unique ID for the user.
-    const unique_id = generateUniqueID("USER");
+   // Generate a unique ID for the user.
+   const unique_id = generateUniqueID("USER");
 
-    // Create the new Master Admin record.
-    const newUser = await createUser({
-      unique_id,
-      first_name,
-      last_name,
-      gender,
-      email,
-      password: hashedPassword,
-      address,
-      bank_id,
-      custom_bank_name,
-      account_number,
-      account_name,
-      role: 'MasterAdmin'
-    });
+   // Create the new Master Admin record without address.
+   const newUser = await createUser({
+     unique_id,
+     first_name,
+     last_name,
+     gender,
+     email,
+     password: hashedPassword,
+     bank_id,
+     custom_bank_name,
+     account_number,
+     account_name,
+     role: 'MasterAdmin'
+   });
 
-    return res.status(201).json({
-      message: "Master Admin registered successfully.",
-      user: newUser,
-    });
-  } catch (error) {
-    next(error);
-  }
+   return res.status(201).json({
+     message: "Master Admin registered successfully.",
+     user: newUser,
+   });
+ } catch (error) {
+   next(error);
+ }
 };
+
 
 /**
  * registerSuperAdmin - Registers a new Super Admin.

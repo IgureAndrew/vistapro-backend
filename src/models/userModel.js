@@ -4,7 +4,8 @@ const { v4: uuidv4 } = require("uuid");
 
 /**
  * createUser - Inserts a new user into the "users" table.
- * Expects in userData: first_name, last_name, email, password, role, (address, bank details, gender, etc.)
+ * Expects in userData: first_name, last_name, email, password, role, (gender, bank_id, custom_bank_name, account_number, account_name)
+ * Ensure your "users" table has columns for first_name, last_name, email, password, role, gender, bank_id, custom_bank_name, account_number, account_name, created_at.
  */
 const createUser = async (userData) => {
   const {
@@ -13,13 +14,11 @@ const createUser = async (userData) => {
     email,
     password,
     role,
-    // Optional fields
     gender,
-    address,
     bank_id,
     custom_bank_name,
     account_number,
-    account_name
+    account_name,
   } = userData;
   // Generate a unique ID
   const uniqueId = uuidv4();
@@ -32,14 +31,13 @@ const createUser = async (userData) => {
       password, 
       role, 
       gender,
-      address,
       bank_id,
       custom_bank_name,
       account_number,
       account_name,
       created_at
     )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
     RETURNING *
   `;
   const values = [
@@ -50,11 +48,10 @@ const createUser = async (userData) => {
     password,
     role,
     gender,
-    address,
     bank_id,
     custom_bank_name,
     account_number,
-    account_name
+    account_name,
   ];
   const result = await pool.query(query, values);
   return result.rows[0];
