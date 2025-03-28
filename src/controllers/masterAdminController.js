@@ -6,83 +6,107 @@ const { createUser } = require('../models/userModel');
 const { generateUniqueID } = require('../utils/uniqueId'); // Helper to generate unique IDs
 
 /**
-* registerMasterAdmin - Registers a new Master Admin using a secret key.
-* Expects in req.body:
-*   - secretKey, first_name, last_name, gender, email, password, bank_id or custom_bank_name, account_number, account_name
-*
-* The password must be at least 12 alphanumeric characters.
-**/
+ * registerMasterAdmin - Registers a new Master Admin using a secret key.
+ * Expects in req.body:
+ *   - secretKey, first_name, last_name, gender, email, password,
+ *     bank_id or custom_bank_name, account_number, account_name
+ *
+ * The password must be at least 12 alphanumeric characters.
+ */
 const registerMasterAdmin = async (req, res, next) => {
- try {
-   const { 
-     secretKey, 
-     first_name, 
-     last_name, 
-     gender, 
-     email, 
-     password, 
-     bank_id, 
-     custom_bank_name, 
-     account_number, 
-     account_name 
-   } = req.body;
+  try {
+    const {
+      secretKey,
+      first_name,
+      last_name,
+      gender,
+      email,
+      password,
+      bank_id,
+      custom_bank_name,
+      account_number,
+      account_name,
+      // phone and address are optional; remove from required checks
+      phone,
+      address
+    } = req.body;
 
-   // Check the secret key
-   if (secretKey !== process.env.MASTER_ADMIN_SECRET_KEY) {
-     return res.status(403).json({ message: "Invalid secret key." });
-   }
+    // Check the secret key
+    if (secretKey !== process.env.MASTER_ADMIN_SECRET_KEY) {
+      return res.status(403).json({ message: "Invalid secret key." });
+    }
 
-   // Validate password: Must be at least 12 alphanumeric characters.
-   const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d]{12,}$/;
-   if (!passwordRegex.test(password)) {
-     return res.status(400).json({
-       message: "Password must be at least 12 alphanumeric characters (letters and numbers only)."
-     });
-   }
+    // Validate password: Must be at least 12 alphanumeric characters.
+    const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d]{12,}$/;
+    if (!passwordRegex.test(password)) {
+      return res.status(400).json({
+        message: "Password must be at least 12 alphanumeric characters (letters and numbers only)."
+      });
+    }
 
-   // Hash the password using bcrypt.
-   const saltRounds = 10;
-   const hashedPassword = await bcrypt.hash(password, saltRounds);
+    // Hash the password using bcrypt.
+    const saltRounds = 10;
+    const hashedPassword = await bcrypt.hash(password, saltRounds);
 
-   // Generate a unique ID for the user.
-   const unique_id = generateUniqueID("USER");
+    // Generate a unique ID for the user.
+    const unique_id = generateUniqueID("USER");
 
-   // Create the new Master Admin record without address.
-   const newUser = await createUser({
-     unique_id,
-     first_name,
-     last_name,
-     gender,
-     email,
-     password: hashedPassword,
-     bank_id,
-     custom_bank_name,
-     account_number,
-     account_name,
-     role: 'MasterAdmin'
-   });
+    // Create the new Master Admin record
+    const newUser = await createUser({
+      unique_id,
+      first_name,
+      last_name,
+      gender,
+      email,
+      password: hashedPassword,
+      bank_id,
+      custom_bank_name,
+      account_number,
+      account_name,
+      // phone and address are optional fields
+      phone,
+      address,
+      role: 'MasterAdmin'
+    });
 
-   return res.status(201).json({
-     message: "Master Admin registered successfully.",
-     user: newUser,
-   });
- } catch (error) {
-   next(error);
- }
+    return res.status(201).json({
+      message: "Master Admin registered successfully.",
+      user: newUser,
+    });
+  } catch (error) {
+    next(error);
+  }
 };
-
 
 /**
  * registerSuperAdmin - Registers a new Super Admin.
  * Only a Master Admin can perform this action.
  * Expects in req.body:
- *   - first_name, last_name, gender, email, password, phone, bank_id or custom_bank_name, account_number, account_name
+ *   - first_name, last_name, gender, email, password,
+ *     bank_id or custom_bank_name, account_number, account_name
+ * phone is optional now
  */
 const registerSuperAdmin = async (req, res, next) => {
   try {
-    const { first_name, last_name, gender, email, password, phone, bank_id, custom_bank_name, account_number, account_name } = req.body;
+    const {
+      first_name,
+      last_name,
+      gender,
+      email,
+      password,
+      // phone is optional
+      phone,
+      bank_id,
+      custom_bank_name,
+      account_number,
+      account_name
+    } = req.body;
+
+    // Only require first_name, last_name, gender, email, password
     if (!first_name || !last_name || !gender || !email || !password) {
-      return res.status(400).json({ message: "First name, last name, gender, email, and password are required." });
+      return res.status(400).json({
+        message: "First name, last name, gender, email, and password are required."
+      });
     }
 
     const saltRounds = 10;
@@ -96,6 +120,7 @@ const registerSuperAdmin = async (req, res, next) => {
       gender,
       email,
       password: hashedPassword,
+      // phone is optional
       phone,
       bank_id,
       custom_bank_name,
@@ -156,10 +181,7 @@ const updateProfile = async (req, res, next) => {
 
 /**
  * addUser - Allows Master Admin to create a new user (SuperAdmin, Admin, Marketer, or Dealer).
- * For SuperAdmin, Admin, and Marketer, expects:
- *   - first_name, last_name, gender, email, password, phone, bank_id (or custom_bank_name), account_number, account_name, role
- * For Dealer, expects:
- *   - business_name, business_address, (optionally CAC document via file upload), phone, bank_id (or custom_bank_name), account_number, account_name, role = "Dealer"
+ * phone is optional now; address is not used at all
  */
 const addUser = async (req, res, next) => {
   try {
@@ -170,10 +192,22 @@ const addUser = async (req, res, next) => {
     let userData = {};
 
     if (role === "Dealer") {
-      const { password, phone, bank_id, custom_bank_name, account_number, account_name, business_name, business_address } = req.body;
-      if (!business_name || !business_address || !phone || !account_number || !account_name || !password) {
+      const {
+        password,
+        phone, // optional
+        bank_id,
+        custom_bank_name,
+        account_number,
+        account_name,
+        business_name,
+        business_address
+      } = req.body;
+
+      // Only these fields are strictly required for dealers
+      if (!business_name || !business_address || !account_number || !account_name || !password) {
         return res.status(400).json({ message: "All dealer fields are required." });
       }
+
       hashedPassword = await bcrypt.hash(password, saltRounds);
       userData = {
         unique_id,
@@ -182,7 +216,7 @@ const addUser = async (req, res, next) => {
         gender: null,
         email: null,
         password: hashedPassword,
-        phone,
+        phone, // optional
         bank_id,
         custom_bank_name,
         account_number,
@@ -191,12 +225,26 @@ const addUser = async (req, res, next) => {
         business_name,
         business_address
       };
-      // File upload for CAC document should be handled separately (e.g., using req.file)
     } else {
-      const { first_name, last_name, gender, email, password, phone, bank_id, custom_bank_name, account_number, account_name } = req.body;
-      if (!first_name || !last_name || !gender || !email || !password || !phone || !account_number || !account_name) {
+      // For SuperAdmin, Admin, Marketer
+      const {
+        first_name,
+        last_name,
+        gender,
+        email,
+        password,
+        phone, // optional
+        bank_id,
+        custom_bank_name,
+        account_number,
+        account_name
+      } = req.body;
+
+      // Only these fields are strictly required for non-dealer roles
+      if (!first_name || !last_name || !gender || !email || !password || !account_number || !account_name) {
         return res.status(400).json({ message: "All required fields must be provided." });
       }
+
       hashedPassword = await bcrypt.hash(password, saltRounds);
       userData = {
         unique_id,
@@ -205,7 +253,7 @@ const addUser = async (req, res, next) => {
         gender,
         email,
         password: hashedPassword,
-        phone,
+        phone, // optional
         bank_id,
         custom_bank_name,
         account_number,
@@ -394,15 +442,15 @@ const assignMarketer = async (req, res, next) => {
   }
 };
 
-module.exports = { 
-  registerMasterAdmin, 
+module.exports = {
+  registerMasterAdmin,
   registerSuperAdmin,
-  updateProfile, 
-  addUser, 
-  updateUser, 
-  deleteUser, 
-  lockUser, 
+  updateProfile,
+  addUser,
+  updateUser,
+  deleteUser,
+  lockUser,
   unlockUser,
   getUsers,
-  assignMarketer 
+  assignMarketer
 };
