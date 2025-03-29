@@ -4,8 +4,8 @@ const { v4: uuidv4 } = require("uuid");
 
 /**
  * createUser - Inserts a new user into the "users" table.
- * Expects in userData: first_name, last_name, email, password, role, (gender, bank_id, custom_bank_name, account_number, account_name)
- * Ensure your "users" table has columns for first_name, last_name, email, password, role, gender, bank_id, custom_bank_name, account_number, account_name, created_at.
+ * Expects in userData: first_name, last_name, email, password, role, (gender, bank_name, account_number, account_name)
+ * Ensure your "users" table has columns for first_name, last_name, email, password, role, gender, bank_name, account_number, account_name, created_at.
  */
 const createUser = async (userData) => {
   const {
@@ -15,8 +15,7 @@ const createUser = async (userData) => {
     password,
     role,
     gender,
-    bank_id,
-    custom_bank_name,
+    bank_name,
     account_number,
     account_name,
   } = userData;
@@ -31,13 +30,12 @@ const createUser = async (userData) => {
       password, 
       role, 
       gender,
-      bank_id,
-      custom_bank_name,
+      bank_name,
       account_number,
       account_name,
       created_at
     )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
     RETURNING *
   `;
   const values = [
@@ -48,8 +46,7 @@ const createUser = async (userData) => {
     password,
     role,
     gender,
-    bank_id,
-    custom_bank_name,
+    bank_name,
     account_number,
     account_name,
   ];
