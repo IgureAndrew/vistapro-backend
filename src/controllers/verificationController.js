@@ -2,37 +2,98 @@
 const { pool } = require('../config/database');
 
 /**
- * submitVerification - Allows a marketer to submit their verification forms.
- * Expected req.body: { marketer_id, bio_data, guarantor_data, commitment_data }
- * All three forms must be filled before submission.
+ * submitBiodata - Marketer submits their biodata form.
+ * Expects in req.body: fields required by marketer_biodata table and marketer_id.
  */
-const submitVerification = async (req, res, next) => {
+const submitBiodata = async (req, res, next) => {
   try {
-    const { marketer_id, bio_data, guarantor_data, commitment_data } = req.body;
-    if (!marketer_id || !bio_data || !guarantor_data || !commitment_data) {
-      return res.status(400).json({ message: 'All verification forms are required.' });
-    }
-    
-    // Insert a new verification record or update if it already exists.
-    // Assumes a unique constraint on marketer_id in the verifications table.
+    const {
+      marketer_id,
+      name,
+      address,
+      phone,
+      religion,
+      date_of_birth,
+      marital_status,
+      state_of_origin,
+      state_of_residence,
+      mothers_maiden_name,
+      school_attended,
+      means_of_identification,
+      id_document_url,
+      last_place_of_work,
+      job_description,
+      reason_for_quitting,
+      medical_condition,
+      next_of_kin_name,
+      next_of_kin_phone,
+      next_of_kin_address,
+      next_of_kin_relationship,
+      bank_name,
+      account_name,
+      account_number,
+      passport_photo_url,
+    } = req.body;
+
+    // Insert data into marketer_biodata
     const query = `
-      INSERT INTO verifications 
-        (marketer_id, bio_data, guarantor_data, commitment_data, submitted_at, approved)
-      VALUES ($1, $2, $3, $4, NOW(), false)
-      ON CONFLICT (marketer_id) DO UPDATE
-        SET bio_data = EXCLUDED.bio_data,
-            guarantor_data = EXCLUDED.guarantor_data,
-            commitment_data = EXCLUDED.commitment_data,
-            submitted_at = NOW(),
-            approved = false
+      INSERT INTO marketer_biodata (
+        marketer_id, name, address, phone, religion, date_of_birth, marital_status,
+        state_of_origin, state_of_residence, mothers_maiden_name, school_attended,
+        means_of_identification, id_document_url, last_place_of_work, job_description,
+        reason_for_quitting, medical_condition, next_of_kin_name, next_of_kin_phone,
+        next_of_kin_address, next_of_kin_relationship, bank_name, account_name,
+        account_number, passport_photo_url, created_at, updated_at
+      )
+      VALUES (
+        $1, $2, $3, $4, $5, $6, $7,
+        $8, $9, $10, $11,
+        $12, $13, $14, $15,
+        $16, $17, $18, $19,
+        $20, $21, $22, $23,
+        $24, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+      )
       RETURNING *
     `;
-    const values = [marketer_id, bio_data, guarantor_data, commitment_data];
+    const values = [
+      marketer_id,
+      name,
+      address,
+      phone,
+      religion,
+      date_of_birth,
+      marital_status,
+      state_of_origin,
+      state_of_residence,
+      mothers_maiden_name,
+      school_attended,
+      means_of_identification,
+      id_document_url,
+      last_place_of_work,
+      job_description,
+      reason_for_quitting,
+      medical_condition,
+      next_of_kin_name,
+      next_of_kin_phone,
+      next_of_kin_address,
+      next_of_kin_relationship,
+      bank_name,
+      account_name,
+      account_number,
+      passport_photo_url,
+    ];
+
     const result = await pool.query(query, values);
-    
-    return res.status(200).json({
-      message: 'Verification forms submitted successfully.',
-      verification: result.rows[0],
+
+    // Update user's biodata flag (assumes you have such a column)
+    await pool.query(
+      "UPDATE users SET bio_submitted = true, updated_at = NOW() WHERE id = $1",
+      [marketer_id]
+    );
+
+    res.status(201).json({
+      message: "Biodata submitted successfully.",
+      biodata: result.rows[0],
     });
   } catch (error) {
     next(error);
@@ -40,55 +101,226 @@ const submitVerification = async (req, res, next) => {
 };
 
 /**
- * getPendingVerifications - Retrieves a list of marketers who have submitted all
- * verification forms but are not yet approved.
- * This is used by the Master Admin for review.
+ * submitGuarantor - Marketer submits their guarantor form.
+ * Expects in req.body: fields required by marketer_guarantor_form and marketer_id.
  */
-const getPendingVerifications = async (req, res, next) => {
+const submitGuarantor = async (req, res, next) => {
   try {
-    const query = `
-      SELECT v.*, m.name AS marketer_name, m.email AS marketer_email
-      FROM verifications v
-      JOIN marketers m ON v.marketer_id = m.id
-      WHERE v.bio_data IS NOT NULL
-        AND v.guarantor_data IS NOT NULL
-        AND v.commitment_data IS NOT NULL
-        AND v.approved = false
-      ORDER BY v.submitted_at DESC
-    `;
-    const result = await pool.query(query);
-    return res.status(200).json({
-      message: 'Pending verifications retrieved successfully.',
-      data: result.rows,
-    });
-  } catch (error) {
-    next(error);
-  }
-};
+    const {
+      marketer_id,
+      is_candidate_well_known,
+      relationship,
+      known_duration,
+      occupation,
+      id_document_url,
+      passport_photo_url,
+      signature_url,
+    } = req.body;
 
-/**
- * approveVerification - Allows the Master Admin to approve a marketer's verification.
- * Expects req.params: { marketer_id }.
- */
-const approveVerification = async (req, res, next) => {
-  try {
-    const { marketer_id } = req.params;
-    if (!marketer_id) {
-      return res.status(400).json({ message: 'marketer_id is required.' });
-    }
     const query = `
-      UPDATE verifications
-      SET approved = true, reviewed_at = NOW()
-      WHERE marketer_id = $1
+      INSERT INTO marketer_guarantor_form (
+        marketer_id, is_candidate_well_known, relationship, known_duration,
+        occupation, id_document_url, passport_photo_url, signature_url,
+        created_at, updated_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
       RETURNING *
     `;
-    const result = await pool.query(query, [marketer_id]);
-    if (result.rowCount === 0) {
-      return res.status(404).json({ message: 'Verification record not found.' });
+    const values = [
+      marketer_id,
+      is_candidate_well_known,
+      relationship,
+      known_duration,
+      occupation,
+      id_document_url,
+      passport_photo_url,
+      signature_url,
+    ];
+
+    const result = await pool.query(query, values);
+
+    // Update user's guarantor flag
+    await pool.query(
+      "UPDATE users SET guarantor_submitted = true, updated_at = NOW() WHERE id = $1",
+      [marketer_id]
+    );
+
+    res.status(201).json({
+      message: "Guarantor form submitted successfully.",
+      guarantor: result.rows[0],
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * submitCommitment - Marketer submits their commitment form.
+ * Expects in req.body: fields required by marketer_commitment_form and marketer_id.
+ */
+const submitCommitment = async (req, res, next) => {
+  try {
+    const {
+      marketer_id,
+      promise_accept_false_documents,
+      promise_not_request_irrelevant_info,
+      promise_not_charge_customer_fees,
+      promise_not_modify_contract_info,
+      promise_not_sell_unapproved_phones,
+      promise_not_make_unofficial_commitment,
+      promise_not_operate_customer_account,
+      promise_accept_fraud_firing,
+      promise_not_share_company_info,
+      promise_ensure_loan_recovery,
+      promise_abide_by_system,
+      direct_sales_rep_name,
+      direct_sales_rep_signature_url,
+      date_signed,
+    } = req.body;
+
+    const query = `
+      INSERT INTO marketer_commitment_form (
+        marketer_id, promise_accept_false_documents, promise_not_request_irrelevant_info,
+        promise_not_charge_customer_fees, promise_not_modify_contract_info,
+        promise_not_sell_unapproved_phones, promise_not_make_unofficial_commitment,
+        promise_not_operate_customer_account, promise_accept_fraud_firing,
+        promise_not_share_company_info, promise_ensure_loan_recovery, promise_abide_by_system,
+        direct_sales_rep_name, direct_sales_rep_signature_url, date_signed,
+        created_at, updated_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      RETURNING *
+    `;
+    const values = [
+      marketer_id,
+      promise_accept_false_documents,
+      promise_not_request_irrelevant_info,
+      promise_not_charge_customer_fees,
+      promise_not_modify_contract_info,
+      promise_not_sell_unapproved_phones,
+      promise_not_make_unofficial_commitment,
+      promise_not_operate_customer_account,
+      promise_accept_fraud_firing,
+      promise_not_share_company_info,
+      promise_ensure_loan_recovery,
+      promise_abide_by_system,
+      direct_sales_rep_name,
+      direct_sales_rep_signature_url,
+      date_signed,
+    ];
+
+    const result = await pool.query(query, values);
+
+    // Update user's commitment flag
+    await pool.query(
+      "UPDATE users SET commitment_submitted = true, updated_at = NOW() WHERE id = $1",
+      [marketer_id]
+    );
+
+    res.status(201).json({
+      message: "Commitment form submitted successfully.",
+      commitment: result.rows[0],
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * adminReview - Admin reviews the marketer's submitted forms.
+ * Expects in req.body:
+ *   - marketerId, and review decisions for each form (e.g., bioApproved, guarantorApproved, commitmentApproved)
+ */
+const adminReview = async (req, res, next) => {
+  try {
+    const { marketerId, bioApproved, guarantorApproved, commitmentApproved } = req.body;
+    if (!marketerId) {
+      return res.status(400).json({ message: "Marketer ID is required." });
     }
-    return res.status(200).json({
-      message: 'Verification approved successfully.',
-      verification: result.rows[0],
+
+    // Update user record with Admin review results
+    const query = `
+      UPDATE users
+      SET bio_submitted = $1,
+          guarantor_submitted = $2,
+          commitment_submitted = $3,
+          overall_verification_status = 'admin reviewed',
+          updated_at = NOW()
+      WHERE id = $4
+      RETURNING *
+    `;
+    const values = [
+      bioApproved ? true : false,
+      guarantorApproved ? true : false,
+      commitmentApproved ? true : false,
+      marketerId,
+    ];
+    const result = await pool.query(query, values);
+    res.status(200).json({
+      message: "Marketer reviewed by Admin.",
+      user: result.rows[0],
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * superadminVerify - SuperAdmin cross-checks the marketer's forms.
+ * Expects in req.body:
+ *   - marketerId and a decision (e.g., verified: true/false)
+ */
+const superadminVerify = async (req, res, next) => {
+  try {
+    const { marketerId, verified } = req.body;
+    if (!marketerId) {
+      return res.status(400).json({ message: "Marketer ID is required." });
+    }
+    const status = verified ? "superadmin verified" : "superadmin rejected";
+    const query = `
+      UPDATE users
+      SET overall_verification_status = $1,
+          updated_at = NOW()
+      WHERE id = $2
+      RETURNING *
+    `;
+    const values = [status, marketerId];
+    const result = await pool.query(query, values);
+    res.status(200).json({
+      message: "Marketer verified by SuperAdmin.",
+      user: result.rows[0],
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * masterApprove - Master Admin gives final approval for the marketer.
+ * Expects in req.body:
+ *   - marketerId
+ */
+const masterApprove = async (req, res, next) => {
+  try {
+    const { marketerId } = req.body;
+    if (!marketerId) {
+      return res.status(400).json({ message: "Marketer ID is required." });
+    }
+    const query = `
+      UPDATE users
+      SET overall_verification_status = 'approved',
+          account_status = 'active',
+          updated_at = NOW()
+      WHERE id = $1
+      RETURNING *
+    `;
+    const result = await pool.query(query, [marketerId]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: "Marketer not found." });
+    }
+    res.status(200).json({
+      message: "Marketer final verification approved.",
+      user: result.rows[0],
     });
   } catch (error) {
     next(error);
@@ -96,7 +328,10 @@ const approveVerification = async (req, res, next) => {
 };
 
 module.exports = {
-  submitVerification,
-  getPendingVerifications,
-  approveVerification,
+  submitBiodata,
+  submitGuarantor,
+  submitCommitment,
+  adminReview,
+  superadminVerify,
+  masterApprove,
 };

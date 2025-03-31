@@ -1,20 +1,29 @@
-// routes/verificationRoutes.js
+// src/routes/verificationRoutes.js
 const express = require("express");
 const router = express.Router();
 const {
-  submitVerification,
-  getPendingVerifications,
-  approveVerification
+  submitBiodata,
+  submitGuarantor,
+  submitCommitment,
+  adminReview,
+  superadminVerify,
+  masterApprove,
 } = require("../controllers/verificationController");
+const { verifyToken } = require("../middlewares/authMiddleware");
+const { verifyRole } = require("../middlewares/roleMiddleware");
 
-// Route for marketers to submit their verification forms.
-router.post("/submit", submitVerification);
+// Marketer submits forms
+router.post("/biodata", verifyToken, submitBiodata);
+router.post("/guarantor", verifyToken, submitGuarantor);
+router.post("/commitment", verifyToken, submitCommitment);
 
-// Route for the Master Admin to fetch pending verifications.
-router.get("/pending", getPendingVerifications);
+// Admin review endpoint (only Admins can review)
+router.patch("/admin-review", verifyToken, verifyRole(["Admin"]), adminReview);
 
-// Route for the Master Admin to approve a specific marketer's verification.
-// The marketer_id is passed as a route parameter.
-router.patch("/approve/:marketer_id", approveVerification);
+// SuperAdmin verification endpoint (only SuperAdmins can verify)
+router.patch("/superadmin-verify", verifyToken, verifyRole(["SuperAdmin"]), superadminVerify);
+
+// Master Admin final approval (only MasterAdmin)
+router.patch("/master-approve", verifyToken, verifyRole(["MasterAdmin"]), masterApprove);
 
 module.exports = router;
