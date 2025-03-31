@@ -9,21 +9,12 @@ const {
   superadminVerify,
   masterApprove,
 } = require("../controllers/verificationController");
-const { verifyToken } = require("../middlewares/authMiddleware");
-const { verifyRole } = require("../middlewares/roleMiddleware");
 
-// Marketer submits forms
-router.post("/biodata", verifyToken, submitBiodata);
-router.post("/guarantor", verifyToken, submitGuarantor);
-router.post("/commitment", verifyToken, submitCommitment);
-
-// Admin review endpoint (only Admins can review)
-router.patch("/admin-review", verifyToken, verifyRole(["Admin"]), adminReview);
-
-// SuperAdmin verification endpoint (only SuperAdmins can verify)
-router.patch("/superadmin-verify", verifyToken, verifyRole(["SuperAdmin"]), superadminVerify);
-
-// Master Admin final approval (only MasterAdmin)
-router.patch("/master-approve", verifyToken, verifyRole(["MasterAdmin"]), masterApprove);
+router.post("/biodata", submitBiodata);
+router.post("/guarantor", submitGuarantor);
+router.post("/commitment", submitCommitment);
+router.patch("/admin-review", adminReview);
+router.patch("/superadmin-verify", superadminVerify);
+router.patch("/master-approve", masterApprove);
 
 module.exports = router;

@@ -44,7 +44,7 @@ const adminRoutes = require('./routes/adminRoutes');
 const dealerRoutes = require('./routes/dealerRoutes');
 const dealerOrderRoutes = require('./routes/dealerOrderRoutes');
 const marketerRoutes = require('./routes/marketerRoutes');
-const marketerVerificationRoutes = require('./routes/marketerVerificationRoutes');
+const verificationRoutes = require("./routes/verificationRoutes");
 const marketerStockRoutes = require('./routes/marketerStockRoutes');
 const outletRoutes = require('./routes/outletRoutes');
 const productRoutes = require('./routes/productRoutes');
@@ -54,7 +54,7 @@ const profitReportRoutes = require('./routes/profitReportRoutes');
 const cashoutRoutes = require('./routes/cashoutRoutes');
 const performanceRoutes = require('./routes/performanceRoutes');
 const stockupdateRoutes = require('./routes/stockupdateRoutes');
-const verificationRoutes = require('./routes/verificationRoutes');
+
 
 const bankRoutes = require("./routes/bankRoutes");
 // Mount routes
@@ -64,8 +64,7 @@ app.use('/api/super-admin', superAdminRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/dealer', dealerRoutes);
 app.use('/api/dealer/orders', dealerOrderRoutes);
-app.use('/api/marketer', marketerRoutes);
-app.use('/api/marketer/verification', marketerVerificationRoutes);
+app.use('/api/marketer', marketerRoutes);;
 app.use('/api/marketer/stock-update', marketerStockRoutes);
 app.use('/api/outlet', outletRoutes);
 app.use('/api/product', productRoutes);
@@ -75,8 +74,8 @@ app.use('/api/profit-report', profitReportRoutes);
 app.use('/api/cashout', cashoutRoutes);
 app.use('/api/performance', performanceRoutes);
 app.use('/api/stock', stockupdateRoutes);
-app.use("/api/verification", verificationRoutes);
 app.use("/api/banks", bankRoutes);
+app.use("/api/verification", verificationRoutes);
 // Error handling middleware
 const errorHandler = require('./middlewares/errorHandler');
 app.use(errorHandler);

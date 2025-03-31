@@ -1,9 +1,10 @@
-// src/controllers/verificationController.js
-const { pool } = require('../config/database');
+// src/controllers/VerificationController.js
+const { pool } = require("../config/database");
 
 /**
- * submitBiodata - Marketer submits their biodata form.
- * Expects in req.body: fields required by marketer_biodata table and marketer_id.
+ * submitBiodata
+ * Inserts a new biodata record into the marketer_biodata table and updates the user's flag.
+ * Expects in req.body: all fields required by marketer_biodata and marketer_id.
  */
 const submitBiodata = async (req, res, next) => {
   try {
@@ -35,7 +36,6 @@ const submitBiodata = async (req, res, next) => {
       passport_photo_url,
     } = req.body;
 
-    // Insert data into marketer_biodata
     const query = `
       INSERT INTO marketer_biodata (
         marketer_id, name, address, phone, religion, date_of_birth, marital_status,
@@ -85,7 +85,7 @@ const submitBiodata = async (req, res, next) => {
 
     const result = await pool.query(query, values);
 
-    // Update user's biodata flag (assumes you have such a column)
+    // Update the user's biodata flag.
     await pool.query(
       "UPDATE users SET bio_submitted = true, updated_at = NOW() WHERE id = $1",
       [marketer_id]
@@ -101,8 +101,9 @@ const submitBiodata = async (req, res, next) => {
 };
 
 /**
- * submitGuarantor - Marketer submits their guarantor form.
- * Expects in req.body: fields required by marketer_guarantor_form and marketer_id.
+ * submitGuarantor
+ * Inserts a new guarantor record into the marketer_guarantor_form table and updates the user's flag.
+ * Expects in req.body: all fields required by marketer_guarantor_form and marketer_id.
  */
 const submitGuarantor = async (req, res, next) => {
   try {
@@ -139,7 +140,7 @@ const submitGuarantor = async (req, res, next) => {
 
     const result = await pool.query(query, values);
 
-    // Update user's guarantor flag
+    // Update the user's guarantor flag.
     await pool.query(
       "UPDATE users SET guarantor_submitted = true, updated_at = NOW() WHERE id = $1",
       [marketer_id]
@@ -155,8 +156,9 @@ const submitGuarantor = async (req, res, next) => {
 };
 
 /**
- * submitCommitment - Marketer submits their commitment form.
- * Expects in req.body: fields required by marketer_commitment_form and marketer_id.
+ * submitCommitment
+ * Inserts a new commitment record into the marketer_commitment_form table and updates the user's flag.
+ * Expects in req.body: all fields required by marketer_commitment_form and marketer_id.
  */
 const submitCommitment = async (req, res, next) => {
   try {
@@ -211,7 +213,7 @@ const submitCommitment = async (req, res, next) => {
 
     const result = await pool.query(query, values);
 
-    // Update user's commitment flag
+    // Update the user's commitment flag.
     await pool.query(
       "UPDATE users SET commitment_submitted = true, updated_at = NOW() WHERE id = $1",
       [marketer_id]
@@ -227,9 +229,9 @@ const submitCommitment = async (req, res, next) => {
 };
 
 /**
- * adminReview - Admin reviews the marketer's submitted forms.
- * Expects in req.body:
- *   - marketerId, and review decisions for each form (e.g., bioApproved, guarantorApproved, commitmentApproved)
+ * adminReview
+ * Allows the Admin to review a marketer's submitted forms.
+ * Expects in req.body: marketerId, bioApproved, guarantorApproved, commitmentApproved.
  */
 const adminReview = async (req, res, next) => {
   try {
@@ -237,8 +239,7 @@ const adminReview = async (req, res, next) => {
     if (!marketerId) {
       return res.status(400).json({ message: "Marketer ID is required." });
     }
-
-    // Update user record with Admin review results
+    // Update the user's verification review flags and set status to 'admin reviewed'
     const query = `
       UPDATE users
       SET bio_submitted = $1,
@@ -250,9 +251,9 @@ const adminReview = async (req, res, next) => {
       RETURNING *
     `;
     const values = [
-      bioApproved ? true : false,
-      guarantorApproved ? true : false,
-      commitmentApproved ? true : false,
+      !!bioApproved,
+      !!guarantorApproved,
+      !!commitmentApproved,
       marketerId,
     ];
     const result = await pool.query(query, values);
@@ -266,9 +267,9 @@ const adminReview = async (req, res, next) => {
 };
 
 /**
- * superadminVerify - SuperAdmin cross-checks the marketer's forms.
- * Expects in req.body:
- *   - marketerId and a decision (e.g., verified: true/false)
+ * superadminVerify
+ * Allows the SuperAdmin to cross-check the marketer's forms.
+ * Expects in req.body: marketerId and a boolean verified flag.
  */
 const superadminVerify = async (req, res, next) => {
   try {
@@ -296,9 +297,10 @@ const superadminVerify = async (req, res, next) => {
 };
 
 /**
- * masterApprove - Master Admin gives final approval for the marketer.
- * Expects in req.body:
- *   - marketerId
+ * masterApprove
+ * Allows the Master Admin to give final approval to a marketer.
+ * Expects in req.body: marketerId.
+ * Optionally, you could extend this to accept a decision (approved, pending, rejected).
  */
 const masterApprove = async (req, res, next) => {
   try {
