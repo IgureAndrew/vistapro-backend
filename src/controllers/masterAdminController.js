@@ -192,7 +192,7 @@ const updateProfile = async (req, res, next) => {
 /**
  * addUser - Allows Master Admin to create a new user (SuperAdmin, Admin, Marketer, or Dealer).
  * For non-dealers (SuperAdmin, Admin, Marketer): expects first_name, last_name, gender, email, password, bank_name, account_number, account_name, location.
- * For Dealer: expects email, business_name, business_address, password, bank_name, account_number, account_name, location.
+ * For Dealer: expects first_name, last_name, gender, email, business_name, business_address, password, bank_name, account_number, account_name, location.
  */
 const addUser = async (req, res, next) => {
   try {
@@ -204,6 +204,9 @@ const addUser = async (req, res, next) => {
 
     if (role === "Dealer") {
       const {
+        first_name,
+        last_name,
+        gender,
         email,
         password,
         bank_name,
@@ -214,8 +217,11 @@ const addUser = async (req, res, next) => {
         location
       } = req.body;
 
-      // Validate required fields for Dealer (including email)
+      // Validate required fields for Dealer (including first_name, last_name, gender, and email)
       if (
+        !first_name ||
+        !last_name ||
+        !gender ||
         !email ||
         !business_name ||
         !business_address ||
@@ -239,10 +245,10 @@ const addUser = async (req, res, next) => {
 
       userData = {
         unique_id,
-        first_name: null,
-        last_name: null,
-        gender: null,
-        email, // Email is now included
+        first_name,       // Now included for Dealer
+        last_name,        // Now included for Dealer
+        gender,           // Now included for Dealer
+        email,
         password: hashedPassword,
         bank_name,
         account_number,
