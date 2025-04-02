@@ -20,6 +20,9 @@ const {
   unlockUser,
   getUsers,
   assignMarketer,
+  assignMarketersToAdmin,     // New function for marketer assignment (single/multiple)
+  assignAdminToSuperAdmin,
+  assignAdminsToSuperAdmin,   // New function for multiple admin assignment
 } = require('../controllers/masterAdminController');
 
 // Define the uploads directory and ensure it exists.
@@ -80,12 +83,36 @@ router.patch(
   assignMarketer
 );
 
+// New route: Assign one or multiple marketers to an admin.
+router.post(
+  '/assign-marketers-to-admin',
+  verifyToken,
+  verifyRole(['MasterAdmin']),
+  assignMarketersToAdmin
+);
+
 // Protected route: Register a Super Admin (only accessible by Master Admin).
 router.post(
   '/register-super-admin',
   verifyToken,
   verifyRole(['MasterAdmin']),
   registerSuperAdmin
+);
+
+// Route to assign a single Admin to a Super Admin.
+router.patch(
+  '/assign-admin-to-superadmin',
+  verifyToken,
+  verifyRole(['MasterAdmin']),
+  assignAdminToSuperAdmin
+);
+
+// New route: Assign multiple Admins to a Super Admin.
+router.post(
+  '/assign-admins-to-superadmin',
+  verifyToken,
+  verifyRole(['MasterAdmin']),
+  assignAdminsToSuperAdmin
 );
 
 // Error handling middleware

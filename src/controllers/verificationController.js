@@ -296,6 +296,26 @@ const superadminVerify = async (req, res, next) => {
   }
 };
 
+const getSubmissions = async (req, res, next) => {
+  try {
+    // Fetch submissions from each table
+    const biodataResult = await pool.query("SELECT * FROM marketer_biodata ORDER BY created_at DESC");
+    const guarantorResult = await pool.query("SELECT * FROM marketer_guarantor_form ORDER BY created_at DESC");
+    const commitmentResult = await pool.query("SELECT * FROM marketer_commitment_form ORDER BY created_at DESC");
+
+    // Combine into one response object (you can adjust as needed)
+    const submissions = {
+      biodata: biodataResult.rows,
+      guarantor: guarantorResult.rows,
+      commitment: commitmentResult.rows,
+    };
+
+    res.status(200).json({ submissions });
+  } catch (error) {
+    next(error);
+  }
+};
+
 /**
  * masterApprove
  * Allows the Master Admin to give final approval to a marketer.
@@ -333,6 +353,7 @@ module.exports = {
   submitBiodata,
   submitGuarantor,
   submitCommitment,
+  getSubmissions,
   adminReview,
   superadminVerify,
   masterApprove,

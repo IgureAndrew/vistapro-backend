@@ -6,6 +6,7 @@ const {
   submitGuarantor,
   submitCommitment,
   adminReview,
+  getSubmissions,
   superadminVerify,
   masterApprove,
 } = require("../controllers/verificationController");
@@ -13,6 +14,7 @@ const {
 router.post("/biodata", submitBiodata);
 router.post("/guarantor", submitGuarantor);
 router.post("/commitment", submitCommitment);
+router.get("/submissions", getSubmissions);
 router.patch("/admin-review", adminReview);
 router.patch("/superadmin-verify", superadminVerify);
 router.patch("/master-approve", masterApprove);
