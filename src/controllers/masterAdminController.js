@@ -36,7 +36,6 @@ const registerMasterAdmin = async (req, res, next) => {
       !gender ||
       !email ||
       !password 
-      
     ) {
       return res.status(400).json({ message: "All required fields must be provided." });
     }
@@ -193,7 +192,7 @@ const updateProfile = async (req, res, next) => {
 /**
  * addUser - Allows Master Admin to create a new user (SuperAdmin, Admin, Marketer, or Dealer).
  * For non-dealers (SuperAdmin, Admin, Marketer): expects first_name, last_name, gender, email, password, bank_name, account_number, account_name, location.
- * For Dealer: expects business_name, business_address, password, bank_name, account_number, account_name, location.
+ * For Dealer: expects email, business_name, business_address, password, bank_name, account_number, account_name, location.
  */
 const addUser = async (req, res, next) => {
   try {
@@ -205,6 +204,7 @@ const addUser = async (req, res, next) => {
 
     if (role === "Dealer") {
       const {
+        email,
         password,
         bank_name,
         account_number,
@@ -214,7 +214,17 @@ const addUser = async (req, res, next) => {
         location
       } = req.body;
 
-      if (!business_name || !business_address || !password || !bank_name || !account_number || !account_name || !location) {
+      // Validate required fields for Dealer (including email)
+      if (
+        !email ||
+        !business_name ||
+        !business_address ||
+        !password ||
+        !bank_name ||
+        !account_number ||
+        !account_name ||
+        !location
+      ) {
         return res.status(400).json({ message: "All dealer fields are required." });
       }
 
@@ -232,7 +242,7 @@ const addUser = async (req, res, next) => {
         first_name: null,
         last_name: null,
         gender: null,
-        email: null,
+        email, // Email is now included
         password: hashedPassword,
         bank_name,
         account_number,
@@ -256,7 +266,17 @@ const addUser = async (req, res, next) => {
         location
       } = req.body;
 
-      if (!first_name || !last_name || !gender || !email || !password || !bank_name || !account_number || !account_name || !location) {
+      if (
+        !first_name ||
+        !last_name ||
+        !gender ||
+        !email ||
+        !password ||
+        !bank_name ||
+        !account_number ||
+        !account_name ||
+        !location
+      ) {
         return res.status(400).json({ message: "All required fields must be provided." });
       }
 
@@ -659,6 +679,6 @@ module.exports = {
   getUsers,
   assignMarketer,
   assignAdminToSuperAdmin,   // Single admin assignment function
-  assignAdminsToSuperAdmin,  // New function for multiple admin assignment
-  assignMarketersToAdmin     // New function for single/multiple marketer assignment to an Admin
+  assignAdminsToSuperAdmin,  // Function for multiple admin assignment
+  assignMarketersToAdmin     // Function for single/multiple marketer assignment to an Admin
 };
