@@ -1,4 +1,3 @@
-// src/controllers/masterAdminController.js
 const bcrypt = require('bcrypt');
 const { pool } = require('../config/database');
 const { createUser } = require('../models/userModel');
@@ -174,18 +173,15 @@ const addUser = async (req, res, next) => {
       ) {
         return res.status(400).json({ message: "All dealer fields are required." });
       }
-
       if (!/^\d{10}$/.test(account_number)) {
         return res.status(400).json({ message: "Bank account number must be exactly 10 digits." });
       }
-
       if (!passwordRegex.test(password)) {
         return res.status(400).json({
           message: "Password must be at least 12 characters with letters, numbers, and special characters."
         });
       }
-
-      // Validate that a registration certificate file is uploaded and is in PDF format.
+      // Validate registration certificate file:
       if (!req.file) {
         return res.status(400).json({ message: "Registration certificate (CAC) is required and must be a PDF." });
       }
@@ -195,7 +191,6 @@ const addUser = async (req, res, next) => {
       const registration_certificate_url = req.file.path;
 
       hashedPassword = await bcrypt.hash(password, saltRounds);
-
       userData = {
         unique_id,
         first_name,
@@ -232,19 +227,15 @@ const addUser = async (req, res, next) => {
       if (!first_name || !last_name || !gender || !email || !password || !bank_name || !account_number || !account_name || !location) {
         return res.status(400).json({ message: "All required fields must be provided." });
       }
-
       if (!/^\d{10}$/.test(account_number)) {
         return res.status(400).json({ message: "Account number must be exactly 10 digits." });
       }
-
       if (!passwordRegex.test(password)) {
         return res.status(400).json({
           message: "Password must be at least 12 characters with letters, numbers, and special characters."
         });
       }
-
       hashedPassword = await bcrypt.hash(password, saltRounds);
-
       userData = {
         unique_id,
         first_name,
@@ -396,7 +387,6 @@ const getUsers = async (req, res, next) => {
 
 /**
  * getUserSummary - Provides a summary of user activities.
- * For example, total users, counts by role, and count of locked users.
  */
 const getUserSummary = async (req, res, next) => {
   try {
@@ -572,7 +562,7 @@ module.exports = {
   lockUser,
   unlockUser,
   getUsers,
-  getUserSummary,  // New function to get user summary
+  getUserSummary,
   assignMarketer,
   assignAdminToSuperAdmin,
   assignAdminsToSuperAdmin,
