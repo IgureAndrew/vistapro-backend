@@ -21,9 +21,22 @@ app.use(limiter);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Update CORS configuration to allow requests from your Vercel domain.
+// Configure CORS to allow requests from your Vercel domain and local development.
+const allowedOrigins = [
+  "https://vistapro-4xlusoclj-vistapros-projects.vercel.app",
+  "http://localhost:5173"
+];
+
 app.use(cors({
-  origin: "https://vistapro-4xlusoclj-vistapros-projects.vercel.app",
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error("Not allowed by CORS"));
+    }
+  },
   credentials: true,
 }));
 
