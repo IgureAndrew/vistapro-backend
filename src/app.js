@@ -1,4 +1,3 @@
-// src/app.js
 const express = require('express');
 const dotenv = require('dotenv');
 const cors = require('cors');
@@ -21,7 +20,13 @@ app.use(limiter);
 // Other middlewares
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(cors());
+
+// Update CORS configuration to allow requests from your Vercel domain.
+app.use(cors({
+  origin: "https://vistapro-4xlusoclj-vistapros-projects.vercel.app",
+  credentials: true,
+}));
+
 app.use(helmet());
 
 // Configure session middleware for secure cookies.
@@ -54,9 +59,8 @@ const profitReportRoutes = require('./routes/profitReportRoutes');
 const cashoutRoutes = require('./routes/cashoutRoutes');
 const performanceRoutes = require('./routes/performanceRoutes');
 const stockupdateRoutes = require('./routes/stockupdateRoutes');
-
-
 const bankRoutes = require("./routes/bankRoutes");
+
 // Mount routes
 app.use('/api/auth', authRoutes);
 app.use('/api/master-admin', masterAdminRoutes);
@@ -64,7 +68,7 @@ app.use('/api/super-admin', superAdminRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/dealer', dealerRoutes);
 app.use('/api/dealer/orders', dealerOrderRoutes);
-app.use('/api/marketer', marketerRoutes);;
+app.use('/api/marketer', marketerRoutes);
 app.use('/api/marketer/stock-update', marketerStockRoutes);
 app.use('/api/outlet', outletRoutes);
 app.use('/api/product', productRoutes);
@@ -76,6 +80,7 @@ app.use('/api/performance', performanceRoutes);
 app.use('/api/stock', stockupdateRoutes);
 app.use("/api/banks", bankRoutes);
 app.use("/api/verification", verificationRoutes);
+
 // Error handling middleware
 const errorHandler = require('./middlewares/errorHandler');
 app.use(errorHandler);

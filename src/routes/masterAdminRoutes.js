@@ -19,10 +19,11 @@ const {
   lockUser,
   unlockUser,
   getUsers,
+  getUserSummary,
   assignMarketer,
-  assignMarketersToAdmin,     // New function for marketer assignment (single/multiple)
+  assignMarketersToAdmin,
   assignAdminToSuperAdmin,
-  assignAdminsToSuperAdmin,   // New function for multiple admin assignment
+  assignAdminsToSuperAdmin,
 } = require('../controllers/masterAdminController');
 
 // Define the uploads directory and ensure it exists.
@@ -31,7 +32,7 @@ if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
 
-// Configure Multer storage settings with a file filter for images.
+// Configure Multer storage settings.
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, uploadDir);
@@ -41,14 +42,32 @@ const storage = multer.diskStorage({
   },
 });
 
-const upload = multer({
+// Multer for profile images (images only)
+const uploadImage = multer({
   storage,
-  limits: { fileSize: 1024 * 1024 * 5 }, // 5 MB
+  limits: { fileSize: 1024 * 1024 * 5 },
   fileFilter: (req, file, cb) => {
     if (file.mimetype.startsWith("image/")) {
       cb(null, true);
     } else {
       cb(new Error("Only image files are allowed."), false);
+    }
+  }
+});
+
+// Multer for PDF upload (used for dealer registration certificate)
+const uploadPDF = multer({
+  storage,
+  limits: { fileSize: 1024 * 1024 * 5 },
+  fileFilter: (req, file, cb) => {
+    if (file.fieldname === "registrationCertificate") {
+      if (file.mimetype === "application/pdf") {
+        cb(null, true);
+      } else {
+        cb(new Error("Only PDF files are allowed for the registration certificate."), false);
+      }
+    } else {
+      cb(null, true);
     }
   }
 });
@@ -63,59 +82,47 @@ router.put(
   '/profile',
   verifyToken,
   verifyRole(['MasterAdmin']),
-  upload.single('profileImage'),
+  uploadImage.single('profileImage'),
   updateProfile
 );
 
-// Routes for user management (accessible by Master Admin).
+// Routes for user management.
 router.get('/users', verifyToken, verifyRole(['MasterAdmin']), getUsers);
-router.post('/users', verifyToken, verifyRole(['MasterAdmin']), addUser);
+router.post(
+  '/users',
+  verifyToken,
+  verifyRole(['MasterAdmin']),
+  // Use the PDF upload middleware for dealer registration certificates.
+  uploadPDF.single('registrationCertificate'),
+  addUser
+);
 router.put('/users/:id', verifyToken, verifyRole(['MasterAdmin']), updateUser);
 router.delete('/users/:id', verifyToken, verifyRole(['MasterAdmin']), deleteUser);
 router.patch('/users/:id/lock', verifyToken, verifyRole(['MasterAdmin']), lockUser);
 router.patch('/users/:id/unlock', verifyToken, verifyRole(['MasterAdmin']), unlockUser);
 
+// New route: Get summary of user activities.
+router.get('/users/summary', verifyToken, verifyRole(['MasterAdmin']), getUserSummary);
+
 // PATCH endpoint to assign a marketer to an admin.
-router.patch(
-  '/marketers/:marketerId/assign',
-  verifyToken,
-  verifyRole(['MasterAdmin']),
-  assignMarketer
-);
+router.patch('/marketers/:marketerId/assign', verifyToken, verifyRole(['MasterAdmin']), assignMarketer);
 
 // New route: Assign one or multiple marketers to an admin.
-router.post(
-  '/assign-marketers-to-admin',
-  verifyToken,
-  verifyRole(['MasterAdmin']),
-  assignMarketersToAdmin
-);
+router.post('/assign-marketers-to-admin', verifyToken, verifyRole(['MasterAdmin']), assignMarketersToAdmin);
 
-// Protected route: Register a Super Admin (only accessible by Master Admin).
-router.post(
-  '/register-super-admin',
-  verifyToken,
-  verifyRole(['MasterAdmin']),
-  registerSuperAdmin
-);
+// Protected route: Register a Super Admin (accessible by Master Admin).
+router.post('/register-super-admin', verifyToken, verifyRole(['MasterAdmin']), registerSuperAdmin);
 
 // Route to assign a single Admin to a Super Admin.
-router.patch(
-  '/assign-admin-to-superadmin',
-  verifyToken,
-  verifyRole(['MasterAdmin']),
-  assignAdminToSuperAdmin
-);
+router.patch('/assign-admin-to-superadmin', verifyToken, verifyRole(['MasterAdmin']), assignAdminToSuperAdmin);
 
 // New route: Assign multiple Admins to a Super Admin.
-router.post(
-  '/assign-admins-to-superadmin',
-  verifyToken,
-  verifyRole(['MasterAdmin']),
-  assignAdminsToSuperAdmin
-);
+router.post('/assign-admins-to-superadmin', verifyToken, verifyRole(['MasterAdmin']), assignAdminsToSuperAdmin);
 
-// Error handling middleware
+// PATCH endpoint to assign one or multiple marketers to an admin.
+router.post('/assign-marketers-to-admin', verifyToken, verifyRole(['MasterAdmin']), assignMarketersToAdmin);
+
+// Error handling middleware.
 router.use((err, req, res, next) => {
   console.error(err);
   res.status(500).send({ message: 'Internal Server Error' });

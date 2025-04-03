@@ -1,7 +1,3 @@
--- migrations/009_create_marketer_commitment_form.sql
--- This migration creates the "marketer_commitment_form" table to store the responses 
--- to the marketer's commitment form.
-
 CREATE TABLE IF NOT EXISTS marketer_commitment_form (
   id SERIAL PRIMARY KEY,
   marketer_id INTEGER NOT NULL,                     -- Reference to the marketer (should link to users table)
@@ -19,10 +15,6 @@ CREATE TABLE IF NOT EXISTS marketer_commitment_form (
   direct_sales_rep_name VARCHAR(255),             -- Name of the Direct Sales Representative
   direct_sales_rep_signature_url TEXT,            -- URL for the uploaded signature image of the Direct Sales Rep
   date_signed TIMESTAMP,                          -- Date when the form was signed/submitted
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- Record creation time
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP  -- Last update time
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,  -- Record creation time
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP   -- Last update time
 );
-
--- Optionally, add a foreign key constraint if your users table exists:
-ALTER TABLE marketer_commitment_form
-  ADD CONSTRAINT fk_marketer_commitment FOREIGN KEY (marketer_id) REFERENCES users(id);

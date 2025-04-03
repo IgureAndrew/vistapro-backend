@@ -1,54 +1,31 @@
 // src/controllers/masterAdminController.js
-
 const bcrypt = require('bcrypt');
 const { pool } = require('../config/database');
 const { createUser } = require('../models/userModel');
-const { generateUniqueID } = require('../utils/uniqueId'); // Helper to generate unique IDs
+const { generateUniqueID } = require('../utils/uniqueId');
+
+// Updated password regex: Minimum 12 characters, at least one letter, one digit, and one special character.
+const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d)(?=.*[@$!%*#?&])[A-Za-z\d@$!%*#?&]{12,}$/;
 
 /**
  * registerMasterAdmin - Registers a new Master Admin using a secret key.
- * Expects in req.body:
- *   - secretKey, first_name, last_name, gender, email, password,
- *     bank_name, account_number, account_name, location
- *
- * The password must be at least 12 alphanumeric characters.
  */
 const registerMasterAdmin = async (req, res, next) => {
   try {
-    const {
-      secretKey,
-      first_name,
-      last_name,
-      gender,
-      email,
-      password
-    } = req.body;
-
-    // Check the secret key
+    const { secretKey, first_name, last_name, gender, email, password } = req.body;
     if (secretKey !== process.env.MASTER_ADMIN_SECRET_KEY) {
       return res.status(403).json({ message: "Invalid secret key." });
     }
-
-    // Validate required fields
     if (!first_name || !last_name || !gender || !email || !password) {
       return res.status(400).json({ message: "All required fields must be provided." });
     }
-
-    // Validate password: Must be at least 12 alphanumeric characters.
-    const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d]{12,}$/;
     if (!passwordRegex.test(password)) {
       return res.status(400).json({
-        message: "Password must be at least 12 alphanumeric characters (letters and numbers only)."
+        message: "Password must be at least 12 characters with letters, numbers, and special characters."
       });
     }
-
-    // Hash the password
     const hashedPassword = await bcrypt.hash(password, 10);
-
-    // Generate a unique ID for the user.
     const unique_id = generateUniqueID("USER");
-
-    // Create the new Master Admin record
     const newUser = await createUser({
       unique_id,
       first_name,
@@ -57,10 +34,16 @@ const registerMasterAdmin = async (req, res, next) => {
       email,
       password: hashedPassword,
       role: 'MasterAdmin',
-      //business_name: null,
-      //business_address: null,
+      bank_name: null,
+      account_number: null,
+      account_name: null,
+      location: null,
+      business_name: null,
+      business_address: null,
+      business_account_name: null,
+      business_account_number: null,
+      registration_certificate_url: null,
     });
-
     return res.status(201).json({
       message: "Master Admin registered successfully.",
       user: newUser,
@@ -72,52 +55,23 @@ const registerMasterAdmin = async (req, res, next) => {
 
 /**
  * registerSuperAdmin - Registers a new Super Admin.
- * Only a Master Admin can perform this action.
- * Expects in req.body:
- *   - first_name, last_name, gender, email, password,
- *     bank_name, account_number, account_name, location
  */
 const registerSuperAdmin = async (req, res, next) => {
   try {
-    const {
-      first_name,
-      last_name,
-      gender,
-      email,
-      password,
-      bank_name,
-      account_number,
-      account_name,
-      location
-    } = req.body;
-
-    // Validate required fields
-    if (
-      !first_name ||
-      !last_name ||
-      !gender ||
-      !email ||
-      !password ||
-      !bank_name ||
-      !account_number ||
-      !account_name ||
-      !location
-    ) {
+    const { first_name, last_name, gender, email, password, bank_name, account_number, account_name, location } = req.body;
+    if (!first_name || !last_name || !gender || !email || !password || !bank_name || !account_number || !account_name || !location) {
       return res.status(400).json({ message: "All required fields must be provided." });
     }
-
-    // Validate password complexity
-    const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d]{12,}$/;
+    if (!/^\d{10}$/.test(account_number)) {
+      return res.status(400).json({ message: "Account number must be exactly 10 digits." });
+    }
     if (!passwordRegex.test(password)) {
       return res.status(400).json({
-        message: "Password must be at least 12 alphanumeric characters (letters and numbers only)."
+        message: "Password must be at least 12 characters with letters, numbers, and special characters."
       });
     }
-
-    // Hash the password
     const hashedPassword = await bcrypt.hash(password, 10);
     const unique_id = generateUniqueID("USER");
-
     const newSuperAdmin = await createUser({
       unique_id,
       first_name,
@@ -132,8 +86,10 @@ const registerSuperAdmin = async (req, res, next) => {
       role: 'SuperAdmin',
       business_name: null,
       business_address: null,
+      business_account_name: null,
+      business_account_number: null,
+      registration_certificate_url: null,
     });
-
     return res.status(201).json({
       message: "Super Admin registered successfully. Login details have been sent to the email.",
       superAdmin: newSuperAdmin,
@@ -144,23 +100,17 @@ const registerSuperAdmin = async (req, res, next) => {
 };
 
 /**
- * updateProfile - Updates the Master Admin profile, including optional profile image upload.
- * Expects in req.body:
- *   - email, gender, newPassword (optional)
- * Uses req.user.id for the current user.
+ * updateProfile - Updates the Master Admin profile.
  */
 const updateProfile = async (req, res, next) => {
   try {
     const userId = req.user.id;
     const { email, gender, newPassword } = req.body;
-
     let hashedPassword = null;
     if (newPassword) {
       hashedPassword = await bcrypt.hash(newPassword, 10);
     }
-
     const profileImage = req.file ? req.file.path : null;
-
     const query = `
       UPDATE users
       SET email = COALESCE($1, email),
@@ -173,7 +123,6 @@ const updateProfile = async (req, res, next) => {
     `;
     const values = [email, gender, profileImage, hashedPassword, userId];
     const result = await pool.query(query, values);
-
     return res.status(200).json({
       message: "Master Admin profile updated successfully.",
       user: result.rows[0],
@@ -184,9 +133,13 @@ const updateProfile = async (req, res, next) => {
 };
 
 /**
- * addUser - Allows Master Admin to create a new user (SuperAdmin, Admin, Marketer, or Dealer).
- * For non-dealers (SuperAdmin, Admin, Marketer): expects first_name, last_name, gender, email, password, bank_name, account_number, account_name, location.
- * For Dealer: expects first_name, last_name, gender, email, business_name, business_address, password, bank_name, account_number, account_name, location.
+ * addUser - Allows Master Admin to create a new user.
+ * For SuperAdmin, Admin, and Marketer:
+ *   Expects first_name, last_name, gender, email, password, bank_name, account_number (10 digits), account_name, location.
+ * For Dealer:
+ *   Expects first_name, last_name, gender, email, password, registered_business_name, registered_business_address,
+ *   business_account_name, business_account_number, bank_name, account_number (10 digits), account_name, location,
+ *   and an uploaded registration certificate file (PDF only).
  */
 const addUser = async (req, res, next) => {
   try {
@@ -203,37 +156,43 @@ const addUser = async (req, res, next) => {
         gender,
         email,
         password,
+        registered_business_name,
+        registered_business_address,
+        business_account_name,
+        business_account_number,
         bank_name,
         account_number,
         account_name,
-        business_name,
-        business_address,
-        location
+        location,
       } = req.body;
 
-      // Validate required fields for Dealer (including first_name, last_name, gender, and email)
       if (
-        !first_name ||
-        !last_name ||
-        !gender ||
-        !email ||
-        !business_name ||
-        !business_address ||
-        !password ||
-        !bank_name ||
-        !account_number ||
-        !account_name ||
-        !location
+        !first_name || !last_name || !gender || !email || !password ||
+        !registered_business_name || !registered_business_address ||
+        !business_account_name || !business_account_number ||
+        !bank_name || !account_number || !account_name || !location
       ) {
         return res.status(400).json({ message: "All dealer fields are required." });
       }
 
-      const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d]{12,}$/;
+      if (!/^\d{10}$/.test(account_number)) {
+        return res.status(400).json({ message: "Bank account number must be exactly 10 digits." });
+      }
+
       if (!passwordRegex.test(password)) {
         return res.status(400).json({
-          message: "Password must be at least 12 alphanumeric characters."
+          message: "Password must be at least 12 characters with letters, numbers, and special characters."
         });
       }
+
+      // Validate that a registration certificate file is uploaded and is in PDF format.
+      if (!req.file) {
+        return res.status(400).json({ message: "Registration certificate (CAC) is required and must be a PDF." });
+      }
+      if (req.file.mimetype !== "application/pdf") {
+        return res.status(400).json({ message: "Registration certificate must be in PDF format." });
+      }
+      const registration_certificate_url = req.file.path;
 
       hashedPassword = await bcrypt.hash(password, saltRounds);
 
@@ -249,9 +208,13 @@ const addUser = async (req, res, next) => {
         account_name,
         location,
         role,
-        business_name,
-        business_address
+        business_name: registered_business_name,
+        business_address: registered_business_address,
+        business_account_name,
+        business_account_number,
+        registration_certificate_url,
       };
+
     } else {
       // For SuperAdmin, Admin, Marketer
       const {
@@ -263,27 +226,20 @@ const addUser = async (req, res, next) => {
         bank_name,
         account_number,
         account_name,
-        location
+        location,
       } = req.body;
 
-      if (
-        !first_name ||
-        !last_name ||
-        !gender ||
-        !email ||
-        !password ||
-        !bank_name ||
-        !account_number ||
-        !account_name ||
-        !location
-      ) {
+      if (!first_name || !last_name || !gender || !email || !password || !bank_name || !account_number || !account_name || !location) {
         return res.status(400).json({ message: "All required fields must be provided." });
       }
 
-      const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d]{12,}$/;
+      if (!/^\d{10}$/.test(account_number)) {
+        return res.status(400).json({ message: "Account number must be exactly 10 digits." });
+      }
+
       if (!passwordRegex.test(password)) {
         return res.status(400).json({
-          message: "Password must be at least 12 alphanumeric characters."
+          message: "Password must be at least 12 characters with letters, numbers, and special characters."
         });
       }
 
@@ -302,13 +258,16 @@ const addUser = async (req, res, next) => {
         location,
         role,
         business_name: null,
-        business_address: null
+        business_address: null,
+        business_account_name: null,
+        business_account_number: null,
+        registration_certificate_url: null,
       };
     }
 
     const newUser = await createUser(userData);
     return res.status(201).json({
-      message: 'User created successfully',
+      message: "User created successfully",
       user: newUser,
     });
   } catch (error) {
@@ -317,14 +276,12 @@ const addUser = async (req, res, next) => {
 };
 
 /**
- * updateUser - Updates a user specified by the URL parameter :id.
- * Updates first_name, last_name, email, bank_name, account_number, role, and location.
+ * updateUser - Updates a user specified by :id.
  */
 const updateUser = async (req, res, next) => {
   try {
     const userId = req.params.id;
     const { first_name, last_name, email, bank_name, account_number, role, location } = req.body;
-    
     const query = `
       UPDATE users
       SET
@@ -341,9 +298,8 @@ const updateUser = async (req, res, next) => {
     `;
     const values = [first_name, last_name, email, bank_name, account_number, role, location, userId];
     const result = await pool.query(query, values);
-
     return res.status(200).json({
-      message: 'User updated successfully',
+      message: "User updated successfully",
       user: result.rows[0],
     });
   } catch (error) {
@@ -352,20 +308,18 @@ const updateUser = async (req, res, next) => {
 };
 
 /**
- * deleteUser - Deletes a user specified by the URL parameter :id.
+ * deleteUser - Deletes a user specified by :id.
  */
 const deleteUser = async (req, res, next) => {
   try {
     const userId = req.params.id;
     const query = `DELETE FROM users WHERE id = $1 RETURNING *`;
     const result = await pool.query(query, [userId]);
-    
     if (result.rows.length === 0) {
-      return res.status(404).json({ message: 'User not found' });
+      return res.status(404).json({ message: "User not found" });
     }
-    
     return res.status(200).json({
-      message: 'User deleted successfully',
+      message: "User deleted successfully",
       user: result.rows[0],
     });
   } catch (error) {
@@ -374,25 +328,21 @@ const deleteUser = async (req, res, next) => {
 };
 
 /**
- * lockUser - Locks a user account by setting the "locked" flag to true.
- * Only a Master Admin can perform this action.
+ * lockUser - Locks a user account (Master Admin only).
  */
 const lockUser = async (req, res, next) => {
   try {
-    if (req.user.role !== 'MasterAdmin') {
+    if (req.user.role !== "MasterAdmin") {
       return res.status(403).json({ message: "Only a Master Admin can lock user accounts." });
     }
-    
     const userId = req.params.id;
     const query = `UPDATE users SET locked = true WHERE id = $1 RETURNING *`;
     const result = await pool.query(query, [userId]);
-    
     if (result.rowCount === 0) {
       return res.status(404).json({ message: "User not found." });
     }
-    
     return res.status(200).json({
-      message: 'User locked successfully',
+      message: "User locked successfully",
       user: result.rows[0],
     });
   } catch (error) {
@@ -401,24 +351,21 @@ const lockUser = async (req, res, next) => {
 };
 
 /**
- * unlockUser - Unlocks a user account and resets login attempts.
+ * unlockUser - Unlocks a user account (Master Admin only).
  */
 const unlockUser = async (req, res, next) => {
   try {
-    if (req.user.role !== 'MasterAdmin') {
+    if (req.user.role !== "MasterAdmin") {
       return res.status(403).json({ message: "Only a Master Admin can unlock user accounts." });
     }
-    
     const userId = req.params.id;
     const query = `UPDATE users SET locked = false, login_attempts = 0 WHERE id = $1 RETURNING *`;
     const result = await pool.query(query, [userId]);
-    
     if (result.rowCount === 0) {
       return res.status(404).json({ message: "User not found." });
     }
-    
     return res.status(200).json({
-      message: 'User unlocked successfully',
+      message: "User unlocked successfully",
       user: result.rows[0],
     });
   } catch (error) {
@@ -428,7 +375,6 @@ const unlockUser = async (req, res, next) => {
 
 /**
  * getUsers - Retrieves users from the database.
- * If a query parameter "role" is provided, returns only users with that role.
  */
 const getUsers = async (req, res, next) => {
   try {
@@ -449,20 +395,35 @@ const getUsers = async (req, res, next) => {
 };
 
 /**
- * assignMarketer - Updates a marketer's assigned admin.
- * Expects:
- *   - Route parameter: marketerId
- *   - Request body: { adminId: <ID of the Admin> }
+ * getUserSummary - Provides a summary of user activities.
+ * For example, total users, counts by role, and count of locked users.
+ */
+const getUserSummary = async (req, res, next) => {
+  try {
+    const totalResult = await pool.query("SELECT COUNT(*) FROM users");
+    const roleResult = await pool.query("SELECT role, COUNT(*) AS count FROM users GROUP BY role");
+    const lockedResult = await pool.query("SELECT COUNT(*) FROM users WHERE locked = true");
+    
+    res.status(200).json({
+      totalUsers: totalResult.rows[0].count,
+      usersByRole: roleResult.rows,
+      lockedUsers: lockedResult.rows[0].count,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * assignMarketer - Assigns a marketer to an admin.
  */
 const assignMarketer = async (req, res, next) => {
   try {
     const { marketerId } = req.params;
     const { adminId } = req.body;
-
     if (!marketerId || !adminId) {
       return res.status(400).json({ message: "MarketerId and adminId are required." });
     }
-
     const query = `
       UPDATE users 
       SET admin_id = $1 
@@ -471,7 +432,6 @@ const assignMarketer = async (req, res, next) => {
     `;
     const values = [adminId, marketerId];
     const result = await pool.query(query, values);
-
     if (result.rowCount === 0) {
       return res.status(404).json({ message: "Marketer not found or update failed." });
     }
@@ -485,43 +445,28 @@ const assignMarketer = async (req, res, next) => {
 };
 
 /**
- * assignAdminToSuperAdmin - Allows a Master Admin to assign a single Admin to a Super Admin.
- * Only a Master Admin can perform this action.
- * Expects in req.body:
- *   - adminId: The ID of the Admin to be assigned.
- *   - superAdminId: The ID of the Super Admin under whom the Admin will be assigned.
- *
- * The function verifies that:
- *   - The request is made by a Master Admin.
- *   - The target user with adminId has role "Admin".
- *   - The target user with superAdminId has role "SuperAdmin".
- * Then, it updates the admin's record by setting super_admin_id.
+ * assignAdminToSuperAdmin - Assigns a single Admin to a Super Admin.
  */
 const assignAdminToSuperAdmin = async (req, res, next) => {
   try {
-    if (req.user.role !== 'MasterAdmin') {
+    if (req.user.role !== "MasterAdmin") {
       return res.status(403).json({ message: "Only a Master Admin can assign admin accounts to a Super Admin." });
     }
-    
     const { adminId, superAdminId } = req.body;
     if (!adminId || !superAdminId) {
       return res.status(400).json({ message: "Both adminId and superAdminId are required." });
     }
-
     const adminCheck = await pool.query("SELECT * FROM users WHERE id = $1 AND role = 'Admin'", [adminId]);
     if (adminCheck.rowCount === 0) {
       return res.status(404).json({ message: "Admin not found." });
     }
-
     const superAdminCheck = await pool.query("SELECT * FROM users WHERE id = $1 AND role = 'SuperAdmin'", [superAdminId]);
     if (superAdminCheck.rowCount === 0) {
       return res.status(404).json({ message: "Super Admin not found." });
     }
-
     const query = `UPDATE users SET super_admin_id = $1, updated_at = NOW() WHERE id = $2 RETURNING *`;
     const values = [superAdminId, adminId];
     const result = await pool.query(query, values);
-
     return res.status(200).json({
       message: "Admin assigned to Super Admin successfully.",
       admin: result.rows[0],
@@ -532,47 +477,27 @@ const assignAdminToSuperAdmin = async (req, res, next) => {
 };
 
 /**
- * assignAdminsToSuperAdmin - Allows a Master Admin to assign multiple Admins to a single Super Admin.
- * Only a Master Admin can perform this action.
- * Expects in req.body:
- *   - superAdminId: The ID of the Super Admin.
- *   - adminIds: An array of Admin IDs to be assigned.
- *
- * The function verifies that:
- *   - The request is made by a Master Admin.
- *   - The user with superAdminId has role "SuperAdmin".
- *   - Each admin in the adminIds array has role "Admin".
- * Then, it updates all Admin records to set their super_admin_id.
+ * assignAdminsToSuperAdmin - Assigns multiple Admins to a Super Admin.
  */
 const assignAdminsToSuperAdmin = async (req, res, next) => {
   try {
-    if (req.user.role !== 'MasterAdmin') {
+    if (req.user.role !== "MasterAdmin") {
       return res.status(403).json({ message: "Only a Master Admin can assign admins to a Super Admin." });
     }
-
     const { superAdminId, adminIds } = req.body;
     if (!superAdminId || !Array.isArray(adminIds) || adminIds.length === 0) {
       return res.status(400).json({ message: "superAdminId and a non-empty adminIds array are required." });
     }
-
-    const superAdminCheck = await pool.query(
-      "SELECT * FROM users WHERE id = $1 AND role = 'SuperAdmin'",
-      [superAdminId]
-    );
+    const superAdminCheck = await pool.query("SELECT * FROM users WHERE id = $1 AND role = 'SuperAdmin'", [superAdminId]);
     if (superAdminCheck.rowCount === 0) {
       return res.status(404).json({ message: "Super Admin not found." });
     }
-
-    const adminCheck = await pool.query(
-      "SELECT id FROM users WHERE id = ANY($1::int[]) AND role = 'Admin'",
-      [adminIds]
-    );
+    const adminCheck = await pool.query("SELECT id FROM users WHERE id = ANY($1::int[]) AND role = 'Admin'", [adminIds]);
     const validAdminIds = adminCheck.rows.map((row) => row.id);
     const invalidIds = adminIds.filter((id) => !validAdminIds.includes(id));
     if (invalidIds.length > 0) {
       return res.status(404).json({ message: `The following IDs are not valid Admins: ${invalidIds.join(", ")}` });
     }
-
     const query = `
       UPDATE users
       SET super_admin_id = $1,
@@ -582,7 +507,6 @@ const assignAdminsToSuperAdmin = async (req, res, next) => {
     `;
     const values = [superAdminId, adminIds];
     const result = await pool.query(query, values);
-
     return res.status(200).json({
       message: "Admins assigned to Super Admin successfully.",
       assignedAdmins: result.rows,
@@ -593,23 +517,13 @@ const assignAdminsToSuperAdmin = async (req, res, next) => {
 };
 
 /**
- * assignMarketersToAdmin - Allows a Master Admin to assign one or multiple Marketers to a single Admin.
- * Expects in req.body:
- *   - adminId: The ID of the Admin.
- *   - marketerIds: Either a single marketer ID or an array of Marketer IDs.
- *
- * The function verifies that:
- *   - The request is made by a Master Admin.
- *   - The target user with adminId has role "Admin".
- *   - Each marketer in marketerIds has role "Marketer".
- * Then, it updates all corresponding Marketer records to set admin_id.
+ * assignMarketersToAdmin - Assigns one or multiple Marketers to an Admin.
  */
 const assignMarketersToAdmin = async (req, res, next) => {
   try {
-    if (req.user.role !== 'MasterAdmin') {
+    if (req.user.role !== "MasterAdmin") {
       return res.status(403).json({ message: "Only a Master Admin can assign marketers to an Admin." });
     }
-
     let { adminId, marketerIds } = req.body;
     if (!adminId || !marketerIds) {
       return res.status(400).json({ message: "Both adminId and marketerIds are required." });
@@ -620,22 +534,16 @@ const assignMarketersToAdmin = async (req, res, next) => {
     if (marketerIds.length === 0) {
       return res.status(400).json({ message: "At least one marketer ID must be provided." });
     }
-
     const adminCheck = await pool.query("SELECT * FROM users WHERE id = $1 AND role = 'Admin'", [adminId]);
     if (adminCheck.rowCount === 0) {
       return res.status(404).json({ message: "Admin not found." });
     }
-
-    const marketerCheck = await pool.query(
-      "SELECT id FROM users WHERE id = ANY($1::int[]) AND role = 'Marketer'",
-      [marketerIds]
-    );
+    const marketerCheck = await pool.query("SELECT id FROM users WHERE id = ANY($1::int[]) AND role = 'Marketer'", [marketerIds]);
     const validMarketerIds = marketerCheck.rows.map((row) => row.id);
     const invalidMarketerIds = marketerIds.filter((id) => !validMarketerIds.includes(id));
     if (invalidMarketerIds.length > 0) {
       return res.status(404).json({ message: `The following IDs are not valid Marketers: ${invalidMarketerIds.join(", ")}` });
     }
-
     const query = `
       UPDATE users
       SET admin_id = $1,
@@ -645,7 +553,6 @@ const assignMarketersToAdmin = async (req, res, next) => {
     `;
     const values = [adminId, marketerIds];
     const result = await pool.query(query, values);
-
     return res.status(200).json({
       message: "Marketers assigned to Admin successfully.",
       assignedMarketers: result.rows,
@@ -665,8 +572,9 @@ module.exports = {
   lockUser,
   unlockUser,
   getUsers,
+  getUserSummary,  // New function to get user summary
   assignMarketer,
-  assignAdminToSuperAdmin,   // Single admin assignment function
-  assignAdminsToSuperAdmin,  // Function for multiple admin assignment
-  assignMarketersToAdmin     // Function for single/multiple marketer assignment to an Admin
+  assignAdminToSuperAdmin,
+  assignAdminsToSuperAdmin,
+  assignMarketersToAdmin,
 };

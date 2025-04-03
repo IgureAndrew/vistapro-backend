@@ -33,7 +33,3 @@ CREATE TABLE IF NOT EXISTS marketer_biodata (
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP   -- Last update time
 );
 
--- Optionally, add a foreign key constraint if you have a users table:
-ALTER TABLE marketer_biodata
-  ADD CONSTRAINT fk_marketer
-  FOREIGN KEY (marketer_id) REFERENCES users(id);
