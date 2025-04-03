@@ -24,7 +24,8 @@ app.use(express.urlencoded({ extended: true }));
 // Configure CORS to allow requests from your Vercel domain and local development.
 const allowedOrigins = [
   "https://vistapro-4xlusoclj-vistapros-projects.vercel.app",
-  "http://localhost:5173"
+  "http://localhost:5173",
+  "https://www.vistapro.ng"
 ];
 
 app.use(cors({
