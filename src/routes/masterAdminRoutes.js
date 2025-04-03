@@ -24,6 +24,7 @@ const {
   assignMarketersToAdmin,
   assignAdminToSuperAdmin,
   assignAdminsToSuperAdmin,
+  getDashboardSummary,
 } = require('../controllers/masterAdminController');
 
 // Define the uploads directory and ensure it exists.
@@ -96,6 +97,15 @@ router.post(
   uploadPDF.single('registrationCertificate'),
   addUser
 );
+
+// Only MasterAdmin should see the summary
+router.get(
+  '/dashboard-summary',
+  verifyToken,
+  verifyRole(['MasterAdmin']), 
+  getDashboardSummary
+);
+
 router.put('/users/:id', verifyToken, verifyRole(['MasterAdmin']), updateUser);
 router.delete('/users/:id', verifyToken, verifyRole(['MasterAdmin']), deleteUser);
 router.patch('/users/:id/lock', verifyToken, verifyRole(['MasterAdmin']), lockUser);

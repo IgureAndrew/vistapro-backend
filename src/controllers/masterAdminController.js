@@ -553,6 +553,43 @@ const assignMarketersToAdmin = async (req, res, next) => {
   }
 };
 
+
+/**
+ * get summary of the activities on the dashboard overview
+ */
+
+const getDashboardSummary = async (req, res, next) => {
+  try {
+    // Example queries:
+    const totalUsersResult = await pool.query("SELECT COUNT(*) AS total FROM users");
+    const totalOrdersResult = await pool.query("SELECT COUNT(*) AS total FROM orders");
+    const pendingApprovalsResult = await pool.query(
+      "SELECT COUNT(*) AS total FROM users WHERE overall_verification_status = 'pending'"
+    );
+    const totalSalesResult = await pool.query(
+      "SELECT COALESCE(SUM(sold_amount), 0) AS total_sales FROM orders" // or your actual sales table
+    );
+    const activeSessions = 0; // If you track sessions, add your logic or queries here
+
+    // Extract the counts
+    const totalUsers = parseInt(totalUsersResult.rows[0].total, 10);
+    const totalOrders = parseInt(totalOrdersResult.rows[0].total, 10);
+    const pendingApprovals = parseInt(pendingApprovalsResult.rows[0].total, 10);
+    const totalSales = parseFloat(totalSalesResult.rows[0].total_sales) || 0;
+
+    // Return everything in a single response object
+    res.status(200).json({
+      totalUsers,
+      totalOrders,
+      pendingApprovals,
+      activeSessions,
+      totalSales,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   registerMasterAdmin,
   registerSuperAdmin,
@@ -564,6 +601,7 @@ module.exports = {
   unlockUser,
   getUsers,
   getUserSummary,
+  getDashboardSummary,
   assignMarketer,
   assignAdminToSuperAdmin,
   assignAdminsToSuperAdmin,
