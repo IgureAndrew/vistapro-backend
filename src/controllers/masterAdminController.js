@@ -350,7 +350,7 @@ const unlockUser = async (req, res, next) => {
       return res.status(403).json({ message: "Only a Master Admin can unlock user accounts." });
     }
     const userId = req.params.id;
-    const query = `UPDATE users SET locked = false, login_attempts = 0 WHERE id = $1 RETURNING *`;
+    const query = `UPDATE users SET locked = false WHERE id = $1 RETURNING *`;
     const result = await pool.query(query, [userId]);
     if (result.rowCount === 0) {
       return res.status(404).json({ message: "User not found." });
@@ -363,6 +363,7 @@ const unlockUser = async (req, res, next) => {
     next(error);
   }
 };
+
 
 /**
  * getUsers - Retrieves users from the database.
