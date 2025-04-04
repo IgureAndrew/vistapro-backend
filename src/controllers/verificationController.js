@@ -1,8 +1,6 @@
 // src/controllers/VerificationController.js
 const { pool } = require("../config/database");
 
-
-
 /**
  * submitBiodata
  * Inserts a new biodata record into the marketer_biodata table and updates the user's flag.
@@ -74,7 +72,7 @@ const submitBiodata = async (req, res, next) => {
       address,            // $3
       phone,              // $4
       religion,           // $5
-      dob,                // $6 (converted date_of_birth)
+      dob,                // $6
       marital_status,     // $7
       state_of_origin,    // $8
       state_of_residence, // $9
@@ -113,16 +111,15 @@ const submitBiodata = async (req, res, next) => {
   }
 };
 
-
 /**
  * submitGuarantor
  * Inserts a new guarantor record into the marketer_guarantor_form table and updates the user's flag.
- * Expects in req.body: all fields required by marketer_guarantor_form and marketer_id (unique ID).
+ * Expects in req.body: all fields required by marketer_guarantor_form.
+ * The marketer's unique ID is taken from req.user.
  */
 const submitGuarantor = async (req, res, next) => {
   try {
     const {
-      marketer_id, // Unique ID of the marketer
       is_candidate_well_known,
       relationship,
       known_duration,
@@ -131,6 +128,12 @@ const submitGuarantor = async (req, res, next) => {
       passport_photo_url,
       signature_url,
     } = req.body;
+
+    // Get the marketer's unique ID from the authenticated user
+    const marketerUniqueId = req.user.unique_id;
+    if (!marketerUniqueId) {
+      return res.status(400).json({ message: "User unique ID is missing from token." });
+    }
 
     const query = `
       INSERT INTO marketer_guarantor_form (
@@ -145,7 +148,7 @@ const submitGuarantor = async (req, res, next) => {
       RETURNING *
     `;
     const values = [
-      marketer_id,
+      marketerUniqueId,  // $1: Unique ID from req.user
       is_candidate_well_known,
       relationship,
       known_duration,
@@ -160,7 +163,7 @@ const submitGuarantor = async (req, res, next) => {
     // Update the user's guarantor flag using unique ID
     await pool.query(
       "UPDATE users SET guarantor_submitted = true, updated_at = NOW() WHERE unique_id = $1",
-      [marketer_id]
+      [marketerUniqueId]
     );
 
     res.status(201).json({
@@ -175,12 +178,12 @@ const submitGuarantor = async (req, res, next) => {
 /**
  * submitCommitment
  * Inserts a new commitment record into the marketer_commitment_form table and updates the user's flag.
- * Expects in req.body: all fields required by marketer_commitment_form and marketer_id (unique ID).
+ * Expects in req.body: all fields required by marketer_commitment_form.
+ * The marketer's unique ID is taken from req.user.
  */
 const submitCommitment = async (req, res, next) => {
   try {
     const {
-      marketer_id, // Unique ID of the marketer
       promise_accept_false_documents,
       promise_not_request_irrelevant_info,
       promise_not_charge_customer_fees,
@@ -196,6 +199,12 @@ const submitCommitment = async (req, res, next) => {
       direct_sales_rep_signature_url,
       date_signed,
     } = req.body;
+
+    // Get the marketer's unique ID from the authenticated user
+    const marketerUniqueId = req.user.unique_id;
+    if (!marketerUniqueId) {
+      return res.status(400).json({ message: "User unique ID is missing from token." });
+    }
 
     const query = `
       INSERT INTO marketer_commitment_form (
@@ -224,7 +233,7 @@ const submitCommitment = async (req, res, next) => {
       RETURNING *
     `;
     const values = [
-      marketer_id,
+      marketerUniqueId,  // $1: Unique ID from req.user
       promise_accept_false_documents,
       promise_not_request_irrelevant_info,
       promise_not_charge_customer_fees,
@@ -246,7 +255,7 @@ const submitCommitment = async (req, res, next) => {
     // Update the user's commitment flag using unique ID
     await pool.query(
       "UPDATE users SET commitment_submitted = true, updated_at = NOW() WHERE unique_id = $1",
-      [marketer_id]
+      [marketerUniqueId]
     );
 
     res.status(201).json({
