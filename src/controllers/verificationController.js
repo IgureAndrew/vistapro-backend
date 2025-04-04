@@ -4,12 +4,12 @@ const { pool } = require("../config/database");
 /**
  * submitBiodata
  * Inserts a new biodata record into the marketer_biodata table and updates the user's flag.
- * Expects in req.body: all fields required by marketer_biodata and marketer_id.
+ * Expects in req.body: all fields required by marketer_biodata and marketer_id (unique ID).
  */
 const submitBiodata = async (req, res, next) => {
   try {
     const {
-      marketer_id,
+      marketer_id, // This now holds the marketer's unique ID
       name,
       address,
       phone,
@@ -36,6 +36,7 @@ const submitBiodata = async (req, res, next) => {
       passport_photo_url,
     } = req.body;
 
+    // The query uses a subquery to convert the unique ID to the numeric ID.
     const query = `
       INSERT INTO marketer_biodata (
         marketer_id, name, address, phone, religion, date_of_birth, marital_status,
@@ -46,17 +47,18 @@ const submitBiodata = async (req, res, next) => {
         account_number, passport_photo_url, created_at, updated_at
       )
       VALUES (
-        $1, $2, $3, $4, $5, $6, $7,
+        (SELECT id FROM users WHERE unique_id = $1),
+        $2, $3, $4, $5, $6, $7,
         $8, $9, $10, $11,
         $12, $13, $14, $15,
         $16, $17, $18, $19,
         $20, $21, $22, $23,
-        $24, $25, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+        $24, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
       )
       RETURNING *
     `;
     const values = [
-      marketer_id,
+      marketer_id, // unique ID
       name,
       address,
       phone,
@@ -85,9 +87,9 @@ const submitBiodata = async (req, res, next) => {
 
     const result = await pool.query(query, values);
 
-    // Update the user's biodata flag.
+    // Update the user's biodata flag using the unique ID
     await pool.query(
-      "UPDATE users SET bio_submitted = true, updated_at = NOW() WHERE id = $1",
+      "UPDATE users SET bio_submitted = true, updated_at = NOW() WHERE unique_id = $1",
       [marketer_id]
     );
 
@@ -100,15 +102,16 @@ const submitBiodata = async (req, res, next) => {
   }
 };
 
+
 /**
  * submitGuarantor
  * Inserts a new guarantor record into the marketer_guarantor_form table and updates the user's flag.
- * Expects in req.body: all fields required by marketer_guarantor_form and marketer_id.
+ * Expects in req.body: all fields required by marketer_guarantor_form and marketer_id (unique ID).
  */
 const submitGuarantor = async (req, res, next) => {
   try {
     const {
-      marketer_id,
+      marketer_id, // Unique ID of the marketer
       is_candidate_well_known,
       relationship,
       known_duration,
@@ -124,7 +127,10 @@ const submitGuarantor = async (req, res, next) => {
         occupation, id_document_url, passport_photo_url, signature_url,
         created_at, updated_at
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      VALUES (
+        (SELECT id FROM users WHERE unique_id = $1),
+        $2, $3, $4, $5, $6, $7, $8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+      )
       RETURNING *
     `;
     const values = [
@@ -140,9 +146,9 @@ const submitGuarantor = async (req, res, next) => {
 
     const result = await pool.query(query, values);
 
-    // Update the user's guarantor flag.
+    // Update the user's guarantor flag using unique ID
     await pool.query(
-      "UPDATE users SET guarantor_submitted = true, updated_at = NOW() WHERE id = $1",
+      "UPDATE users SET guarantor_submitted = true, updated_at = NOW() WHERE unique_id = $1",
       [marketer_id]
     );
 
@@ -158,12 +164,12 @@ const submitGuarantor = async (req, res, next) => {
 /**
  * submitCommitment
  * Inserts a new commitment record into the marketer_commitment_form table and updates the user's flag.
- * Expects in req.body: all fields required by marketer_commitment_form and marketer_id.
+ * Expects in req.body: all fields required by marketer_commitment_form and marketer_id (unique ID).
  */
 const submitCommitment = async (req, res, next) => {
   try {
     const {
-      marketer_id,
+      marketer_id, // Unique ID of the marketer
       promise_accept_false_documents,
       promise_not_request_irrelevant_info,
       promise_not_charge_customer_fees,
@@ -182,15 +188,28 @@ const submitCommitment = async (req, res, next) => {
 
     const query = `
       INSERT INTO marketer_commitment_form (
-        marketer_id, promise_accept_false_documents, promise_not_request_irrelevant_info,
-        promise_not_charge_customer_fees, promise_not_modify_contract_info,
-        promise_not_sell_unapproved_phones, promise_not_make_unofficial_commitment,
-        promise_not_operate_customer_account, promise_accept_fraud_firing,
-        promise_not_share_company_info, promise_ensure_loan_recovery, promise_abide_by_system,
-        direct_sales_rep_name, direct_sales_rep_signature_url, date_signed,
-        created_at, updated_at
+        marketer_id,
+        promise_accept_false_documents,
+        promise_not_request_irrelevant_info,
+        promise_not_charge_customer_fees,
+        promise_not_modify_contract_info,
+        promise_not_sell_unapproved_phones,
+        promise_not_make_unofficial_commitment,
+        promise_not_operate_customer_account,
+        promise_accept_fraud_firing,
+        promise_not_share_company_info,
+        promise_ensure_loan_recovery,
+        promise_abide_by_system,
+        direct_sales_rep_name,
+        direct_sales_rep_signature_url,
+        date_signed,
+        created_at,
+        updated_at
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      VALUES (
+        (SELECT id FROM users WHERE unique_id = $1),
+        $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+      )
       RETURNING *
     `;
     const values = [
@@ -213,9 +232,9 @@ const submitCommitment = async (req, res, next) => {
 
     const result = await pool.query(query, values);
 
-    // Update the user's commitment flag.
+    // Update the user's commitment flag using unique ID
     await pool.query(
-      "UPDATE users SET commitment_submitted = true, updated_at = NOW() WHERE id = $1",
+      "UPDATE users SET commitment_submitted = true, updated_at = NOW() WHERE unique_id = $1",
       [marketer_id]
     );
 
