@@ -113,6 +113,65 @@ const submitBiodata = async (req, res, next) => {
   }
 };
 
+
+/**
+ * submitGuarantor
+ * Inserts a new guarantor record into the marketer_guarantor_form table and updates the user's flag.
+ * Expects in req.body: all fields required by marketer_guarantor_form and marketer_id (unique ID).
+ */
+const submitGuarantor = async (req, res, next) => {
+  try {
+    const {
+      marketer_id, // Unique ID of the marketer
+      is_candidate_well_known,
+      relationship,
+      known_duration,
+      occupation,
+      id_document_url,
+      passport_photo_url,
+      signature_url,
+    } = req.body;
+
+    const query = `
+      INSERT INTO marketer_guarantor_form (
+        marketer_id, is_candidate_well_known, relationship, known_duration,
+        occupation, id_document_url, passport_photo_url, signature_url,
+        created_at, updated_at
+      )
+      VALUES (
+        (SELECT id FROM users WHERE unique_id = $1),
+        $2, $3, $4, $5, $6, $7, $8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+      )
+      RETURNING *
+    `;
+    const values = [
+      marketer_id,
+      is_candidate_well_known,
+      relationship,
+      known_duration,
+      occupation,
+      id_document_url,
+      passport_photo_url,
+      signature_url,
+    ];
+
+    const result = await pool.query(query, values);
+
+    // Update the user's guarantor flag using unique ID
+    await pool.query(
+      "UPDATE users SET guarantor_submitted = true, updated_at = NOW() WHERE unique_id = $1",
+      [marketer_id]
+    );
+
+    res.status(201).json({
+      message: "Guarantor form submitted successfully.",
+      guarantor: result.rows[0],
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 /**
  * submitCommitment
  * Inserts a new commitment record into the marketer_commitment_form table and updates the user's flag.
