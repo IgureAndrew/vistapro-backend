@@ -1,6 +1,4 @@
 // src/controllers/authController.js
-// Controller functions for user authentication (login, forgot password, reset password)
-
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 const { pool } = require('../config/database');
@@ -28,14 +26,19 @@ const loginUser = async (req, res, next) => {
       return res.status(401).json({ message: 'Invalid email or password.' });
     }
     
-    // Generate JWT token (adjust secret and expiry as needed)
-    const token = jwt.sign({ id: user.id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '1d' });
+    // Generate JWT token including unique_id, with expiration set to 30 minutes
+    const token = jwt.sign(
+      { id: user.id, unique_id: user.unique_id, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: '30m' }
+    );
     
     return res.status(200).json({
       message: 'Login successful.',
       token,
       user: {
         id: user.id,
+        unique_id: user.unique_id,
         first_name: user.first_name,
         last_name: user.last_name,
         email: user.email,
@@ -69,5 +72,4 @@ const resetPassword = async (req, res, next) => {
   }
 };
 
-// Export the functions directly
 module.exports = { loginUser, forgotPassword, resetPassword };

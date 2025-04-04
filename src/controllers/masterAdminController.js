@@ -24,7 +24,8 @@ const registerMasterAdmin = async (req, res, next) => {
       });
     }
     const hashedPassword = await bcrypt.hash(password, 10);
-    const unique_id = generateUniqueID("USER");
+    // Generate a role-specific ID for Master Admin (e.g., RSM001, RSM002, etc.)
+    const unique_id = await generateUniqueID("MasterAdmin");
     const newUser = await createUser({
       unique_id,
       first_name,
@@ -70,7 +71,8 @@ const registerSuperAdmin = async (req, res, next) => {
       });
     }
     const hashedPassword = await bcrypt.hash(password, 10);
-    const unique_id = generateUniqueID("USER");
+    // Generate a role-specific ID for Super Admin (e.g., SM000001, SM000002, etc.)
+    const unique_id = await generateUniqueID("SuperAdmin");
     const newSuperAdmin = await createUser({
       unique_id,
       first_name,
@@ -143,7 +145,20 @@ const updateProfile = async (req, res, next) => {
 const addUser = async (req, res, next) => {
   try {
     const { role } = req.body;
-    const unique_id = generateUniqueID(role === "Dealer" ? "DEALER" : "USER");
+    let unique_id;
+    // Generate a role-specific ID based on the provided role.
+    if (role === "Dealer") {
+      unique_id = await generateUniqueID("Dealer");
+    } else if (role === "Admin") {
+      unique_id = await generateUniqueID("Admin");
+    } else if (role === "Marketer") {
+      unique_id = await generateUniqueID("Marketer");
+    } else if (role === "SuperAdmin") {
+      unique_id = await generateUniqueID("SuperAdmin");
+    } else {
+      // Fallback case; adjust as needed.
+      unique_id = await generateUniqueID("User");
+    }
     const saltRounds = 10;
     let hashedPassword = null;
     let userData = {};
@@ -364,7 +379,6 @@ const unlockUser = async (req, res, next) => {
   }
 };
 
-
 /**
  * getUsers - Retrieves users from the database.
  */
@@ -553,11 +567,9 @@ const assignMarketersToAdmin = async (req, res, next) => {
   }
 };
 
-
 /**
- * get summary of the activities on the dashboard overview
+ * getDashboardSummary - Provides a summary of the activities on the dashboard overview.
  */
-
 const getDashboardSummary = async (req, res, next) => {
   try {
     // Example queries:

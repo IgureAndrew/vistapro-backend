@@ -44,7 +44,7 @@ const updateProfile = async (req, res, next) => {
 
 /**
  * placeOrder - Allows a Marketer to record the sale (dispense) of device(s).
- * The function now expects the following fields in req.body:
+ * The function expects the following fields in req.body:
  *  - device_name, device_model, device_type (dropdown: "Android" or "iPhone"),
  *  - dealer_cost_price, marketer_selling_price, number_of_devices, sold_amount,
  *  - customer_name, customer_phone, customer_address,
@@ -129,6 +129,31 @@ const placeOrder = async (req, res, next) => {
     return res.status(201).json({
       message: "Order placed successfully.",
       order: result.rows[0],
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * getOrders - Retrieves orders for the authenticated marketer.
+ * This function uses the marketer's unique ID (from the token) to fetch their orders.
+ */
+const getOrders = async (req, res, next) => {
+  try {
+    // Retrieve the marketer's unique_id from the decoded token.
+    const marketerUniqueId = req.user.unique_id;
+    const query = `
+      SELECT * FROM orders 
+      WHERE marketer_unique_id = $1 
+      ORDER BY created_at DESC
+    `;
+    const values = [marketerUniqueId];
+    const result = await pool.query(query, values);
+
+    res.status(200).json({
+      orders: result.rows,
+      message: "Orders fetched successfully."
     });
   } catch (error) {
     next(error);
@@ -395,6 +420,7 @@ const submitCommitmentForm = async (req, res, next) => {
 module.exports = {
   updateProfile,
   placeOrder,
+  getOrders,
   submitBioData,
   submitGuarantorForm,
   submitCommitmentForm,

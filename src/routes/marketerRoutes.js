@@ -7,7 +7,7 @@ const fs = require('fs');     // Added this line
 
 const { verifyToken } = require('../middlewares/authMiddleware');
 const { verifyRole } = require('../middlewares/roleMiddleware');
-const { updateProfile, placeOrder, submitBioData, submitGuarantorForm, submitCommitmentForm } = require('../controllers/marketerController');
+const { updateProfile, placeOrder, getOrders, submitBioData, submitGuarantorForm, submitCommitmentForm } = require('../controllers/marketerController');
 
 // Define the directory for commitment form uploads
 const commitmentUploadDir = path.join(__dirname, "../../uploads/commitment_forms");
@@ -76,5 +76,8 @@ router.post(
   upload.single("signature"),
   submitCommitmentForm
 );
+
+// a GET route for fetching orders for the logged-in marketer
+router.get('/orders', verifyToken, verifyRole(['Marketer']), getOrders);
 
 module.exports = router;
