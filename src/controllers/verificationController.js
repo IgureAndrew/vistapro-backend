@@ -6,7 +6,7 @@ const { pool } = require("../config/database");
 /**
  * submitBiodata
  * Inserts a new biodata record into the marketer_biodata table and updates the user's flag.
- * Expects in req.body: all fields required by marketer_biodata.
+ * Expects in req.body: all fields required by marketer_biodata (except marketer_id).
  * The marketer's unique ID is taken from req.user.
  */
 const submitBiodata = async (req, res, next) => {
@@ -41,6 +41,9 @@ const submitBiodata = async (req, res, next) => {
     
     // Get the marketer's unique ID from the authenticated user
     const marketerUniqueId = req.user.unique_id;
+    if (!marketerUniqueId) {
+      return res.status(400).json({ message: "User unique ID is missing from token." });
+    }
 
     // Convert empty date string to null if needed
     const dob = date_of_birth === "" ? null : date_of_birth;
@@ -66,17 +69,17 @@ const submitBiodata = async (req, res, next) => {
       RETURNING *
     `;
     const values = [
-      marketerUniqueId,  // $1: Unique ID from req.user
-      name,              // $2
-      address,           // $3
-      phone,             // $4
-      religion,          // $5
-      dob,               // $6 (date_of_birth converted)
-      marital_status,    // $7
-      state_of_origin,   // $8
+      marketerUniqueId,   // $1: Unique ID from req.user
+      name,               // $2
+      address,            // $3
+      phone,              // $4
+      religion,           // $5
+      dob,                // $6 (converted date_of_birth)
+      marital_status,     // $7
+      state_of_origin,    // $8
       state_of_residence, // $9
-      mothers_maiden_name, // $10
-      school_attended,     // $11
+      mothers_maiden_name,// $10
+      school_attended,    // $11
       means_of_identification, // $12
       id_document_url,         // $13
       last_place_of_work,      // $14
@@ -104,65 +107,6 @@ const submitBiodata = async (req, res, next) => {
     res.status(201).json({
       message: "Biodata submitted successfully.",
       biodata: result.rows[0],
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-
-/**
- * submitGuarantor
- * Inserts a new guarantor record into the marketer_guarantor_form table and updates the user's flag.
- * Expects in req.body: all fields required by marketer_guarantor_form and marketer_id (unique ID).
- */
-const submitGuarantor = async (req, res, next) => {
-  try {
-    const {
-      marketer_id, // Unique ID of the marketer
-      is_candidate_well_known,
-      relationship,
-      known_duration,
-      occupation,
-      id_document_url,
-      passport_photo_url,
-      signature_url,
-    } = req.body;
-
-    const query = `
-      INSERT INTO marketer_guarantor_form (
-        marketer_id, is_candidate_well_known, relationship, known_duration,
-        occupation, id_document_url, passport_photo_url, signature_url,
-        created_at, updated_at
-      )
-      VALUES (
-        (SELECT id FROM users WHERE unique_id = $1),
-        $2, $3, $4, $5, $6, $7, $8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-      )
-      RETURNING *
-    `;
-    const values = [
-      marketer_id,
-      is_candidate_well_known,
-      relationship,
-      known_duration,
-      occupation,
-      id_document_url,
-      passport_photo_url,
-      signature_url,
-    ];
-
-    const result = await pool.query(query, values);
-
-    // Update the user's guarantor flag using unique ID
-    await pool.query(
-      "UPDATE users SET guarantor_submitted = true, updated_at = NOW() WHERE unique_id = $1",
-      [marketer_id]
-    );
-
-    res.status(201).json({
-      message: "Guarantor form submitted successfully.",
-      guarantor: result.rows[0],
     });
   } catch (error) {
     next(error);
