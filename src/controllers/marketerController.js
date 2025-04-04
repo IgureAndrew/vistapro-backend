@@ -141,12 +141,14 @@ const placeOrder = async (req, res, next) => {
  */
 const getOrders = async (req, res, next) => {
   try {
-    // Retrieve the marketer's unique_id from the decoded token.
+    // Retrieve the marketer's unique_id from the token.
     const marketerUniqueId = req.user.unique_id;
     const query = `
-      SELECT * FROM orders 
-      WHERE marketer_unique_id = $1 
-      ORDER BY created_at DESC
+      SELECT o.* 
+      FROM orders o
+      JOIN users u ON o.marketer_id = u.id
+      WHERE u.unique_id = $1
+      ORDER BY o.created_at DESC
     `;
     const values = [marketerUniqueId];
     const result = await pool.query(query, values);
@@ -159,6 +161,7 @@ const getOrders = async (req, res, next) => {
     next(error);
   }
 };
+
 
 /**
  * submitBioData - Submits the marketer's bio data form.
