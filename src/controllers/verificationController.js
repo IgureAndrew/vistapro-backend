@@ -2,15 +2,17 @@
 const { pool } = require("../config/database");
 
 
+
 /**
  * submitBiodata
  * Inserts a new biodata record into the marketer_biodata table and updates the user's flag.
- * Expects in req.body: all fields required by marketer_biodata and marketer_id (unique ID).
+ * Expects in req.body: all fields required by marketer_biodata.
+ * The marketer's unique ID is taken from req.user.
  */
 const submitBiodata = async (req, res, next) => {
   try {
+    // Extract fields from the request body
     const {
-      marketer_id,
       name,
       address,
       phone,
@@ -37,9 +39,12 @@ const submitBiodata = async (req, res, next) => {
       passport_photo_url,
     } = req.body;
     
-    // Convert empty date string to null
+    // Get the marketer's unique ID from the authenticated user
+    const marketerUniqueId = req.user.unique_id;
+
+    // Convert empty date string to null if needed
     const dob = date_of_birth === "" ? null : date_of_birth;
-    
+
     const query = `
       INSERT INTO marketer_biodata (
         marketer_id, name, address, phone, religion, date_of_birth, marital_status,
@@ -61,12 +66,12 @@ const submitBiodata = async (req, res, next) => {
       RETURNING *
     `;
     const values = [
-      marketer_id, // $1: Unique ID to get numeric id from users
-      name,        // $2
-      address,     // $3
-      phone,       // $4
-      religion,    // $5
-      dob,         // $6: using dob variable instead of date_of_birth
+      marketerUniqueId,  // $1: Unique ID from req.user
+      name,              // $2
+      address,           // $3
+      phone,             // $4
+      religion,          // $5
+      dob,               // $6 (date_of_birth converted)
       marital_status,    // $7
       state_of_origin,   // $8
       state_of_residence, // $9
@@ -87,13 +92,13 @@ const submitBiodata = async (req, res, next) => {
       account_number,          // $24
       passport_photo_url,      // $25
     ];
-    
+
     const result = await pool.query(query, values);
 
     // Update the user's biodata flag using the unique ID
     await pool.query(
       "UPDATE users SET bio_submitted = true, updated_at = NOW() WHERE unique_id = $1",
-      [marketer_id]
+      [marketerUniqueId]
     );
 
     res.status(201).json({
@@ -104,7 +109,6 @@ const submitBiodata = async (req, res, next) => {
     next(error);
   }
 };
-
 
 
 /**
