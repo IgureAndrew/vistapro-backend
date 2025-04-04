@@ -7,7 +7,7 @@ const { pool } = require("../config/database");
  * Expects in req.body: all fields required by marketer_biodata (except marketer_id).
  * The marketer's unique ID is taken from req.user.
  */
-const submitBiodata = async (req, res, next) => {
+const submitBiodata = async (req, res, next) => { 
   try {
     // Extract fields from the request body
     const {
@@ -38,7 +38,8 @@ const submitBiodata = async (req, res, next) => {
     } = req.body;
     
     // Get the marketer's unique ID from the authenticated user
-    const marketerUniqueId = req.user.unique_id;
+    const marketerUniqueId = req.user.unique_id; console.log("DEBUG => req.user:", req.user);
+    
     if (!marketerUniqueId) {
       return res.status(400).json({ message: "User unique ID is missing from token." });
     }
