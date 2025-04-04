@@ -1,14 +1,18 @@
+// src/controllers/manageOrderController.js
 const { pool } = require("../config/database");
 
 /**
- * getOrders - Retrieves orders that need confirmation.
- * Optionally, you could filter orders by status.
+ * getOrders - Retrieves orders placed by marketers that are still pending confirmation.
+ * Only orders with a non-null marketer_id and a status of "pending" will be returned.
  */
 const getOrders = async (req, res, next) => {
   try {
+    // We now filter for orders where the order came from a marketer (marketer_id IS NOT NULL)
+    // and its status is 'pending' (i.e. waiting for confirmation from the dealer)
     const query = `
-      SELECT * FROM orders
-      WHERE status IN ('pending_confirmation', 'released_pending_confirmation')
+      SELECT *
+      FROM orders
+      WHERE marketer_id IS NOT NULL AND status = 'pending'
       ORDER BY created_at DESC
     `;
     const result = await pool.query(query);
@@ -19,8 +23,8 @@ const getOrders = async (req, res, next) => {
 };
 
 /**
- * confirmOrderToDealer - Allows Master Admin to confirm an order for dealers before release.
- * Updates the order status to "confirmed_to_dealer" and records the confirmation timestamp.
+ * confirmOrderToDealer - Allows Master Admin to confirm an order for dealers.
+ * This updates the order's status to "confirmed_to_dealer" and sets a confirmation timestamp.
  */
 const confirmOrderToDealer = async (req, res, next) => {
   try {
@@ -36,7 +40,7 @@ const confirmOrderToDealer = async (req, res, next) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ message: 'Order not found.' });
     }
-    return res.status(200).json({
+    res.status(200).json({
       message: 'Order confirmed to dealer successfully.',
       order: result.rows[0],
     });
@@ -47,8 +51,7 @@ const confirmOrderToDealer = async (req, res, next) => {
 
 /**
  * confirmReleasedOrder - Allows Admin (or Master Admin) to confirm that an order released by dealers
- * is successfully delivered.
- * Updates the order status to "released_confirmed" and records the timestamp.
+ * has been successfully delivered. It updates the status to "released_confirmed" and records the timestamp.
  */
 const confirmReleasedOrder = async (req, res, next) => {
   try {
@@ -64,7 +67,7 @@ const confirmReleasedOrder = async (req, res, next) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ message: 'Order not found.' });
     }
-    return res.status(200).json({
+    res.status(200).json({
       message: 'Released order confirmed successfully.',
       order: result.rows[0],
     });
@@ -74,20 +77,23 @@ const confirmReleasedOrder = async (req, res, next) => {
 };
 
 /**
- * getReleasedOrderHistory - Retrieves the order history for orders that have been processed.
- * Includes orders with statuses such as "released_confirmed", "confirmed_to_dealer", or "cancelled".
- * Orders are returned with date and time information for reconciliation.
+ * getReleasedOrderHistory - Retrieves the history of orders that have been processed.
+ * This includes orders with statuses such as "released_confirmed", "confirmed_to_dealer", or "cancelled",
+ * along with their date and time details for reconciliation.
  */
 const getReleasedOrderHistory = async (req, res, next) => {
   try {
     const query = `
-      SELECT id, status, created_at, confirmed_at, released_confirmed_at
+      SELECT id, status, device_name, device_model, device_type,
+             dealer_cost_price, marketer_selling_price, number_of_devices,
+             sold_amount, customer_name, customer_phone, customer_address,
+             bnpl_platform, sale_date, created_at, confirmed_at, released_confirmed_at
       FROM orders
       WHERE status IN ('released_confirmed', 'confirmed_to_dealer', 'cancelled')
       ORDER BY created_at DESC
     `;
     const result = await pool.query(query);
-    return res.status(200).json({
+    res.status(200).json({
       message: 'Release order history retrieved successfully.',
       orders: result.rows,
     });

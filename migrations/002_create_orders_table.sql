@@ -2,17 +2,21 @@
 -- This migration creates the "orders" table used to track sales/orders made by marketers.
 -- Adjust foreign key constraints as needed based on your actual schema.
 
-CREATE TABLE IF NOT EXISTS orders (
+CREATE TABLE orders (
   id SERIAL PRIMARY KEY,
-  marketer_id INTEGER NOT NULL,         -- ID of the marketer who made the sale (should reference users(id))
-  dealer_id INTEGER,                    -- Optional: ID of the dealer involved (if applicable)
-  product_id INTEGER NOT NULL,          -- ID of the product sold (should reference products(id))
-  device_category VARCHAR(50),
-  dealer_cost_price NUMERIC(10,2),
-  marketer_selling_price NUMERIC(10,2),
-  order_details TEXT,                   -- Additional details about the order (e.g., customer info, delivery address)
-  status VARCHAR(50) DEFAULT 'pending', -- Order status (e.g., 'pending', 'confirmed', 'released_confirmed')
-  price NUMERIC(10,2),                  -- Price at which the product was sold
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  marketer_id INTEGER NOT NULL,
+  device_name TEXT NOT NULL,
+  device_model TEXT NOT NULL,
+  device_type VARCHAR(50) NOT NULL,
+  dealer_cost_price NUMERIC(10,2) NOT NULL,
+  marketer_selling_price NUMERIC(10,2) NOT NULL,
+  number_of_devices INTEGER NOT NULL,
+  sold_amount NUMERIC(10,2) NOT NULL,
+  customer_name VARCHAR(255) NOT NULL,
+  customer_phone VARCHAR(50) NOT NULL,
+  customer_address TEXT NOT NULL,
+  bnpl_platform VARCHAR(50),
+  sale_date TIMESTAMP NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );

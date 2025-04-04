@@ -2,9 +2,7 @@
 const express = require('express');
 const router = express.Router();
 const { verifyToken } = require('../middlewares/authMiddleware');
-const { verifyRole } = require("../middlewares/roleMiddleware");
-
-// Import controller functions from manageOrderControllers.js
+const { verifyRole } = require('../middlewares/roleMiddleware');
 const {
   getOrders,
   confirmOrderToDealer,
@@ -12,35 +10,39 @@ const {
   getReleasedOrderHistory,
 } = require('../controllers/manageOrderController');
 
-// List all orders (optional) - accessible by Master Admin and Admin
+// GET /api/manage-orders
+// Retrieves orders placed by marketers that are pending confirmation.
 router.get(
-  '/',
+  "/",
   verifyToken,
-  verifyRole(["MasterAdmin", "Admin"]),
+  verifyRole(["MasterAdmin"]),
   getOrders
 );
 
-// Confirm order to dealer - Only Master Admin can perform this action.
+// PATCH /api/manage-orders/:id/confirm
+// Allows Master Admin to confirm an order (i.e. update status to "confirmed_to_dealer").
 router.patch(
-  '/:orderId/confirm',
+  "/:id/confirm",
   verifyToken,
   verifyRole(["MasterAdmin"]),
   confirmOrderToDealer
 );
 
-// Confirm released order - Accessible by Master Admin and Admin.
+// PATCH /api/manage-orders/:id/confirm-release
+// Allows Admin or Master Admin to confirm that a released order has been delivered.
 router.patch(
-  '/:orderId/confirm-release',
+  "/:id/confirm-release",
   verifyToken,
-  verifyRole(["MasterAdmin", "Admin"]),
+  verifyRole(["MasterAdmin"]),
   confirmReleasedOrder
 );
 
-// Retrieve release order history for reconciliation - Accessible by Master Admin and Admin.
+// GET /api/manage-orders/history
+// Retrieves the history of orders that have been processed.
 router.get(
-  '/history',
+  "/history",
   verifyToken,
-  verifyRole(["MasterAdmin", "Admin"]),
+  verifyRole(["MasterAdmin"]),
   getReleasedOrderHistory
 );
 
