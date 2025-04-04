@@ -10,7 +10,7 @@ const { pool } = require("../config/database");
 const submitBiodata = async (req, res, next) => {
   try {
     const {
-      marketer_id, // This now holds the marketer's unique ID
+      marketer_id,
       name,
       address,
       phone,
@@ -36,8 +36,10 @@ const submitBiodata = async (req, res, next) => {
       account_number,
       passport_photo_url,
     } = req.body;
-
-    // The query uses a subquery to convert the unique ID to the numeric ID.
+    
+    // Convert empty date string to null
+    const dob = date_of_birth === "" ? null : date_of_birth;
+    
     const query = `
       INSERT INTO marketer_biodata (
         marketer_id, name, address, phone, religion, date_of_birth, marital_status,
@@ -59,34 +61,33 @@ const submitBiodata = async (req, res, next) => {
       RETURNING *
     `;
     const values = [
-      marketer_id,       // $1
-      name,              // $2
-      address,           // $3
-      phone,             // $4
-      religion,          // $5
-      date_of_birth,     // $6
+      marketer_id, // $1: Unique ID to get numeric id from users
+      name,        // $2
+      address,     // $3
+      phone,       // $4
+      religion,    // $5
+      dob,         // $6: using dob variable instead of date_of_birth
       marital_status,    // $7
       state_of_origin,   // $8
-      state_of_residence,// $9
+      state_of_residence, // $9
       mothers_maiden_name, // $10
-      school_attended,   // $11
+      school_attended,     // $11
       means_of_identification, // $12
-      id_document_url,   // $13
-      last_place_of_work,// $14
-      job_description,   // $15
-      reason_for_quitting, // $16
-      medical_condition, // $17
-      next_of_kin_name,  // $18
-      next_of_kin_phone, // $19
-      next_of_kin_address, // $20
+      id_document_url,         // $13
+      last_place_of_work,      // $14
+      job_description,         // $15
+      reason_for_quitting,     // $16
+      medical_condition,       // $17
+      next_of_kin_name,        // $18
+      next_of_kin_phone,       // $19
+      next_of_kin_address,     // $20
       next_of_kin_relationship, // $21
-      bank_name,         // $22
-      account_name,      // $23
-      account_number,    // $24
-      passport_photo_url // $25
-      // CURRENT_TIMESTAMP and CURRENT_TIMESTAMP are hard-coded for $26 and $27
+      bank_name,               // $22
+      account_name,            // $23
+      account_number,          // $24
+      passport_photo_url,      // $25
     ];
-
+    
     const result = await pool.query(query, values);
 
     // Update the user's biodata flag using the unique ID
