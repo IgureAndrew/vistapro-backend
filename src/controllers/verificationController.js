@@ -1,6 +1,7 @@
 // src/controllers/VerificationController.js
 const { pool } = require("../config/database");
 
+
 /**
  * submitBiodata
  * Inserts a new biodata record into the marketer_biodata table and updates the user's flag.
@@ -53,36 +54,37 @@ const submitBiodata = async (req, res, next) => {
         $12, $13, $14, $15,
         $16, $17, $18, $19,
         $20, $21, $22, $23,
-        $24, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+        $24, $25, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
       )
       RETURNING *
     `;
     const values = [
-      marketer_id, // unique ID
-      name,
-      address,
-      phone,
-      religion,
-      date_of_birth,
-      marital_status,
-      state_of_origin,
-      state_of_residence,
-      mothers_maiden_name,
-      school_attended,
-      means_of_identification,
-      id_document_url,
-      last_place_of_work,
-      job_description,
-      reason_for_quitting,
-      medical_condition,
-      next_of_kin_name,
-      next_of_kin_phone,
-      next_of_kin_address,
-      next_of_kin_relationship,
-      bank_name,
-      account_name,
-      account_number,
-      passport_photo_url,
+      marketer_id,       // $1
+      name,              // $2
+      address,           // $3
+      phone,             // $4
+      religion,          // $5
+      date_of_birth,     // $6
+      marital_status,    // $7
+      state_of_origin,   // $8
+      state_of_residence,// $9
+      mothers_maiden_name, // $10
+      school_attended,   // $11
+      means_of_identification, // $12
+      id_document_url,   // $13
+      last_place_of_work,// $14
+      job_description,   // $15
+      reason_for_quitting, // $16
+      medical_condition, // $17
+      next_of_kin_name,  // $18
+      next_of_kin_phone, // $19
+      next_of_kin_address, // $20
+      next_of_kin_relationship, // $21
+      bank_name,         // $22
+      account_name,      // $23
+      account_number,    // $24
+      passport_photo_url // $25
+      // CURRENT_TIMESTAMP and CURRENT_TIMESTAMP are hard-coded for $26 and $27
     ];
 
     const result = await pool.query(query, values);
@@ -101,6 +103,7 @@ const submitBiodata = async (req, res, next) => {
     next(error);
   }
 };
+
 
 
 /**
