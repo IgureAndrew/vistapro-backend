@@ -391,7 +391,7 @@ const getSubmissions = async (req, res, next) => {
     const guarantorResult = await pool.query("SELECT * FROM marketer_guarantor_form ORDER BY created_at DESC");
     const commitmentResult = await pool.query("SELECT * FROM marketer_commitment_form ORDER BY created_at DESC");
 
-    // Combine into one response object
+    // Combine into one response object (you can adjust as needed)
     const submissions = {
       biodata: biodataResult.rows,
       guarantor: guarantorResult.rows,
@@ -437,6 +437,78 @@ const masterApprove = async (req, res, next) => {
   }
 };
 
+/**
+ * deleteBiodataSubmission
+ * Allows a Master Admin to delete a biodata submission.
+ */
+const deleteBiodataSubmission = async (req, res, next) => {
+  try {
+    if (req.user.role !== "MasterAdmin") {
+      return res.status(403).json({ message: "Only a Master Admin can delete submissions." });
+    }
+    const { submissionId } = req.params;
+    const query = "DELETE FROM marketer_biodata WHERE id = $1 RETURNING *";
+    const result = await pool.query(query, [submissionId]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: "Biodata submission not found." });
+    }
+    res.status(200).json({
+      message: "Biodata submission deleted successfully.",
+      submission: result.rows[0],
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * deleteGuarantorSubmission
+ * Allows a Master Admin to delete a guarantor submission.
+ */
+const deleteGuarantorSubmission = async (req, res, next) => {
+  try {
+    if (req.user.role !== "MasterAdmin") {
+      return res.status(403).json({ message: "Only a Master Admin can delete submissions." });
+    }
+    const { submissionId } = req.params;
+    const query = "DELETE FROM marketer_guarantor_form WHERE id = $1 RETURNING *";
+    const result = await pool.query(query, [submissionId]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: "Guarantor submission not found." });
+    }
+    res.status(200).json({
+      message: "Guarantor submission deleted successfully.",
+      submission: result.rows[0],
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * deleteCommitmentSubmission
+ * Allows a Master Admin to delete a commitment submission.
+ */
+const deleteCommitmentSubmission = async (req, res, next) => {
+  try {
+    if (req.user.role !== "MasterAdmin") {
+      return res.status(403).json({ message: "Only a Master Admin can delete submissions." });
+    }
+    const { submissionId } = req.params;
+    const query = "DELETE FROM marketer_commitment_form WHERE id = $1 RETURNING *";
+    const result = await pool.query(query, [submissionId]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: "Commitment submission not found." });
+    }
+    res.status(200).json({
+      message: "Commitment submission deleted successfully.",
+      submission: result.rows[0],
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   submitBiodata,
   submitGuarantor,
@@ -445,4 +517,7 @@ module.exports = {
   adminReview,
   superadminVerify,
   masterApprove,
+  deleteBiodataSubmission,
+  deleteGuarantorSubmission,
+  deleteCommitmentSubmission,
 };
