@@ -38,8 +38,8 @@ const submitBiodata = async (req, res, next) => {
     } = req.body;
     
     // Get the marketer's unique ID from the authenticated user
-    const marketerUniqueId = req.user.unique_id; console.log("DEBUG => req.user:", req.user);
-    
+    const marketerUniqueId = req.user.unique_id;
+    console.log("DEBUG => req.user:", req.user);
     if (!marketerUniqueId) {
       return res.status(400).json({ message: "User unique ID is missing from token." });
     }
@@ -270,31 +270,34 @@ const submitCommitment = async (req, res, next) => {
 
 /**
  * adminReview
- * Allows the Admin to review a marketer's submitted forms.
- * Expects in req.body: marketerId, bioApproved, guarantorApproved, commitmentApproved.
+ * Allows an Admin to review a marketer's submitted forms.
+ * Expects in req.body: marketerUniqueId, bioApproved, guarantorApproved, commitmentApproved,
+ * and admin_review_report (a text report).
  */
 const adminReview = async (req, res, next) => {
   try {
-    const { marketerId, bioApproved, guarantorApproved, commitmentApproved } = req.body;
-    if (!marketerId) {
-      return res.status(400).json({ message: "Marketer ID is required." });
+    const { marketerUniqueId, bioApproved, guarantorApproved, commitmentApproved, admin_review_report } = req.body;
+    if (!marketerUniqueId) {
+      return res.status(400).json({ message: "Marketer Unique ID is required." });
     }
-    // Update the user's verification review flags and set status to 'admin reviewed'
+    // Update the user's verification flags, store the admin review report, and set status to 'admin reviewed'
     const query = `
       UPDATE users
       SET bio_submitted = $1,
           guarantor_submitted = $2,
           commitment_submitted = $3,
+          admin_review_report = $4,
           overall_verification_status = 'admin reviewed',
           updated_at = NOW()
-      WHERE id = $4
+      WHERE unique_id = $5
       RETURNING *
     `;
     const values = [
       !!bioApproved,
       !!guarantorApproved,
       !!commitmentApproved,
-      marketerId,
+      admin_review_report,
+      marketerUniqueId,
     ];
     const result = await pool.query(query, values);
     res.status(200).json({
@@ -308,34 +311,79 @@ const adminReview = async (req, res, next) => {
 
 /**
  * superadminVerify
- * Allows the SuperAdmin to cross-check the marketer's forms.
- * Expects in req.body: marketerId and a boolean verified flag.
+ * Allows a SuperAdmin to verify or reject a marketer's forms.
+ * Expects in req.body: marketerUniqueId, verified (boolean), and superadmin_review_report.
+ * Ensures that the marketer is assigned to an admin whose super_admin_id matches the logged-in SuperAdmin.
  */
 const superadminVerify = async (req, res, next) => {
   try {
-    const { marketerId, verified } = req.body;
-    if (!marketerId) {
-      return res.status(400).json({ message: "Marketer ID is required." });
+    const { marketerUniqueId, verified, superadmin_review_report } = req.body;
+    if (!marketerUniqueId) {
+      return res.status(400).json({ message: "Marketer Unique ID is required." });
     }
-    const status = verified ? "superadmin verified" : "superadmin rejected";
-    const query = `
+    
+    // Get the logged-in superadmin's numeric ID from the token.
+    const superadminId = req.user.id;
+    
+    // Retrieve the marketer's record.
+    const marketerResult = await pool.query(
+      "SELECT id, admin_id FROM users WHERE unique_id = $1",
+      [marketerUniqueId]
+    );
+    if (marketerResult.rowCount === 0) {
+      return res.status(404).json({ message: "Marketer not found." });
+    }
+    const marketer = marketerResult.rows[0];
+    
+    // Ensure the marketer is assigned to an admin.
+    if (!marketer.admin_id) {
+      return res.status(400).json({ message: "Marketer is not assigned to any admin." });
+    }
+    
+    // Retrieve the admin's record.
+    const adminResult = await pool.query(
+      "SELECT super_admin_id FROM users WHERE id = $1",
+      [marketer.admin_id]
+    );
+    if (adminResult.rowCount === 0) {
+      return res.status(404).json({ message: "Admin not found." });
+    }
+    const admin = adminResult.rows[0];
+    
+    // Check that the admin's super_admin_id matches the logged-in superadmin's ID.
+    if (admin.super_admin_id !== superadminId) {
+      return res.status(403).json({ message: "You are not authorized to verify this marketer." });
+    }
+    
+    // Set overall verification status.
+    const overallStatus = verified ? "superadmin verified" : "superadmin rejected";
+    
+    // Update the marketer's record with the verification status and review report.
+    const queryUpdate = `
       UPDATE users
       SET overall_verification_status = $1,
+          superadmin_review_report = $2,
           updated_at = NOW()
-      WHERE id = $2
+      WHERE unique_id = $3
       RETURNING *
     `;
-    const values = [status, marketerId];
-    const result = await pool.query(query, values);
+    const valuesUpdate = [overallStatus, superadmin_review_report, marketerUniqueId];
+    const resultUpdate = await pool.query(queryUpdate, valuesUpdate);
+    
     res.status(200).json({
       message: "Marketer verified by SuperAdmin.",
-      user: result.rows[0],
+      user: resultUpdate.rows[0],
     });
   } catch (error) {
     next(error);
   }
 };
 
+/**
+ * getSubmissions
+ * Retrieves all submissions from the marketer_biodata, marketer_guarantor_form,
+ * and marketer_commitment_form tables.
+ */
 const getSubmissions = async (req, res, next) => {
   try {
     // Fetch submissions from each table
@@ -343,7 +391,7 @@ const getSubmissions = async (req, res, next) => {
     const guarantorResult = await pool.query("SELECT * FROM marketer_guarantor_form ORDER BY created_at DESC");
     const commitmentResult = await pool.query("SELECT * FROM marketer_commitment_form ORDER BY created_at DESC");
 
-    // Combine into one response object (you can adjust as needed)
+    // Combine into one response object
     const submissions = {
       biodata: biodataResult.rows,
       guarantor: guarantorResult.rows,
@@ -359,24 +407,24 @@ const getSubmissions = async (req, res, next) => {
 /**
  * masterApprove
  * Allows the Master Admin to give final approval to a marketer.
- * Expects in req.body: marketerId.
- * Optionally, you could extend this to accept a decision (approved, pending, rejected).
+ * Expects in req.body: marketerUniqueId.
+ * Updates overall_verification_status to "approved" and account_status to "active".
  */
 const masterApprove = async (req, res, next) => {
   try {
-    const { marketerId } = req.body;
-    if (!marketerId) {
-      return res.status(400).json({ message: "Marketer ID is required." });
+    const { marketerUniqueId } = req.body;
+    if (!marketerUniqueId) {
+      return res.status(400).json({ message: "Marketer Unique ID is required." });
     }
     const query = `
       UPDATE users
       SET overall_verification_status = 'approved',
           account_status = 'active',
           updated_at = NOW()
-      WHERE id = $1
+      WHERE unique_id = $1
       RETURNING *
     `;
-    const result = await pool.query(query, [marketerId]);
+    const result = await pool.query(query, [marketerUniqueId]);
     if (result.rowCount === 0) {
       return res.status(404).json({ message: "Marketer not found." });
     }
@@ -398,3 +446,4 @@ module.exports = {
   superadminVerify,
   masterApprove,
 };
+z

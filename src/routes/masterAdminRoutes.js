@@ -20,11 +20,13 @@ const {
   unlockUser,
   getUsers,
   getUserSummary,
+  getDashboardSummary,
   assignMarketer,
   assignMarketersToAdmin,
   assignAdminToSuperAdmin,
   assignAdminsToSuperAdmin,
-  getDashboardSummary,
+  unassignMarketersFromAdmin,
+  unassignAdminsFromSuperadmin
 } = require('../controllers/masterAdminController');
 
 // Define the uploads directory and ensure it exists.
@@ -98,39 +100,34 @@ router.post(
   addUser
 );
 
-// Only MasterAdmin should see the summary
-router.get(
-  '/dashboard-summary',
-  verifyToken,
-  verifyRole(['MasterAdmin']), 
-  getDashboardSummary
-);
+// Dashboard summary routes.
+router.get('/dashboard-summary', verifyToken, verifyRole(['MasterAdmin']), getDashboardSummary);
+router.get('/users/summary', verifyToken, verifyRole(['MasterAdmin']), getUserSummary);
 
 router.put('/users/:id', verifyToken, verifyRole(['MasterAdmin']), updateUser);
 router.delete('/users/:id', verifyToken, verifyRole(['MasterAdmin']), deleteUser);
 router.patch('/users/:id/lock', verifyToken, verifyRole(['MasterAdmin']), lockUser);
 router.patch('/users/:id/unlock', verifyToken, verifyRole(['MasterAdmin']), unlockUser);
 
-// New route: Get summary of user activities.
-router.get('/users/summary', verifyToken, verifyRole(['MasterAdmin']), getUserSummary);
+// Assignment Routes
 
-// PATCH endpoint to assign a marketer to an admin.
+// PATCH endpoint to assign a single marketer to an admin.
 router.patch('/marketers/:marketerId/assign', verifyToken, verifyRole(['MasterAdmin']), assignMarketer);
 
-// New route: Assign one or multiple marketers to an admin.
+// POST endpoint to assign one or multiple marketers to an admin.
 router.post('/assign-marketers-to-admin', verifyToken, verifyRole(['MasterAdmin']), assignMarketersToAdmin);
 
-// Protected route: Register a Super Admin (accessible by Master Admin).
-router.post('/register-super-admin', verifyToken, verifyRole(['MasterAdmin']), registerSuperAdmin);
+// POST endpoint for unassigning a marketer from an admin.
+router.post('/unassign-marketers-from-admin', verifyToken, verifyRole(['MasterAdmin']), unassignMarketersFromAdmin);
 
-// Route to assign a single Admin to a Super Admin.
+// PATCH endpoint to assign a single admin to a super admin.
 router.patch('/assign-admin-to-superadmin', verifyToken, verifyRole(['MasterAdmin']), assignAdminToSuperAdmin);
 
-// New route: Assign multiple Admins to a Super Admin.
+// POST endpoint to assign multiple admins to a super admin.
 router.post('/assign-admins-to-superadmin', verifyToken, verifyRole(['MasterAdmin']), assignAdminsToSuperAdmin);
 
-// PATCH endpoint to assign one or multiple marketers to an admin.
-router.post('/assign-marketers-to-admin', verifyToken, verifyRole(['MasterAdmin']), assignMarketersToAdmin);
+// POST endpoint for unassigning admins from a super admin.
+router.post('/unassign-admins-from-superadmin', verifyToken, verifyRole(['MasterAdmin']), unassignAdminsFromSuperadmin);
 
 // Error handling middleware.
 router.use((err, req, res, next) => {
