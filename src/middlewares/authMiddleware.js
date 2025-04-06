@@ -8,6 +8,11 @@ dotenv.config();
  * If the token is valid, the decoded payload is attached to req.user.
  * Otherwise, a 401 Unauthorized response is sent.
  */
+
+const jwt = require('jsonwebtoken');
+const dotenv = require('dotenv');
+dotenv.config();
+
 const verifyToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
   
@@ -15,7 +20,6 @@ const verifyToken = (req, res, next) => {
     return res.status(401).json({ message: 'No token provided.' });
   }
   
-  // Expect the header format to be "Bearer <token>"
   const token = authHeader.split(' ')[1];
   if (!token) {
     return res.status(401).json({ message: 'Token format is invalid.' });
@@ -23,6 +27,9 @@ const verifyToken = (req, res, next) => {
   
   jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
     if (err) {
+      if (err.name === 'TokenExpiredError') {
+        return res.status(401).json({ message: 'TokenExpired' });
+      }
       return res.status(401).json({ message: 'Token is invalid.' });
     }
     
