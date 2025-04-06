@@ -9,10 +9,6 @@ dotenv.config();
  * Otherwise, a 401 Unauthorized response is sent.
  */
 
-const jwt = require('jsonwebtoken');
-const dotenv = require('dotenv');
-dotenv.config();
-
 const verifyToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
   
