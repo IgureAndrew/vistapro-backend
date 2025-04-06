@@ -3,47 +3,70 @@ const { pool } = require('../config/database');
 
 /**
  * createStockUpdate - Called when a marketer picks up device(s) from a dealer.
- * Records the pickup event with quantity, setting a deadline 4 days from pickup.
- * Also notifies the admin assigned to the marketer.
- * Expected req.body: { marketer_id, dealer_id, device_id, device_category, quantity }
+ * Records the pickup event with quantity, sets a deadline 4 days from pickup,
+ * and notifies the admin assigned to the marketer.
+ *
+ * Expected req.body:
+ * {
+ *   dealerUniqueId,      // Unique ID of the dealer (string)
+ *   device_id,           // Numeric ID of the device
+ *   device_category,     // Category of the device (e.g., "Phone", "Tablet")
+ *   quantity             // Number of devices picked up (defaults to 1 if not provided)
+ * }
+ *
+ * The marketer's unique ID is retrieved from req.user.
  */
 const createStockUpdate = async (req, res, next) => {
   try {
-    const { marketer_id, dealer_id, device_id, device_category, quantity } = req.body;
-    if (!marketer_id || !dealer_id || !device_id || !device_category) {
+    // Extract dealerUniqueId and other fields from the request body.
+    const { dealerUniqueId, device_id, device_category, quantity } = req.body;
+    
+    // Get the marketer's unique ID from the authenticated user.
+    const marketerUniqueId = req.user.unique_id;
+    if (!marketerUniqueId || !dealerUniqueId || !device_id || !device_category) {
       return res.status(400).json({ message: "Required fields missing." });
     }
-    // Use provided quantity or default to 1 if not specified
+
+    // Use provided quantity or default to 1 if not specified.
     const qty = quantity || 1;
-    
+
+    // Set the pickup date to now and deadline to 4 days later.
     const pickup_date = new Date();
-    // Compute deadline = pickup_date + 4 days
     const deadline = new Date(pickup_date.getTime() + 4 * 24 * 60 * 60 * 1000);
-    
+
+    // Insert the stock update record using subqueries to convert unique IDs to numeric IDs.
     const insertQuery = `
       INSERT INTO stock_updates 
         (marketer_id, dealer_id, device_id, device_category, quantity, pickup_date, deadline, sold)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, false)
+      VALUES (
+        (SELECT id FROM users WHERE unique_id = $1),
+        (SELECT id FROM users WHERE unique_id = $2),
+        $3, $4, $5, $6, $7, false
+      )
       RETURNING *
     `;
-    const values = [marketer_id, dealer_id, device_id, device_category, qty, pickup_date, deadline];
+    const values = [marketerUniqueId, dealerUniqueId, device_id, device_category, qty, pickup_date, deadline];
     const result = await pool.query(insertQuery, values);
     const stockRecord = result.rows[0];
-    
-    // Notify admin assigned to the marketer.
-    // Assume the "marketers" table has an admin_id column.
-    const adminQuery = `SELECT admin_id FROM marketers WHERE id = $1`;
-    const adminResult = await pool.query(adminQuery, [marketer_id]);
+
+    // Retrieve the assigned admin for the marketer.
+    // Assumes that the "marketers" table has an "admin_id" column and that the marketer exists there.
+    const adminQuery = `
+      SELECT admin_id 
+      FROM marketers 
+      WHERE id = (SELECT id FROM users WHERE unique_id = $1)
+    `;
+    const adminResult = await pool.query(adminQuery, [marketerUniqueId]);
     if (adminResult.rows.length > 0) {
       const admin_id = adminResult.rows[0].admin_id;
       const notifQuery = `
         INSERT INTO notifications (user_id, message, created_at)
         VALUES ($1, $2, NOW())
       `;
-      const notifMessage = `Marketer ${marketer_id} picked up ${qty} unit(s) of device ${device_id} (Category: ${device_category}). They must be sold within 4 days.`;
+      const notifMessage = `Marketer ${marketerUniqueId} picked up ${qty} unit(s) of device ${device_id} (Category: ${device_category}). They must be sold within 4 days.`;
       await pool.query(notifQuery, [admin_id, notifMessage]);
     }
-    
+
     return res.status(201).json({
       message: "Stock update record created successfully.",
       stock: stockRecord

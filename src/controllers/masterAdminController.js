@@ -410,6 +410,7 @@ const getUserSummary = async (req, res, next) => {
  */
 const assignMarketer = async (req, res, next) => {
   try {
+    // Expects: req.params.marketerUniqueId and req.body.adminUniqueId
     const { marketerUniqueId } = req.params;
     const { adminUniqueId } = req.body;
     if (!marketerUniqueId || !adminUniqueId) {
