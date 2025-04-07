@@ -80,6 +80,16 @@ router.put(
   updateProfile
 );
 
+router.get(
+  '/profile',
+  verifyToken,
+  verifyRole(['MasterAdmin']),
+  (req, res, next) => {
+    // Assuming you have a function to get the current user from req.user
+    res.status(200).json({ user: req.user });
+  }
+);
+
 // Routes for user management.
 router.get('/users', verifyToken, verifyRole(['MasterAdmin']), getUsers);
 router.post(
