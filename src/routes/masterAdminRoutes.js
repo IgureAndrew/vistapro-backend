@@ -22,9 +22,7 @@ const {
   getUserSummary,
   getDashboardSummary,
   assignMarketer,
-  assignMarketersToAdmin,
   assignAdminToSuperAdmin,
-  assignAdminsToSuperAdmin,
   unassignMarketersFromAdmin,
   unassignAdminsFromSuperadmin
 } = require('../controllers/masterAdminController');
@@ -115,8 +113,6 @@ router.patch('/users/:id/unlock', verifyToken, verifyRole(['MasterAdmin']), unlo
 // Note: Updated parameter to use marketerUniqueId for consistency.
 router.patch('/marketers/:marketerUniqueId/assign', verifyToken, verifyRole(['MasterAdmin']), assignMarketer);
 
-// POST endpoint to assign one or multiple marketers to an admin.
-router.post('/assign-marketers-to-admin', verifyToken, verifyRole(['MasterAdmin']), assignMarketersToAdmin);
 
 // POST endpoint for unassigning a marketer from an admin.
 router.post('/unassign-marketers-from-admin', verifyToken, verifyRole(['MasterAdmin']), unassignMarketersFromAdmin);
@@ -124,8 +120,7 @@ router.post('/unassign-marketers-from-admin', verifyToken, verifyRole(['MasterAd
 // PATCH endpoint to assign a single admin to a super admin.
 router.patch('/assign-admin-to-superadmin', verifyToken, verifyRole(['MasterAdmin']), assignAdminToSuperAdmin);
 
-// POST endpoint to assign multiple admins to a super admin.
-router.post('/assign-admins-to-superadmin', verifyToken, verifyRole(['MasterAdmin']), assignAdminsToSuperAdmin);
+
 
 // POST endpoint for unassigning admins from a super admin.
 router.post('/unassign-admins-from-superadmin', verifyToken, verifyRole(['MasterAdmin']), unassignAdminsFromSuperadmin);
