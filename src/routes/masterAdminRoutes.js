@@ -22,7 +22,8 @@ const {
   getUserSummary,
   getDashboardSummary,
   assignMarketer,
-  assignAdminToSuperAdmin,
+  assignMarketers,          // New: multi‑assignment of marketers to admin
+  assignAdminToSuperAdmin,  // New: multi‑assignment of admins to super admin
   unassignMarketersFromAdmin,
   unassignAdminsFromSuperadmin
 } = require('../controllers/masterAdminController');
@@ -93,7 +94,6 @@ router.post(
   '/users',
   verifyToken,
   verifyRole(['MasterAdmin']),
-  // Use the PDF upload middleware for dealer registration certificates.
   uploadPDF.single('registrationCertificate'),
   addUser
 );
@@ -110,20 +110,19 @@ router.patch('/users/:id/unlock', verifyToken, verifyRole(['MasterAdmin']), unlo
 // Assignment Routes
 
 // PATCH endpoint to assign a single marketer to an admin.
-// Note: Updated parameter to use marketerUniqueId for consistency.
 router.patch('/marketers/:marketerUniqueId/assign', verifyToken, verifyRole(['MasterAdmin']), assignMarketer);
 
+// POST endpoint to assign one or multiple marketers to an admin.
+router.post('/assign-marketers-to-admin', verifyToken, verifyRole(['MasterAdmin']), assignMarketers);
 
-// POST endpoint for unassigning a marketer from an admin.
+// POST endpoint to unassign a marketer from an admin.
 router.post('/unassign-marketers-from-admin', verifyToken, verifyRole(['MasterAdmin']), unassignMarketersFromAdmin);
 
-// PATCH endpoint to assign a single admin to a super admin.
-router.patch('/assign-admin-to-superadmin', verifyToken, verifyRole(['MasterAdmin']), assignAdminToSuperAdmin);
+// POST endpoint to assign one or multiple admins to a super admin.
+router.post('/assign-admins-to-superadmin', verifyToken, verifyRole(['MasterAdmin']), assignAdminToSuperAdmin);
 
-
-
-// POST endpoint for unassigning admins from a super admin.
-router.post('/unassign-admins-from-superadmin', verifyToken, verifyRole(['MasterAdmin']), unassignAdminsFromSuperadmin);
+// POST endpoint to unassign an admin from a super admin.
+router.post('/unassign-admin-from-superadmin', verifyToken, verifyRole(['MasterAdmin']), unassignAdminsFromSuperadmin);
 
 // Error handling middleware.
 router.use((err, req, res, next) => {

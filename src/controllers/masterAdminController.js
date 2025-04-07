@@ -24,7 +24,6 @@ const registerMasterAdmin = async (req, res, next) => {
       });
     }
     const hashedPassword = await bcrypt.hash(password, 10);
-    // Generate a role-specific ID for Master Admin (e.g., RSM001, RSM002, etc.)
     const unique_id = await generateUniqueID("MasterAdmin");
     const newUser = await createUser({
       unique_id,
@@ -71,7 +70,6 @@ const registerSuperAdmin = async (req, res, next) => {
       });
     }
     const hashedPassword = await bcrypt.hash(password, 10);
-    // Generate a role-specific ID for Super Admin (e.g., SM000001, SM000002, etc.)
     const unique_id = await generateUniqueID("SuperAdmin");
     const newSuperAdmin = await createUser({
       unique_id,
@@ -135,8 +133,6 @@ const updateProfile = async (req, res, next) => {
 
 /**
  * addUser - Allows Master Admin to create a new user.
- * For SuperAdmin, Admin, and Marketer: expects basic user fields.
- * For Dealer: also expects registration certificate file (PDF only).
  */
 const addUser = async (req, res, next) => {
   try {
@@ -406,11 +402,11 @@ const getUserSummary = async (req, res, next) => {
 };
 
 /**
- * assignMarketer - Assigns a marketer to an admin using unique IDs.
+ * assignMarketer - Assigns a single marketer to an admin using unique IDs.
+ * Expects: req.params.marketerUniqueId and req.body.adminUniqueId
  */
 const assignMarketer = async (req, res, next) => {
   try {
-    // Expects: req.params.marketerUniqueId and req.body.adminUniqueId
     const { marketerUniqueId } = req.params;
     const { adminUniqueId } = req.body;
     if (!marketerUniqueId || !adminUniqueId) {
@@ -437,24 +433,82 @@ const assignMarketer = async (req, res, next) => {
 };
 
 /**
- * assignAdminToSuperAdmin - Assigns a single Admin to a Super Admin using unique IDs.
+ * assignMarketers - Assigns one or multiple Marketers to an Admin using unique IDs.
+ * Expects: req.body.adminUniqueId and req.body.marketerUniqueIds (can be a string or an array)
+ */
+const assignMarketers = async (req, res, next) => {
+  try {
+    if (req.user.role !== "MasterAdmin") {
+      return res.status(403).json({ message: "Only a Master Admin can assign marketers to an Admin." });
+    }
+    let { adminUniqueId, marketerUniqueIds } = req.body;
+    if (!adminUniqueId || !marketerUniqueIds) {
+      return res.status(400).json({ message: "Both adminUniqueId and marketerUniqueIds are required." });
+    }
+    // Wrap single value in an array if necessary.
+    if (!Array.isArray(marketerUniqueIds)) {
+      marketerUniqueIds = [marketerUniqueIds];
+    }
+    if (marketerUniqueIds.length === 0) {
+      return res.status(400).json({ message: "At least one marketer ID must be provided." });
+    }
+    // Verify provided admin exists and is an Admin.
+    const adminCheck = await pool.query(
+      "SELECT unique_id FROM users WHERE unique_id = $1 AND role = 'Admin'",
+      [adminUniqueId]
+    );
+    if (adminCheck.rowCount === 0) {
+      return res.status(404).json({ message: "Admin not found." });
+    }
+    // Validate provided marketer IDs.
+    const marketerCheck = await pool.query(
+      "SELECT unique_id FROM users WHERE unique_id = ANY($1::text[]) AND role = 'Marketer'",
+      [marketerUniqueIds]
+    );
+    const validMarketerUniqueIds = marketerCheck.rows.map(row => row.unique_id);
+    const invalidMarketerIds = marketerUniqueIds.filter(id => !validMarketerUniqueIds.includes(id));
+    if (invalidMarketerIds.length > 0) {
+      return res.status(404).json({ message: `The following IDs are not valid Marketers: ${invalidMarketerIds.join(", ")}` });
+    }
+    const query = `
+      UPDATE users
+      SET admin_id = (SELECT id FROM users WHERE unique_id = $1),
+          updated_at = NOW()
+      WHERE unique_id = ANY($2::text[]) AND role = 'Marketer'
+      RETURNING *
+    `;
+    const values = [adminUniqueId, marketerUniqueIds];
+    const result = await pool.query(query, values);
+    return res.status(200).json({
+      message: "Marketers assigned to Admin successfully.",
+      assignedMarketers: result.rows,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * assignAdminToSuperAdmin - Assigns one or multiple Admins to a Super Admin using unique IDs.
+ * Expects: req.body.superAdminUniqueId and req.body.adminUniqueIds (can be a string or an array)
  */
 const assignAdminToSuperAdmin = async (req, res, next) => {
   try {
     if (req.user.role !== "MasterAdmin") {
       return res.status(403).json({ message: "Only a Master Admin can assign admin accounts to a Super Admin." });
     }
-    const { adminUniqueId, superAdminUniqueId } = req.body;
-    if (!adminUniqueId || !superAdminUniqueId) {
-      return res.status(400).json({ message: "Both adminUniqueId and superAdminUniqueId are required." });
+    let { superAdminUniqueId, adminUniqueIds } = req.body;
+    if (!superAdminUniqueId || !adminUniqueIds) {
+      return res.status(400).json({ message: "Both superAdminUniqueId and adminUniqueIds are required." });
     }
-    const adminCheck = await pool.query(
-      "SELECT id FROM users WHERE unique_id = $1 AND role = 'Admin'",
-      [adminUniqueId]
-    );
-    if (adminCheck.rowCount === 0) {
-      return res.status(404).json({ message: "Admin not found." });
+    // Wrap single value in an array if necessary.
+    if (!Array.isArray(adminUniqueIds)) {
+      adminUniqueIds = [adminUniqueIds];
     }
+    if (adminUniqueIds.length === 0) {
+      return res.status(400).json({ message: "At least one admin ID must be provided." });
+    }
+    // Verify that the Super Admin exists.
     const superAdminCheck = await pool.query(
       "SELECT id FROM users WHERE unique_id = $1 AND role = 'SuperAdmin'",
       [superAdminUniqueId]
@@ -462,18 +516,28 @@ const assignAdminToSuperAdmin = async (req, res, next) => {
     if (superAdminCheck.rowCount === 0) {
       return res.status(404).json({ message: "Super Admin not found." });
     }
+    // Validate provided admin IDs.
+    const adminCheck = await pool.query(
+      "SELECT unique_id FROM users WHERE unique_id = ANY($1::text[]) AND role = 'Admin'",
+      [adminUniqueIds]
+    );
+    const validAdminUniqueIds = adminCheck.rows.map(row => row.unique_id);
+    const invalidIds = adminUniqueIds.filter(id => !validAdminUniqueIds.includes(id));
+    if (invalidIds.length > 0) {
+      return res.status(404).json({ message: `The following IDs are not valid Admins: ${invalidIds.join(", ")}` });
+    }
     const query = `
       UPDATE users
       SET super_admin_id = (SELECT id FROM users WHERE unique_id = $1),
           updated_at = NOW()
-      WHERE unique_id = $2
+      WHERE unique_id = ANY($2::text[]) AND role = 'Admin'
       RETURNING *
     `;
-    const values = [superAdminUniqueId, adminUniqueId];
+    const values = [superAdminUniqueId, adminUniqueIds];
     const result = await pool.query(query, values);
     return res.status(200).json({
-      message: "Admin assigned to Super Admin successfully.",
-      admin: result.rows[0],
+      message: "Admins assigned to Super Admin successfully.",
+      assignedAdmins: result.rows,
     });
   } catch (error) {
     next(error);
@@ -591,6 +655,7 @@ module.exports = {
   getUserSummary,
   getDashboardSummary,
   assignMarketer,
+  assignMarketers,
   assignAdminToSuperAdmin,
   unassignMarketersFromAdmin,
   unassignAdminsFromSuperadmin,
