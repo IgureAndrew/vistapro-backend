@@ -578,38 +578,42 @@ const unassignMarketersFromAdmin = async (req, res, next) => {
 };
 
 /**
- * unassignAdminsFromSuperadmin - Unassigns an admin from a super admin using unique IDs.
- * Expects in req.body: { adminUniqueId, superAdminUniqueId }
+ * unassignAdminsFromSuperadminMulti - Unassigns one or multiple admins from a super admin using unique IDs.
+ * Expects in req.body:
+ * {
+ *   "superAdminUniqueId": "SUPERADMIN_ID",
+ *   "adminUniqueIds": ["ADMIN_ID_1", "ADMIN_ID_2", ...]
+ * }
  */
-const unassignAdminsFromSuperadmin = async (req, res, next) => {
+const unassignAdminsFromSuperadminMulti = async (req, res, next) => {
   try {
-    const { adminUniqueId, superAdminUniqueId } = req.body;
-    if (!adminUniqueId || !superAdminUniqueId) {
-      return res.status(400).json({ message: "Both adminUniqueId and superAdminUniqueId are required." });
+    const { superAdminUniqueId, adminUniqueIds } = req.body;
+    if (!superAdminUniqueId || !Array.isArray(adminUniqueIds) || adminUniqueIds.length === 0) {
+      return res.status(400).json({ message: "Both superAdminUniqueId and a non-empty adminUniqueIds array are required." });
     }
+    // This query sets the super_admin_id column to NULL for the matching admin records
     const query = `
       UPDATE users
       SET super_admin_id = NULL,
           updated_at = NOW()
-      WHERE unique_id = $1
+      WHERE unique_id = ANY($1::text[])
         AND super_admin_id = (SELECT id FROM users WHERE unique_id = $2)
         AND role = 'Admin'
       RETURNING *
     `;
-    const values = [adminUniqueId, superAdminUniqueId];
+    const values = [adminUniqueIds, superAdminUniqueId];
     const result = await pool.query(query, values);
     if (result.rowCount === 0) {
-      return res.status(404).json({ message: "Admin not found or already unassigned." });
+      return res.status(404).json({ message: "No matching admins found or already unassigned." });
     }
     res.status(200).json({
-      message: "Admin unassigned successfully.",
-      user: result.rows[0],
+      message: "Admins unassigned successfully.",
+      unassignedAdmins: result.rows,
     });
   } catch (error) {
     next(error);
   }
 };
-
 /**
  * getDashboardSummary - Provides a summary of the activities on the dashboard overview.
  */
@@ -658,5 +662,5 @@ module.exports = {
   assignMarketers,
   assignAdminToSuperAdmin,
   unassignMarketersFromAdmin,
-  unassignAdminsFromSuperadmin,
+  unassignAdminsFromSuperadminMulti,
 };

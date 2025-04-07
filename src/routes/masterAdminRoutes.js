@@ -25,7 +25,7 @@ const {
   assignMarketers,          // New: multi‑assignment of marketers to admin
   assignAdminToSuperAdmin,  // New: multi‑assignment of admins to super admin
   unassignMarketersFromAdmin,
-  unassignAdminsFromSuperadmin
+  unassignAdminsFromSuperadminMulti
 } = require('../controllers/masterAdminController');
 
 // Define the uploads directory and ensure it exists.
@@ -121,8 +121,8 @@ router.post('/unassign-marketers-from-admin', verifyToken, verifyRole(['MasterAd
 // POST endpoint to assign one or multiple admins to a super admin.
 router.post('/assign-admins-to-superadmin', verifyToken, verifyRole(['MasterAdmin']), assignAdminToSuperAdmin);
 
-// POST endpoint to unassign an admin from a super admin.
-router.post('/unassign-admin-from-superadmin', verifyToken, verifyRole(['MasterAdmin']), unassignAdminsFromSuperadmin);
+// POST endpoint for unassigning one or multiple admins from a super admin.
+router.post('/unassign-admins-from-superadmin', verifyToken, verifyRole(['MasterAdmin']), unassignAdminsFromSuperadminMulti);
 
 // Error handling middleware.
 router.use((err, req, res, next) => {
