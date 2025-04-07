@@ -9,6 +9,9 @@ dotenv.config();
 
 const app = express();
 
+// Tell Express to trust the first proxy in front of it.
+app.set('trust proxy', 1);
+
 // Configure and apply the rate limiter middleware.
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes

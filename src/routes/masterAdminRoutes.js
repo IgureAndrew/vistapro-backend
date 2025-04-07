@@ -43,17 +43,10 @@ const storage = multer.diskStorage({
   },
 });
 
-// Multer for profile images (images only)
+// Multer for profile images (without file filter)
 const uploadImage = multer({
   storage,
-  limits: { fileSize: 1024 * 1024 * 5 },
-  fileFilter: (req, file, cb) => {
-    if (file.mimetype.startsWith("image/")) {
-      cb(null, true);
-    } else {
-      cb(new Error("Only image files are allowed."), false);
-    }
-  }
+  limits: { fileSize: 1024 * 1024 * 5 }
 });
 
 // Multer for PDF upload (used for dealer registration certificate)
@@ -107,7 +100,6 @@ router.patch('/users/:id/lock', verifyToken, verifyRole(['MasterAdmin']), lockUs
 router.patch('/users/:id/unlock', verifyToken, verifyRole(['MasterAdmin']), unlockUser);
 
 // Assignment Routes
-
 
 // POST endpoint to assign one or multiple marketers to an admin.
 router.post('/assign-marketers-to-admin', verifyToken, verifyRole(['MasterAdmin']), assignMarketersToAdmin);
