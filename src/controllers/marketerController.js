@@ -110,7 +110,6 @@ const placeOrder = async (req, res, next) => {
       device_name,
       device_model,
       device_type,
-      dealer_cost_price,
       marketer_selling_price,
       number_of_devices,
       sold_amount,
@@ -131,7 +130,6 @@ const placeOrder = async (req, res, next) => {
     next(error);
   }
 };
-
 /**
  * getOrders - Retrieves orders for the authenticated marketer.
  * This function uses the marketer's unique ID (from the token) to fetch their orders.
