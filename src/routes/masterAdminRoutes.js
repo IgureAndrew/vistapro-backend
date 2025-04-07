@@ -25,7 +25,7 @@ const {
   assignMarketers,          // New: multi‑assignment of marketers to admin
   assignAdminToSuperAdmin,  // New: multi‑assignment of admins to super admin
   unassignMarketersFromAdmin,
-  unassignAdminsFromSuperadmin
+  unassignAdminsFromSuperadmin // This function now handles single admin unassignment.
 } = require('../controllers/masterAdminController');
 
 // Define the uploads directory and ensure it exists.
@@ -112,16 +112,24 @@ router.patch('/users/:id/unlock', verifyToken, verifyRole(['MasterAdmin']), unlo
 // PATCH endpoint to assign a single marketer to an admin.
 router.patch('/marketers/:marketerUniqueId/assign', verifyToken, verifyRole(['MasterAdmin']), assignMarketer);
 
+<<<<<<< HEAD
 // POST endpoint to assign one or multiple marketers to an admin.
 router.post('/assign-marketers-to-admin', verifyToken, verifyRole(['MasterAdmin']), assignMarketers);
 
 // POST endpoint to unassign a marketer from an admin.
+=======
+// POST endpoint for unassigning a marketer from an admin.
+>>>>>>> 69ab23c00f662e68c7faa19704150c492b442660
 router.post('/unassign-marketers-from-admin', verifyToken, verifyRole(['MasterAdmin']), unassignMarketersFromAdmin);
 
 // POST endpoint to assign one or multiple admins to a super admin.
 router.post('/assign-admins-to-superadmin', verifyToken, verifyRole(['MasterAdmin']), assignAdminToSuperAdmin);
 
 // POST endpoint to unassign an admin from a super admin.
+<<<<<<< HEAD
+=======
+// Updated the route to singular naming for clarity.
+>>>>>>> 69ab23c00f662e68c7faa19704150c492b442660
 router.post('/unassign-admin-from-superadmin', verifyToken, verifyRole(['MasterAdmin']), unassignAdminsFromSuperadmin);
 
 // Error handling middleware.

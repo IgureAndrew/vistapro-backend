@@ -445,14 +445,22 @@ const assignMarketers = async (req, res, next) => {
     if (!adminUniqueId || !marketerUniqueIds) {
       return res.status(400).json({ message: "Both adminUniqueId and marketerUniqueIds are required." });
     }
+<<<<<<< HEAD
     // Wrap single value in an array if necessary.
+=======
+    // If a single marketer is provided as a string, wrap it in an array.
+>>>>>>> 69ab23c00f662e68c7faa19704150c492b442660
     if (!Array.isArray(marketerUniqueIds)) {
       marketerUniqueIds = [marketerUniqueIds];
     }
     if (marketerUniqueIds.length === 0) {
       return res.status(400).json({ message: "At least one marketer ID must be provided." });
     }
+<<<<<<< HEAD
     // Verify provided admin exists and is an Admin.
+=======
+    // Check that the provided admin exists and has role Admin.
+>>>>>>> 69ab23c00f662e68c7faa19704150c492b442660
     const adminCheck = await pool.query(
       "SELECT unique_id FROM users WHERE unique_id = $1 AND role = 'Admin'",
       [adminUniqueId]
@@ -489,8 +497,13 @@ const assignMarketers = async (req, res, next) => {
 };
 
 /**
+<<<<<<< HEAD
  * assignAdminToSuperAdmin - Assigns one or multiple Admins to a Super Admin using unique IDs.
  * Expects: req.body.superAdminUniqueId and req.body.adminUniqueIds (can be a string or an array)
+=======
+ * assignAdminToSuperAdmin - Assigns a single Admin to a Super Admin using unique IDs.
+ * Expects: req.body.adminUniqueId and req.body.superAdminUniqueId
+>>>>>>> 69ab23c00f662e68c7faa19704150c492b442660
  */
 const assignAdminToSuperAdmin = async (req, res, next) => {
   try {
@@ -501,6 +514,7 @@ const assignAdminToSuperAdmin = async (req, res, next) => {
     if (!superAdminUniqueId || !adminUniqueIds) {
       return res.status(400).json({ message: "Both superAdminUniqueId and adminUniqueIds are required." });
     }
+<<<<<<< HEAD
     // Wrap single value in an array if necessary.
     if (!Array.isArray(adminUniqueIds)) {
       adminUniqueIds = [adminUniqueIds];
@@ -508,6 +522,16 @@ const assignAdminToSuperAdmin = async (req, res, next) => {
     if (adminUniqueIds.length === 0) {
       return res.status(400).json({ message: "At least one admin ID must be provided." });
     }
+=======
+    // Verify that the Admin exists.
+    const adminCheck = await pool.query(
+      "SELECT id FROM users WHERE unique_id = $1 AND role = 'Admin'",
+      [adminUniqueId]
+    );
+    if (adminCheck.rowCount === 0) {
+      return res.status(404).json({ message: "Admin not found." });
+    }
+>>>>>>> 69ab23c00f662e68c7faa19704150c492b442660
     // Verify that the Super Admin exists.
     const superAdminCheck = await pool.query(
       "SELECT id FROM users WHERE unique_id = $1 AND role = 'SuperAdmin'",
