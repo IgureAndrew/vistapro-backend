@@ -401,42 +401,16 @@ const getUserSummary = async (req, res, next) => {
   }
 };
 
-/**
- * assignMarketer - Assigns a single marketer to an admin using unique IDs.
- * Expects: req.params.marketerUniqueId and req.body.adminUniqueId
- */
-const assignMarketer = async (req, res, next) => {
-  try {
-    const { marketerUniqueId } = req.params;
-    const { adminUniqueId } = req.body;
-    if (!marketerUniqueId || !adminUniqueId) {
-      return res.status(400).json({ message: "marketerUniqueId and adminUniqueId are required." });
-    }
-    const query = `
-      UPDATE users 
-      SET admin_id = (SELECT id FROM users WHERE unique_id = $1)
-      WHERE unique_id = $2 AND role = 'Marketer'
-      RETURNING *
-    `;
-    const values = [adminUniqueId, marketerUniqueId];
-    const result = await pool.query(query, values);
-    if (result.rowCount === 0) {
-      return res.status(404).json({ message: "Marketer not found or update failed." });
-    }
-    res.status(200).json({
-      message: "Marketer assigned successfully.",
-      user: result.rows[0],
-    });
-  } catch (error) {
-    next(error);
-  }
-};
 
 /**
- * assignMarketers - Assigns one or multiple Marketers to an Admin using unique IDs.
- * Expects: req.body.adminUniqueId and req.body.marketerUniqueIds (can be a string or an array)
+ * assignMarketersToAdmin - Assigns one or multiple Marketers to an Admin using unique IDs.
+ * Expects in req.body:
+ * {
+ *   "adminUniqueId": "TARGET_ADMIN_ID",
+ *   "marketerUniqueIds": "MARKETER_ID"  // or an array of IDs
+ * }
  */
-const assignMarketers = async (req, res, next) => {
+const assignMarketersToAdmin = async (req, res, next) => {
   try {
     if (req.user.role !== "MasterAdmin") {
       return res.status(403).json({ message: "Only a Master Admin can assign marketers to an Admin." });
@@ -445,14 +419,14 @@ const assignMarketers = async (req, res, next) => {
     if (!adminUniqueId || !marketerUniqueIds) {
       return res.status(400).json({ message: "Both adminUniqueId and marketerUniqueIds are required." });
     }
-    // Wrap single value in an array if necessary.
+    // Ensure marketerUniqueIds is an array
     if (!Array.isArray(marketerUniqueIds)) {
       marketerUniqueIds = [marketerUniqueIds];
     }
     if (marketerUniqueIds.length === 0) {
       return res.status(400).json({ message: "At least one marketer ID must be provided." });
     }
-    // Verify provided admin exists and is an Admin.
+    // Verify that the admin exists and has role "Admin"
     const adminCheck = await pool.query(
       "SELECT unique_id FROM users WHERE unique_id = $1 AND role = 'Admin'",
       [adminUniqueId]
@@ -490,18 +464,22 @@ const assignMarketers = async (req, res, next) => {
 
 /**
  * assignAdminToSuperAdmin - Assigns one or multiple Admins to a Super Admin using unique IDs.
- * Expects: req.body.superAdminUniqueId and req.body.adminUniqueIds (can be a string or an array)
+ * Expects in req.body:
+ * {
+ *   "superAdminUniqueId": "TARGET_SUPERADMIN_ID",
+ *   "adminUniqueIds": "ADMIN_ID"  // or an array of IDs
+ * }
  */
 const assignAdminToSuperAdmin = async (req, res, next) => {
   try {
     if (req.user.role !== "MasterAdmin") {
-      return res.status(403).json({ message: "Only a Master Admin can assign admin accounts to a Super Admin." });
+      return res.status(403).json({ message: "Only a Master Admin can assign admins to a Super Admin." });
     }
     let { superAdminUniqueId, adminUniqueIds } = req.body;
     if (!superAdminUniqueId || !adminUniqueIds) {
       return res.status(400).json({ message: "Both superAdminUniqueId and adminUniqueIds are required." });
     }
-    // Wrap single value in an array if necessary.
+    // Ensure adminUniqueIds is an array
     if (!Array.isArray(adminUniqueIds)) {
       adminUniqueIds = [adminUniqueIds];
     }
@@ -545,32 +523,43 @@ const assignAdminToSuperAdmin = async (req, res, next) => {
 };
 
 /**
- * unassignMarketersFromAdmin - Unassigns a marketer from an admin using unique IDs.
- * Expects in req.body: { marketerUniqueId, adminUniqueId }
+ * unassignMarketersFromAdmin - Unassigns one or multiple Marketers from an Admin using unique IDs.
+ * Expects in req.body:
+ * {
+ *   "adminUniqueId": "TARGET_ADMIN_ID",
+ *   "marketerUniqueIds": "MARKETER_ID" // or an array of IDs
+ * }
  */
 const unassignMarketersFromAdmin = async (req, res, next) => {
   try {
-    const { marketerUniqueId, adminUniqueId } = req.body;
-    if (!marketerUniqueId || !adminUniqueId) {
-      return res.status(400).json({ message: "Both marketerUniqueId and adminUniqueId are required." });
+    let { adminUniqueId, marketerUniqueIds } = req.body;
+    if (!adminUniqueId || !marketerUniqueIds) {
+      return res.status(400).json({ message: "Both adminUniqueId and marketerUniqueIds are required." });
+    }
+    if (!Array.isArray(marketerUniqueIds)) {
+      marketerUniqueIds = [marketerUniqueIds];
+    }
+    if (marketerUniqueIds.length === 0) {
+      return res.status(400).json({ message: "At least one marketer ID must be provided." });
     }
     const query = `
       UPDATE users
       SET admin_id = NULL,
           updated_at = NOW()
-      WHERE unique_id = $1 
+      WHERE unique_id = ANY($1::text[])
         AND admin_id = (SELECT id FROM users WHERE unique_id = $2)
         AND role = 'Marketer'
       RETURNING *
     `;
-    const values = [marketerUniqueId, adminUniqueId];
+    // Here, $1 is the array of marketer IDs and $2 is the adminUniqueId.
+    const values = [marketerUniqueIds, adminUniqueId];
     const result = await pool.query(query, values);
     if (result.rowCount === 0) {
-      return res.status(404).json({ message: "Marketer not found or already unassigned." });
+      return res.status(404).json({ message: "Marketer(s) not found or already unassigned." });
     }
     res.status(200).json({
-      message: "Marketer unassigned successfully.",
-      user: result.rows[0],
+      message: "Marketer(s) unassigned successfully.",
+      unassignedMarketers: result.rows,
     });
   } catch (error) {
     next(error);
@@ -578,20 +567,25 @@ const unassignMarketersFromAdmin = async (req, res, next) => {
 };
 
 /**
- * unassignAdminsFromSuperadminMulti - Unassigns one or multiple admins from a super admin using unique IDs.
+ * unassignAdminsFromSuperadmin - Unassigns one or multiple Admins from a Super Admin using unique IDs.
  * Expects in req.body:
  * {
- *   "superAdminUniqueId": "SUPERADMIN_ID",
- *   "adminUniqueIds": ["ADMIN_ID_1", "ADMIN_ID_2", ...]
+ *   "superAdminUniqueId": "TARGET_SUPERADMIN_ID",
+ *   "adminUniqueIds": "ADMIN_ID" // or an array of IDs
  * }
  */
-const unassignAdminsFromSuperadminMulti = async (req, res, next) => {
+const unassignAdminsFromSuperadmin = async (req, res, next) => {
   try {
-    const { superAdminUniqueId, adminUniqueIds } = req.body;
-    if (!superAdminUniqueId || !Array.isArray(adminUniqueIds) || adminUniqueIds.length === 0) {
-      return res.status(400).json({ message: "Both superAdminUniqueId and a non-empty adminUniqueIds array are required." });
+    let { superAdminUniqueId, adminUniqueIds } = req.body;
+    if (!superAdminUniqueId || !adminUniqueIds) {
+      return res.status(400).json({ message: "Both superAdminUniqueId and adminUniqueIds are required." });
     }
-    // This query sets the super_admin_id column to NULL for the matching admin records
+    if (!Array.isArray(adminUniqueIds)) {
+      adminUniqueIds = [adminUniqueIds];
+    }
+    if (adminUniqueIds.length === 0) {
+      return res.status(400).json({ message: "At least one admin ID must be provided." });
+    }
     const query = `
       UPDATE users
       SET super_admin_id = NULL,
@@ -606,7 +600,7 @@ const unassignAdminsFromSuperadminMulti = async (req, res, next) => {
     if (result.rowCount === 0) {
       return res.status(404).json({ message: "No matching admins found or already unassigned." });
     }
-    res.status(200).json({
+    return res.status(200).json({
       message: "Admins unassigned successfully.",
       unassignedAdmins: result.rows,
     });
@@ -614,6 +608,7 @@ const unassignAdminsFromSuperadminMulti = async (req, res, next) => {
     next(error);
   }
 };
+
 /**
  * getDashboardSummary - Provides a summary of the activities on the dashboard overview.
  */
@@ -658,9 +653,8 @@ module.exports = {
   getUsers,
   getUserSummary,
   getDashboardSummary,
-  assignMarketer,
-  assignMarketers,
-  assignAdminToSuperAdmin,
+  assignMarketersToAdmin, // Multi-assignment for marketers to admin
+  assignAdminToSuperAdmin, // Multi-assignment for admins to super admin
   unassignMarketersFromAdmin,
-  unassignAdminsFromSuperadminMulti,
+  unassignAdminsFromSuperadmin
 };

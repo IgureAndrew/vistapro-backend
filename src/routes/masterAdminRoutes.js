@@ -21,11 +21,10 @@ const {
   getUsers,
   getUserSummary,
   getDashboardSummary,
-  assignMarketer,
-  assignMarketers,          // New: multi‑assignment of marketers to admin
-  assignAdminToSuperAdmin,  // New: multi‑assignment of admins to super admin
+  assignMarketersToAdmin,     // Multi‑assignment for marketers to admin
+  assignAdminToSuperAdmin,     // Multi‑assignment for admins to super admin
   unassignMarketersFromAdmin,
-  unassignAdminsFromSuperadminMulti
+  unassignAdminsFromSuperadmin // Multi‑unassignment for admins from super admin
 } = require('../controllers/masterAdminController');
 
 // Define the uploads directory and ensure it exists.
@@ -109,20 +108,18 @@ router.patch('/users/:id/unlock', verifyToken, verifyRole(['MasterAdmin']), unlo
 
 // Assignment Routes
 
-// PATCH endpoint to assign a single marketer to an admin.
-router.patch('/marketers/:marketerUniqueId/assign', verifyToken, verifyRole(['MasterAdmin']), assignMarketer);
 
 // POST endpoint to assign one or multiple marketers to an admin.
-router.post('/assign-marketers-to-admin', verifyToken, verifyRole(['MasterAdmin']), assignMarketers);
+router.post('/assign-marketers-to-admin', verifyToken, verifyRole(['MasterAdmin']), assignMarketersToAdmin);
 
-// POST endpoint to unassign a marketer from an admin.
+// POST endpoint to unassign one or multiple marketers from an admin.
 router.post('/unassign-marketers-from-admin', verifyToken, verifyRole(['MasterAdmin']), unassignMarketersFromAdmin);
 
 // POST endpoint to assign one or multiple admins to a super admin.
 router.post('/assign-admins-to-superadmin', verifyToken, verifyRole(['MasterAdmin']), assignAdminToSuperAdmin);
 
-// POST endpoint for unassigning one or multiple admins from a super admin.
-router.post('/unassign-admins-from-superadmin', verifyToken, verifyRole(['MasterAdmin']), unassignAdminsFromSuperadminMulti);
+// POST endpoint to unassign one or multiple admins from a super admin.
+router.post('/unassign-admins-from-superadmin', verifyToken, verifyRole(['MasterAdmin']), unassignAdminsFromSuperadmin);
 
 // Error handling middleware.
 router.use((err, req, res, next) => {
