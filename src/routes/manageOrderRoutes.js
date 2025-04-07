@@ -13,7 +13,7 @@ const {
 // GET /api/manage-orders
 // Retrieves orders placed by marketers that are pending confirmation.
 router.get(
-  "/",
+  "/orders",
   verifyToken,
   verifyRole(["MasterAdmin"]),
   getOrders
