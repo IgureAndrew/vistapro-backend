@@ -2,20 +2,25 @@
 const { pool } = require("../config/database");
 
 /**
- * getOrders - Retrieves orders placed by marketers that are still pending confirmation.
- * Only orders with a non-null marketer_id and a status of "pending" will be returned.
+ * getOrders - Retrieves orders placed by a marketer that are still pending confirmation.
+ * Uses the marketer's unique ID (req.user.unique_id) to fetch orders.
  */
 const getOrders = async (req, res, next) => {
   try {
-    // We now filter for orders where the order came from a marketer (marketer_id IS NOT NULL)
-    // and its status is 'pending' (i.e. waiting for confirmation from the dealer)
+    // Retrieve the marketer's unique identifier from the authenticated request.
+    const marketerUniqueId = req.user.unique_id;
+
+    // Join orders with users so that we can filter orders by the marketer's unique ID.
     const query = `
-      SELECT *
-      FROM orders
-      WHERE marketer_id IS NOT NULL AND status = 'pending'
-      ORDER BY created_at DESC
+      SELECT o.*
+      FROM orders o
+      JOIN users u ON o.marketer_id = u.id
+      WHERE u.unique_id = $1 AND o.status = 'pending'
+      ORDER BY o.created_at DESC
     `;
-    const result = await pool.query(query);
+    const values = [marketerUniqueId];
+    const result = await pool.query(query, values);
+
     res.status(200).json({ orders: result.rows });
   } catch (error) {
     next(error);
@@ -50,11 +55,15 @@ const confirmOrderToDealer = async (req, res, next) => {
 };
 
 /**
- * confirmReleasedOrder - Allows Admin (or Master Admin) to confirm that an order released by dealers
+ * confirmReleasedOrder - Allows Master Admin to confirm that an order released by dealers
  * has been successfully delivered. It updates the status to "released_confirmed" and records the timestamp.
  */
 const confirmReleasedOrder = async (req, res, next) => {
   try {
+    // Only allow Master Admin to confirm released orders.
+    if (req.user.role !== "MasterAdmin") {
+      return res.status(403).json({ message: "Only Master Admin can confirm released orders." });
+    }
     const orderId = req.params.id;
     const query = `
       UPDATE orders

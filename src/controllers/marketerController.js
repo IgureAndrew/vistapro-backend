@@ -46,7 +46,7 @@ const updateProfile = async (req, res, next) => {
  * placeOrder - Allows a Marketer to record the sale (dispense) of device(s).
  * The function expects the following fields in req.body:
  *  - device_name, device_model, device_type (dropdown: "Android" or "iPhone"),
- *  - dealer_cost_price, marketer_selling_price, number_of_devices, sold_amount,
+ *  - marketer_selling_price, number_of_devices, sold_amount,
  *  - customer_name, customer_phone, customer_address,
  *  - bnpl_platform (optional),
  *  - sale_date (optional; if not provided, current date/time is used)
@@ -58,7 +58,6 @@ const placeOrder = async (req, res, next) => {
       device_name,
       device_model,
       device_type,
-      dealer_cost_price,
       marketer_selling_price,
       number_of_devices,
       sold_amount,
@@ -74,7 +73,6 @@ const placeOrder = async (req, res, next) => {
       !device_name ||
       !device_model ||
       !device_type ||
-      !dealer_cost_price ||
       !marketer_selling_price ||
       !number_of_devices ||
       !sold_amount ||
@@ -94,7 +92,6 @@ const placeOrder = async (req, res, next) => {
         device_name,
         device_model,
         device_type,
-        dealer_cost_price,
         marketer_selling_price,
         number_of_devices,
         sold_amount,
@@ -105,7 +102,7 @@ const placeOrder = async (req, res, next) => {
         sale_date,
         created_at
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
       RETURNING *
     `;
     const values = [
@@ -141,10 +138,12 @@ const placeOrder = async (req, res, next) => {
  */
 const getOrders = async (req, res, next) => {
   try {
-    // Retrieve the marketer's unique_id from the token.
+    // Retrieve the marketer's unique identifier from the token
     const marketerUniqueId = req.user.unique_id;
+
+    // SQL query: join orders with users to filter by marketer's unique ID
     const query = `
-      SELECT o.* 
+      SELECT o.*, o.status
       FROM orders o
       JOIN users u ON o.marketer_id = u.id
       WHERE u.unique_id = $1
@@ -153,6 +152,7 @@ const getOrders = async (req, res, next) => {
     const values = [marketerUniqueId];
     const result = await pool.query(query, values);
 
+    // Return orders with their statuses.
     res.status(200).json({
       orders: result.rows,
       message: "Orders fetched successfully."
@@ -161,6 +161,8 @@ const getOrders = async (req, res, next) => {
     next(error);
   }
 };
+
+
 
 
 /**
