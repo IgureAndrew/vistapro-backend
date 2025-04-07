@@ -112,7 +112,8 @@ router.patch('/users/:id/unlock', verifyToken, verifyRole(['MasterAdmin']), unlo
 // Assignment Routes
 
 // PATCH endpoint to assign a single marketer to an admin.
-router.patch('/marketers/:marketerId/assign', verifyToken, verifyRole(['MasterAdmin']), assignMarketer);
+// Note: Updated parameter to use marketerUniqueId for consistency.
+router.patch('/marketers/:marketerUniqueId/assign', verifyToken, verifyRole(['MasterAdmin']), assignMarketer);
 
 // POST endpoint to assign one or multiple marketers to an admin.
 router.post('/assign-marketers-to-admin', verifyToken, verifyRole(['MasterAdmin']), assignMarketersToAdmin);
