@@ -99,28 +99,34 @@ const registerSuperAdmin = async (req, res, next) => {
 };
 
 /**
- * updateProfile - Updates the Master Admin profile.
+ * updateProfile - Updates the Master Admin profile, including the phone field.
  */
 const updateProfile = async (req, res, next) => {
   try {
     const userId = req.user.id;
-    const { email, gender, newPassword } = req.body;
+    // Include phone in the destructuring from req.body
+    const { email, gender, newPassword, phone } = req.body;
     let hashedPassword = null;
     if (newPassword) {
       hashedPassword = await bcrypt.hash(newPassword, 10);
     }
+    // Get profile image file path if uploaded
     const profileImage = req.file ? req.file.path : null;
+
+    // Updated SQL query now includes the "phone" field.
     const query = `
       UPDATE users
       SET email = COALESCE($1, email),
           gender = COALESCE($2, gender),
-          profile_image = COALESCE($3, profile_image),
-          password = COALESCE($4, password),
+          phone = COALESCE($3, phone),
+          profile_image = COALESCE($4, profile_image),
+          password = COALESCE($5, password),
           updated_at = NOW()
-      WHERE id = $5
+      WHERE id = $6
       RETURNING *
     `;
-    const values = [email, gender, profileImage, hashedPassword, userId];
+    const values = [email, gender, phone, profileImage, hashedPassword, userId];
+
     const result = await pool.query(query, values);
     return res.status(200).json({
       message: "Master Admin profile updated successfully.",
@@ -130,6 +136,7 @@ const updateProfile = async (req, res, next) => {
     next(error);
   }
 };
+
 
 /**
  * addUser - Allows Master Admin to create a new user.
