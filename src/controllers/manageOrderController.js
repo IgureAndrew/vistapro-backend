@@ -2,19 +2,17 @@
 const { pool } = require("../config/database");
 
 /**
- * getOrders - Retrieves orders placed by marketers that are still pending.
- * The query joins orders with the users table to filter orders whose 
- * associated user (the marketer) has the role 'Marketer'.
- * Only orders with status 'pending' are returned.
+ * getOrders - Retrieves pending orders created by marketers.
+ * Only orders with status "pending" and associated with a user whose role is "Marketer" will be returned.
+ * The query also fetches the marketer's unique ID.
  */
 const getOrders = async (req, res, next) => {
   try {
     const query = `
-      SELECT o.*
+      SELECT o.*, u.unique_id AS marketer_unique_id
       FROM orders o
       JOIN users u ON o.marketer_id = u.id
-      WHERE u.role = 'Marketer' 
-        AND o.status = 'pending'
+      WHERE o.status = 'pending' AND u.role = 'Marketer'
       ORDER BY o.created_at DESC
     `;
     const result = await pool.query(query);
@@ -26,7 +24,6 @@ const getOrders = async (req, res, next) => {
 
 /**
  * confirmOrderToDealer - Allows Master Admin to confirm an order for dealers.
- * This updates the order's status to "confirmed_to_dealer" and sets a confirmation timestamp.
  */
 const confirmOrderToDealer = async (req, res, next) => {
   try {
@@ -40,10 +37,10 @@ const confirmOrderToDealer = async (req, res, next) => {
     `;
     const result = await pool.query(query, [orderId]);
     if (result.rows.length === 0) {
-      return res.status(404).json({ message: 'Order not found.' });
+      return res.status(404).json({ message: "Order not found." });
     }
     res.status(200).json({
-      message: 'Order confirmed to dealer successfully.',
+      message: "Order confirmed to dealer successfully.",
       order: result.rows[0],
     });
   } catch (error) {
@@ -52,15 +49,10 @@ const confirmOrderToDealer = async (req, res, next) => {
 };
 
 /**
- * confirmReleasedOrder - Allows Master Admin to confirm that an order released by dealers
- * has been successfully delivered. It updates the status to "released_confirmed" and records the timestamp.
+ * confirmReleasedOrder - Allows Master Admin to confirm that an order released by dealers has been delivered.
  */
 const confirmReleasedOrder = async (req, res, next) => {
   try {
-    // Only allow Master Admin to confirm released orders.
-    if (req.user.role !== "MasterAdmin") {
-      return res.status(403).json({ message: "Only Master Admin can confirm released orders." });
-    }
     const orderId = req.params.id;
     const query = `
       UPDATE orders
@@ -71,10 +63,10 @@ const confirmReleasedOrder = async (req, res, next) => {
     `;
     const result = await pool.query(query, [orderId]);
     if (result.rows.length === 0) {
-      return res.status(404).json({ message: 'Order not found.' });
+      return res.status(404).json({ message: "Order not found." });
     }
     res.status(200).json({
-      message: 'Released order confirmed successfully.',
+      message: "Released order confirmed successfully.",
       order: result.rows[0],
     });
   } catch (error) {
@@ -83,15 +75,13 @@ const confirmReleasedOrder = async (req, res, next) => {
 };
 
 /**
- * getReleasedOrderHistory - Retrieves the history of orders that have been processed.
- * This includes orders with statuses such as "released_confirmed", "confirmed_to_dealer", or "cancelled",
- * along with their date and time details for reconciliation.
+ * getReleasedOrderHistory - Retrieves processed orders' history.
  */
 const getReleasedOrderHistory = async (req, res, next) => {
   try {
     const query = `
       SELECT id, status, device_name, device_model, device_type,
-            marketer_selling_price, number_of_devices,
+             marketer_selling_price, number_of_devices,
              sold_amount, customer_name, customer_phone, customer_address,
              bnpl_platform, sale_date, created_at, confirmed_at, released_confirmed_at
       FROM orders
@@ -100,7 +90,7 @@ const getReleasedOrderHistory = async (req, res, next) => {
     `;
     const result = await pool.query(query);
     res.status(200).json({
-      message: 'Release order history retrieved successfully.',
+      message: "Release order history retrieved successfully.",
       orders: result.rows,
     });
   } catch (error) {
