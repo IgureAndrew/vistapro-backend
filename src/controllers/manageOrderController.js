@@ -2,25 +2,22 @@
 const { pool } = require("../config/database");
 
 /**
- * getOrders - Retrieves orders placed by a marketer that are still pending confirmation.
- * Uses the marketer's unique ID (req.user.unique_id) to fetch orders.
+ * getOrders - Retrieves orders placed by marketers that are still pending.
+ * The query joins orders with the users table to filter orders whose 
+ * associated user (the marketer) has the role 'Marketer'.
+ * Only orders with status 'pending' are returned.
  */
 const getOrders = async (req, res, next) => {
   try {
-    // Retrieve the marketer's unique identifier from the authenticated request.
-    const marketerUniqueId = req.user.unique_id;
-
-    // Join orders with users so that we can filter orders by the marketer's unique ID.
     const query = `
       SELECT o.*
       FROM orders o
       JOIN users u ON o.marketer_id = u.id
-      WHERE u.unique_id = $1 AND o.status = 'pending'
+      WHERE u.role = 'Marketer' 
+        AND o.status = 'pending'
       ORDER BY o.created_at DESC
     `;
-    const values = [marketerUniqueId];
-    const result = await pool.query(query, values);
-
+    const result = await pool.query(query);
     res.status(200).json({ orders: result.rows });
   } catch (error) {
     next(error);
@@ -94,7 +91,7 @@ const getReleasedOrderHistory = async (req, res, next) => {
   try {
     const query = `
       SELECT id, status, device_name, device_model, device_type,
-             dealer_cost_price, marketer_selling_price, number_of_devices,
+            marketer_selling_price, number_of_devices,
              sold_amount, customer_name, customer_phone, customer_address,
              bnpl_platform, sale_date, created_at, confirmed_at, released_confirmed_at
       FROM orders

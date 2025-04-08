@@ -10,8 +10,7 @@ const {
   getReleasedOrderHistory,
 } = require('../controllers/manageOrderController');
 
-// GET /api/manage-orders
-// Retrieves orders placed by marketers that are pending confirmation.
+// GET /api/manage-orders/orders => pending orders
 router.get(
   "/orders",
   verifyToken,
@@ -19,8 +18,7 @@ router.get(
   getOrders
 );
 
-// PATCH /api/manage-orders/:id/confirm
-// Allows Master Admin to confirm an order (i.e. update status to "confirmed_to_dealer").
+// PATCH to confirm an order
 router.patch(
   "/:id/confirm",
   verifyToken,
@@ -28,8 +26,7 @@ router.patch(
   confirmOrderToDealer
 );
 
-// PATCH /api/manage-orders/:id/confirm-release
-// Allows Admin or Master Admin to confirm that a released order has been delivered.
+// PATCH to confirm a released order
 router.patch(
   "/:id/confirm-release",
   verifyToken,
@@ -37,8 +34,7 @@ router.patch(
   confirmReleasedOrder
 );
 
-// GET /api/manage-orders/history
-// Retrieves the history of orders that have been processed.
+// GET /api/manage-orders/history => orders history
 router.get(
   "/history",
   verifyToken,
