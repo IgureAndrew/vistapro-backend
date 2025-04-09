@@ -43,13 +43,15 @@ const updateProfile = async (req, res, next) => {
 };
 
 /**
- * placeOrder - Allows a Marketer to record the sale (dispense) of device(s).
- * The function expects the following fields in req.body:
- *  - device_name, device_model, device_type (dropdown: "Android" or "iPhone"),
- *  - marketer_selling_price, number_of_devices, sold_amount,
- *  - customer_name, customer_phone, customer_address,
- *  - bnpl_platform (optional),
- *  - sale_date (optional; if not provided, current date/time is used)
+ * placeOrder - Allows a Marketer to record the sale (order) of device(s).
+ * Now includes an IMEI field and removes the marketer selling price.
+ * Expects in req.body:
+ *   - device_name, device_model, device_type,
+ *   - imei,
+ *   - number_of_devices, sold_amount,
+ *   - customer_name, customer_phone, customer_address,
+ *   - bnpl_platform (optional),
+ *   - sale_date (optional; if not provided, current date/time is used)
  */
 const placeOrder = async (req, res, next) => {
   try {
@@ -58,7 +60,7 @@ const placeOrder = async (req, res, next) => {
       device_name,
       device_model,
       device_type,
-      marketer_selling_price,
+      imei, // New: IMEI of the device (or the first device if multiple are sold)
       number_of_devices,
       sold_amount,
       customer_name,
@@ -68,12 +70,12 @@ const placeOrder = async (req, res, next) => {
       sale_date,
     } = req.body;
 
-    // Validate required fields
+    // Validate required fields.
     if (
       !device_name ||
       !device_model ||
       !device_type ||
-      !marketer_selling_price ||
+      !imei || // IMEI is required
       !number_of_devices ||
       !sold_amount ||
       !customer_name ||
@@ -92,7 +94,7 @@ const placeOrder = async (req, res, next) => {
         device_name,
         device_model,
         device_type,
-        marketer_selling_price,
+        imei,
         number_of_devices,
         sold_amount,
         customer_name,
@@ -110,7 +112,7 @@ const placeOrder = async (req, res, next) => {
       device_name,
       device_model,
       device_type,
-      marketer_selling_price,
+      imei,
       number_of_devices,
       sold_amount,
       customer_name,
@@ -130,6 +132,7 @@ const placeOrder = async (req, res, next) => {
     next(error);
   }
 };
+
 /**
  * getOrders - Retrieves orders for the authenticated marketer.
  * This function uses the marketer's unique ID (from the token) to fetch their orders.
