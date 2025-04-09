@@ -5,7 +5,7 @@ const { pool } = require("../config/database");
  * submitBiodata
  * Inserts a new biodata record into the marketer_biodata table and updates the user's flag.
  * Expects in req.body: all fields required by marketer_biodata (except marketer_id).
- * The marketer's unique ID is taken from req.user and is stored directly.
+ * The marketer's internal numeric ID is taken from req.user.id.
  */
 const submitBiodata = async (req, res, next) => { 
   try {
@@ -36,16 +36,16 @@ const submitBiodata = async (req, res, next) => {
       passport_photo_url,
     } = req.body;
     
-    // Use the marketer's unique ID directly from the token.
-    const marketerUniqueId = req.user.unique_id;
+    // Use the marketer's internal numeric id from the token.
+    const marketerId = req.user.id;
     console.log("DEBUG => req.user:", req.user);
-    if (!marketerUniqueId) {
-      return res.status(400).json({ message: "User unique ID is missing from token." });
+    if (!marketerId) {
+      return res.status(400).json({ message: "User ID is missing from token." });
     }
     
-    // Check if biodata has already been submitted
-    const checkQuery = "SELECT bio_submitted FROM users WHERE unique_id = $1";
-    const checkResult = await pool.query(checkQuery, [marketerUniqueId]);
+    // Check if biodata has already been submitted.
+    const checkQuery = "SELECT bio_submitted FROM users WHERE id = $1";
+    const checkResult = await pool.query(checkQuery, [marketerId]);
     if (checkResult.rowCount > 0 && checkResult.rows[0].bio_submitted) {
       return res.status(400).json({ message: "Biodata form has already been submitted." });
     }
@@ -73,39 +73,39 @@ const submitBiodata = async (req, res, next) => {
     `;
     
     const values = [
-      marketerUniqueId,   // Use unique ID directly.
-      name,               // $2
-      address,            // $3
-      phone,              // $4
-      religion,           // $5
-      dob,                // $6
-      marital_status,     // $7
-      state_of_origin,    // $8
-      state_of_residence, // $9
-      mothers_maiden_name,// $10
-      school_attended,    // $11
-      means_of_identification, // $12
-      id_document_url,         // $13
-      last_place_of_work,      // $14
-      job_description,         // $15
-      reason_for_quitting,     // $16
-      medical_condition,       // $17
-      next_of_kin_name,        // $18
-      next_of_kin_phone,       // $19
-      next_of_kin_address,     // $20
-      next_of_kin_relationship, // $21
-      bank_name,               // $22
-      account_name,            // $23
-      account_number,          // $24
-      passport_photo_url,      // $25
+      marketerId,   // Use internal numeric id.
+      name,
+      address,
+      phone,
+      religion,
+      dob,
+      marital_status,
+      state_of_origin,
+      state_of_residence,
+      mothers_maiden_name,
+      school_attended,
+      means_of_identification,
+      id_document_url,
+      last_place_of_work,
+      job_description,
+      reason_for_quitting,
+      medical_condition,
+      next_of_kin_name,
+      next_of_kin_phone,
+      next_of_kin_address,
+      next_of_kin_relationship,
+      bank_name,
+      account_name,
+      account_number,
+      passport_photo_url,
     ];
     
     const result = await pool.query(query, values);
     
-    // Update the user's biodata flag using the unique ID
+    // Update the user's biodata flag.
     await pool.query(
-      "UPDATE users SET bio_submitted = true, updated_at = NOW() WHERE unique_id = $1",
-      [marketerUniqueId]
+      "UPDATE users SET bio_submitted = true, updated_at = NOW() WHERE id = $1",
+      [marketerId]
     );
     
     res.status(201).json({
@@ -121,7 +121,7 @@ const submitBiodata = async (req, res, next) => {
  * submitGuarantor
  * Inserts a new guarantor record into the marketer_guarantor_form table and updates the user's flag.
  * Expects in req.body: all fields required by marketer_guarantor_form.
- * The marketer's unique ID is taken from req.user and is stored directly.
+ * The marketer's internal numeric ID is taken from req.user.id.
  */
 const submitGuarantor = async (req, res, next) => {
   try {
@@ -135,14 +135,15 @@ const submitGuarantor = async (req, res, next) => {
       signature_url,
     } = req.body;
     
-    const marketerUniqueId = req.user.unique_id;
-    if (!marketerUniqueId) {
-      return res.status(400).json({ message: "User unique ID is missing from token." });
+    // Use the marketer's internal numeric id.
+    const marketerId = req.user.id;
+    if (!marketerId) {
+      return res.status(400).json({ message: "User ID is missing from token." });
     }
     
-    // Check if guarantor form has already been submitted
-    const checkQuery = "SELECT guarantor_submitted FROM users WHERE unique_id = $1";
-    const checkResult = await pool.query(checkQuery, [marketerUniqueId]);
+    // Check if guarantor form has already been submitted.
+    const checkQuery = "SELECT guarantor_submitted FROM users WHERE id = $1";
+    const checkResult = await pool.query(checkQuery, [marketerId]);
     if (checkResult.rowCount > 0 && checkResult.rows[0].guarantor_submitted) {
       return res.status(400).json({ message: "Guarantor form has already been submitted." });
     }
@@ -159,7 +160,7 @@ const submitGuarantor = async (req, res, next) => {
       RETURNING *
     `;
     const values = [
-      marketerUniqueId,  // Use unique ID directly.
+      marketerId,  // Use the numeric id.
       is_candidate_well_known,
       relationship,
       known_duration,
@@ -171,10 +172,10 @@ const submitGuarantor = async (req, res, next) => {
     
     const result = await pool.query(query, values);
     
-    // Update the user's guarantor flag using the unique ID
+    // Update the user's guarantor flag.
     await pool.query(
-      "UPDATE users SET guarantor_submitted = true, updated_at = NOW() WHERE unique_id = $1",
-      [marketerUniqueId]
+      "UPDATE users SET guarantor_submitted = true, updated_at = NOW() WHERE id = $1",
+      [marketerId]
     );
     
     res.status(201).json({
@@ -190,13 +191,13 @@ const submitGuarantor = async (req, res, next) => {
  * submitCommitment
  * Inserts a new commitment record into the marketer_commitment_form table and updates the user's flag.
  * Expects in req.body: all fields required by marketer_commitment_form.
- * The marketer's unique ID is taken from req.user and is stored directly.
+ * The marketer's internal numeric ID is taken from req.user.id.
  */
 const submitCommitment = async (req, res, next) => {
   try {
     const {
       promise_accept_false_documents,
-      promise_not_request_irrelevant_info,
+      promise_not_request_unrelated_info,
       promise_not_charge_customer_fees,
       promise_not_modify_contract_info,
       promise_not_sell_unapproved_phones,
@@ -211,14 +212,15 @@ const submitCommitment = async (req, res, next) => {
       date_signed,
     } = req.body;
     
-    const marketerUniqueId = req.user.unique_id;
-    if (!marketerUniqueId) {
-      return res.status(400).json({ message: "User unique ID is missing from token." });
+    // Use the marketer's internal numeric id.
+    const marketerId = req.user.id;
+    if (!marketerId) {
+      return res.status(400).json({ message: "User ID is missing from token." });
     }
     
-    // Check if commitment form has already been submitted
-    const checkQuery = "SELECT commitment_submitted FROM users WHERE unique_id = $1";
-    const checkResult = await pool.query(checkQuery, [marketerUniqueId]);
+    // Check if commitment form has already been submitted.
+    const checkQuery = "SELECT commitment_submitted FROM users WHERE id = $1";
+    const checkResult = await pool.query(checkQuery, [marketerId]);
     if (checkResult.rowCount > 0 && checkResult.rows[0].commitment_submitted) {
       return res.status(400).json({ message: "Commitment form has already been submitted." });
     }
@@ -227,7 +229,7 @@ const submitCommitment = async (req, res, next) => {
       INSERT INTO marketer_commitment_form (
         marketer_id,
         promise_accept_false_documents,
-        promise_not_request_irrelevant_info,
+        promise_not_request_unrelated_info,
         promise_not_charge_customer_fees,
         promise_not_modify_contract_info,
         promise_not_sell_unapproved_phones,
@@ -248,10 +250,11 @@ const submitCommitment = async (req, res, next) => {
       )
       RETURNING *
     `;
+    const parsePromise = (val) => val && val.toLowerCase() === "yes";
     const values = [
-      marketerUniqueId,  // Use unique ID directly.
+      marketerId,  // Numeric id.
       promise_accept_false_documents,
-      promise_not_request_irrelevant_info,
+      promise_not_request_unrelated_info,
       promise_not_charge_customer_fees,
       promise_not_modify_contract_info,
       promise_not_sell_unapproved_phones,
@@ -268,10 +271,10 @@ const submitCommitment = async (req, res, next) => {
     
     const result = await pool.query(query, values);
     
-    // Update the user's commitment flag using the unique ID
+    // Update the user's commitment flag.
     await pool.query(
-      "UPDATE users SET commitment_submitted = true, updated_at = NOW() WHERE unique_id = $1",
-      [marketerUniqueId]
+      "UPDATE users SET commitment_submitted = true, updated_at = NOW() WHERE id = $1",
+      [marketerId]
     );
     
     res.status(201).json({
@@ -398,10 +401,12 @@ const superadminVerify = async (req, res, next) => {
  */
 const getSubmissions = async (req, res, next) => {
   try {
-    const biodataResult = await pool.query("SELECT * FROM marketer_biodata ORDER BY created_at DESC");
+    // Fetch submissions from each table.
+    const biodataResult = await pool.query("SELECT * FROM marketer_bio_data ORDER BY created_at DESC");
     const guarantorResult = await pool.query("SELECT * FROM marketer_guarantor_form ORDER BY created_at DESC");
     const commitmentResult = await pool.query("SELECT * FROM marketer_commitment_form ORDER BY created_at DESC");
 
+    // Combine into one response object.
     const submissions = {
       biodata: biodataResult.rows,
       guarantor: guarantorResult.rows,
@@ -457,7 +462,7 @@ const deleteBiodataSubmission = async (req, res, next) => {
       return res.status(403).json({ message: "Only a Master Admin can delete submissions." });
     }
     const { submissionId } = req.params;
-    const query = "DELETE FROM marketer_biodata WHERE id = $1 RETURNING *";
+    const query = "DELETE FROM marketer_bio_data WHERE id = $1 RETURNING *";
     const result = await pool.query(query, [submissionId]);
     if (result.rowCount === 0) {
       return res.status(404).json({ message: "Biodata submission not found." });
