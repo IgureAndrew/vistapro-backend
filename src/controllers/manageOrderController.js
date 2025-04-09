@@ -3,19 +3,32 @@ const { pool } = require("../config/database");
 
 /**
  * getOrders - Retrieves pending orders created by marketers.
- * Only orders with status "pending" and associated with a user whose role is "Marketer" will be returned.
- * The query also fetches the marketer's unique ID.
+ * 
+ * By default, it returns all orders with status "pending" for users with the role "Marketer",
+ * including the marketer's unique id, full name, and location.
+ * If an "orderId" query parameter is provided, it will further filter results to that specific order.
  */
 const getOrders = async (req, res, next) => {
   try {
-    const query = `
-      SELECT o.*, u.unique_id AS marketer_unique_id
+    let query = `
+      SELECT o.*, 
+             u.unique_id AS marketer_unique_id,
+             (u.first_name || ' ' || u.last_name) AS marketer_name,
+             u.location AS marketer_location
       FROM orders o
       JOIN users u ON o.marketer_id = u.id
       WHERE o.status = 'pending' AND u.role = 'Marketer'
-      ORDER BY o.created_at DESC
     `;
-    const result = await pool.query(query);
+    const values = [];
+    
+    // If an orderId is provided in the query string, add a filter.
+    if (req.query.orderId) {
+      query += " AND o.id = $1";
+      values.push(req.query.orderId);
+    }
+    
+    query += " ORDER BY o.created_at DESC";
+    const result = await pool.query(query, values);
     res.status(200).json({ orders: result.rows });
   } catch (error) {
     next(error);

@@ -60,7 +60,7 @@ const placeOrder = async (req, res, next) => {
       device_name,
       device_model,
       device_type,
-      imei, // New: IMEI of the device (or the first device if multiple are sold)
+      imei,
       number_of_devices,
       sold_amount,
       customer_name,
@@ -75,7 +75,7 @@ const placeOrder = async (req, res, next) => {
       !device_name ||
       !device_model ||
       !device_type ||
-      !imei || // IMEI is required
+      !imei ||
       !number_of_devices ||
       !sold_amount ||
       !customer_name ||
@@ -85,7 +85,7 @@ const placeOrder = async (req, res, next) => {
       return res.status(400).json({ message: "All required order fields must be provided." });
     }
 
-    // Use the provided sale_date or default to current date/time.
+    // Use provided sale_date or default to current date/time.
     const finalSaleDate = sale_date ? sale_date : new Date().toISOString();
 
     const query = `
@@ -132,39 +132,6 @@ const placeOrder = async (req, res, next) => {
     next(error);
   }
 };
-
-/**
- * getOrders - Retrieves orders for the authenticated marketer.
- * This function uses the marketer's unique ID (from the token) to fetch their orders.
- */
-const getOrders = async (req, res, next) => {
-  try {
-    // Retrieve the marketer's unique identifier from the token
-    const marketerUniqueId = req.user.unique_id;
-
-    // SQL query: join orders with users to filter by marketer's unique ID
-    const query = `
-      SELECT o.*, o.status
-      FROM orders o
-      JOIN users u ON o.marketer_id = u.id
-      WHERE u.unique_id = $1
-      ORDER BY o.created_at DESC
-    `;
-    const values = [marketerUniqueId];
-    const result = await pool.query(query, values);
-
-    // Return orders with their statuses.
-    res.status(200).json({
-      orders: result.rows,
-      message: "Orders fetched successfully."
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-
-
 
 /**
  * submitBioData - Submits the marketer's bio data form.
@@ -313,7 +280,7 @@ const submitGuarantorForm = async (req, res, next) => {
       )
       RETURNING *
     `;
-    // Assuming id_type comes from req.body
+    // Assuming id_type is provided in req.body.
     const values = [
       marketerId,
       isKnown,
@@ -426,7 +393,6 @@ const submitCommitmentForm = async (req, res, next) => {
 module.exports = {
   updateProfile,
   placeOrder,
-  getOrders,
   submitBioData,
   submitGuarantorForm,
   submitCommitmentForm,

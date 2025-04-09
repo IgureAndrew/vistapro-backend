@@ -2,46 +2,60 @@
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
-const path = require('path'); // Added this line
-const fs = require('fs');     // Added this line
+const path = require('path'); // For directory paths
+const fs = require('fs');     // For file system operations
 
 const { verifyToken } = require('../middlewares/authMiddleware');
 const { verifyRole } = require('../middlewares/roleMiddleware');
-const { updateProfile, placeOrder, getOrders, submitBioData, submitGuarantorForm, submitCommitmentForm } = require('../controllers/marketerController');
+// Only import the functions that belong to the marketer controller.
+// Note: getOrders has been moved to manageOrderController, so we exclude it.
+const {
+  updateProfile,
+  placeOrder,
+  submitBioData,
+  submitGuarantorForm,
+  submitCommitmentForm,
+} = require('../controllers/marketerController');
 
-// Define the directory for commitment form uploads
+// Define the directory for commitment form uploads.
 const commitmentUploadDir = path.join(__dirname, "../../uploads/commitment_forms");
 if (!fs.existsSync(commitmentUploadDir)) {
   fs.mkdirSync(commitmentUploadDir, { recursive: true });
 }
 
-// Define the directory for guarantor form uploads
+// Define the directory for guarantor form uploads.
 const guarantorUploadDir = path.join(__dirname, "../../uploads/guarantor_forms");
 if (!fs.existsSync(guarantorUploadDir)) {
   fs.mkdirSync(guarantorUploadDir, { recursive: true });
 }
 
-// Define the directory to store uploaded files (passport photos and ID documents)
+// Define the directory to store uploaded files (passport photos and ID documents).
 const marketerUploadDir = path.join(__dirname, "../../uploads/marketer_documents");
 if (!fs.existsSync(marketerUploadDir)) {
   fs.mkdirSync(marketerUploadDir, { recursive: true });
 }
 
-// Configure Multer for file uploads
+// Configure Multer for file uploads.
+// The storage configuration here uses a generic folder ("uploads/").
+// Adjust if you want to store files in specific folders as per route.
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, 'uploads/'),
-  filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname)
+  destination: (req, file, cb) => {
+    cb(null, 'uploads/');
+  },
+  filename: (req, file, cb) => {
+    cb(null, Date.now() + '-' + file.originalname);
+  }
 });
 const upload = multer({ storage });
 
 // Protected route: Marketer profile update (with optional file upload for profile image)
 router.put('/profile', verifyToken, verifyRole(['Marketer']), upload.single('profileImage'), updateProfile);
 
-// Protected route: Place a new order (for sold items)
+// Protected route: Place a new order.
 router.post('/order', verifyToken, verifyRole(['Marketer']), placeOrder);
 
-// POST endpoint for Bio Data Form submission
-// Expecting two file fields: passport_photo and id_document
+// POST endpoint for Bio Data Form submission.
+// Expecting two file fields: "passport_photo" and "id_document".
 router.post(
   "/bio-data",
   verifyToken,
@@ -53,8 +67,8 @@ router.post(
   submitBioData
 );
 
-// Define route for Guarantor Form submission:
-// Expects file fields "id_document", "passport_photo", and "signature"
+// Protected route for Guarantor Form submission.
+// Expects file fields "id_document", "passport_photo", and "signature".
 router.post(
   "/guarantor-form",
   verifyToken,
@@ -67,8 +81,8 @@ router.post(
   submitGuarantorForm
 );
 
-// POST endpoint for Commitment Form submission
-// Expects a file field "signature" for the Direct Sales Rep's signature
+// POST endpoint for Commitment Form submission.
+// Expects a single file field "signature" for the Direct Sales Rep's signature.
 router.post(
   "/commitment",
   verifyToken,
@@ -76,8 +90,5 @@ router.post(
   upload.single("signature"),
   submitCommitmentForm
 );
-
-// a GET route for fetching orders for the logged-in marketer
-router.get('/orders', verifyToken, verifyRole(['Marketer']), getOrders);
 
 module.exports = router;
