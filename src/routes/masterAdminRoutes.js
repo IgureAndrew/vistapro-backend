@@ -27,6 +27,7 @@ const {
   unassignMarketersFromAdmin,
   unassignAdminsFromSuperadmin,
   listMarketersByAdmin,
+  getAllAssignments,
   listAdminsBySuperAdmin
 } = require('../controllers/masterAdminController');
 
@@ -138,6 +139,14 @@ router.get(
   verifyToken,
   verifyRole(["MasterAdmin"]),
   listAdminsBySuperAdmin
+);
+
+// New route: Get all current assignments
+router.get(
+  '/assignments',
+  verifyToken,
+  verifyRole(["MasterAdmin"]),
+  getAllAssignments
 );
 
 // Error handling middleware.

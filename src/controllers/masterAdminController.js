@@ -682,6 +682,60 @@ const listAdminsBySuperAdmin = async (req, res, next) => {
   }
 };
 
+/**
+ * getAllAssignments
+ * Retrieves all current assignment relationships from the system.
+ *
+ * - For marketers: Returns all marketers that are assigned to an admin.
+ * - For admins: Returns all admins that are assigned to a super admin.
+ *
+ * The response includes:
+ *   - assignedMarketers: Array of objects representing marketer assignments to admins.
+ *   - assignedAdmins: Array of objects representing admin assignments to superadmins.
+ */
+const getAllAssignments = async (req, res, next) => {
+  try {
+    // Fetch marketers assigned to an admin.
+    const marketersAssignedResult = await pool.query(
+      `
+      SELECT 
+        u.unique_id AS marketer_unique_id,
+        u.admin_id,
+        (SELECT unique_id FROM users WHERE id = u.admin_id) AS admin_unique_id,
+        u.first_name,
+        u.last_name,
+        u.location
+      FROM users u
+      WHERE u.role = 'Marketer' AND u.admin_id IS NOT NULL
+      ORDER BY u.first_name, u.last_name
+      `
+    );
+
+    // Fetch admins assigned to a super admin.
+    const adminsAssignedResult = await pool.query(
+      `
+      SELECT 
+        u.unique_id AS admin_unique_id,
+        u.super_admin_id,
+        (SELECT unique_id FROM users WHERE id = u.super_admin_id) AS super_admin_unique_id,
+        u.first_name,
+        u.last_name,
+        u.location
+      FROM users u
+      WHERE u.role = 'Admin' AND u.super_admin_id IS NOT NULL
+      ORDER BY u.first_name, u.last_name
+      `
+    );
+
+    res.status(200).json({
+      assignedMarketers: marketersAssignedResult.rows,
+      assignedAdmins: adminsAssignedResult.rows,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 
 /**
  * getDashboardSummary - Provides a summary of the activities on the dashboard overview.
@@ -732,5 +786,6 @@ module.exports = {
   unassignMarketersFromAdmin,
   unassignAdminsFromSuperadmin,
   listMarketersByAdmin,
+  getAllAssignments,
   listAdminsBySuperAdmin
 };
