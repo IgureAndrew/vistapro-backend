@@ -616,6 +616,73 @@ const unassignAdminsFromSuperadmin = async (req, res, next) => {
   }
 };
 
+
+
+/**
+ * listMarketersByAdmin
+ * Retrieves a list of Marketers assigned to a given Admin.
+ * Expects the admin's unique ID as a route parameter.
+ */
+const listMarketersByAdmin = async (req, res, next) => {
+  try {
+    const { adminUniqueId } = req.params;
+    // Verify the provided admin exists and has role "Admin".
+    const adminResult = await pool.query(
+      "SELECT id FROM users WHERE unique_id = $1 AND role = 'Admin'",
+      [adminUniqueId]
+    );
+    if (adminResult.rowCount === 0) {
+      return res.status(404).json({ message: "Admin not found." });
+    }
+    const adminId = adminResult.rows[0].id;
+
+    // Retrieve all marketers assigned to that admin.
+    const query = `
+      SELECT unique_id, first_name, last_name, email, location, admin_id
+      FROM users
+      WHERE role = 'Marketer' AND admin_id = $1
+      ORDER BY first_name, last_name
+    `;
+    const result = await pool.query(query, [adminId]);
+    res.status(200).json({ assignedMarketers: result.rows });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * listAdminsBySuperAdmin
+ * Retrieves a list of Admins assigned to a given SuperAdmin.
+ * Expects the super admin's unique ID as a route parameter.
+ */
+const listAdminsBySuperAdmin = async (req, res, next) => {
+  try {
+    const { superAdminUniqueId } = req.params;
+    // Verify the provided superadmin exists.
+    const superAdminResult = await pool.query(
+      "SELECT id FROM users WHERE unique_id = $1 AND role = 'SuperAdmin'",
+      [superAdminUniqueId]
+    );
+    if (superAdminResult.rowCount === 0) {
+      return res.status(404).json({ message: "SuperAdmin not found." });
+    }
+    const superAdminId = superAdminResult.rows[0].id;
+
+    // Retrieve all admins assigned to that superadmin.
+    const query = `
+      SELECT unique_id, first_name, last_name, email, location, super_admin_id
+      FROM users
+      WHERE role = 'Admin' AND super_admin_id = $1
+      ORDER BY first_name, last_name
+    `;
+    const result = await pool.query(query, [superAdminId]);
+    res.status(200).json({ assignedAdmins: result.rows });
+  } catch (error) {
+    next(error);
+  }
+};
+
+
 /**
  * getDashboardSummary - Provides a summary of the activities on the dashboard overview.
  */
@@ -663,5 +730,7 @@ module.exports = {
   assignMarketersToAdmin, // Multi-assignment for marketers to admin
   assignAdminToSuperAdmin, // Multi-assignment for admins to super admin
   unassignMarketersFromAdmin,
-  unassignAdminsFromSuperadmin
+  unassignAdminsFromSuperadmin,
+  listMarketersByAdmin,
+  listAdminsBySuperAdmin
 };

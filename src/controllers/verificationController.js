@@ -6,6 +6,7 @@ const { pool } = require("../config/database");
  * Inserts a new biodata record into the marketer_biodata table and updates the user's flag.
  * Expects in req.body: all fields required by marketer_biodata (except marketer_id).
  * The marketer's internal numeric ID is taken from req.user.id.
+ * Uses Cloudinary URLs for passport photo and ID document retrieved from req.files.
  */
 const submitBiodata = async (req, res, next) => { 
   try {
@@ -21,7 +22,6 @@ const submitBiodata = async (req, res, next) => {
       mothers_maiden_name,
       school_attended,
       means_of_identification,
-      id_document_url,
       last_place_of_work,
       job_description,
       reason_for_quitting,
@@ -33,10 +33,14 @@ const submitBiodata = async (req, res, next) => {
       bank_name,
       account_name,
       account_number,
-      passport_photo_url,
     } = req.body;
     
-    // Use the marketer's internal numeric id from the token.
+    // Retrieve Cloudinary URLs for uploaded files.
+    // Expecting file fields "passport_photo" and "id_document".
+    const passportPhotoUrl = req.files["passport_photo"] ? req.files["passport_photo"][0].path : null;
+    const idDocumentUrl = req.files["id_document"] ? req.files["id_document"][0].path : null;
+
+    // Use the marketer's internal numeric ID from the token.
     const marketerId = req.user.id;
     console.log("DEBUG => req.user:", req.user);
     if (!marketerId) {
@@ -50,6 +54,7 @@ const submitBiodata = async (req, res, next) => {
       return res.status(400).json({ message: "Biodata form has already been submitted." });
     }
     
+    // Convert empty date string to null if needed.
     const dob = date_of_birth === "" ? null : date_of_birth;
     
     const query = `
@@ -73,7 +78,7 @@ const submitBiodata = async (req, res, next) => {
     `;
     
     const values = [
-      marketerId,   // Use internal numeric id.
+      marketerId,           // Numeric id from req.user.id
       name,
       address,
       phone,
@@ -85,7 +90,7 @@ const submitBiodata = async (req, res, next) => {
       mothers_maiden_name,
       school_attended,
       means_of_identification,
-      id_document_url,
+      idDocumentUrl,        // Cloudinary URL for ID document.
       last_place_of_work,
       job_description,
       reason_for_quitting,
@@ -97,7 +102,7 @@ const submitBiodata = async (req, res, next) => {
       bank_name,
       account_name,
       account_number,
-      passport_photo_url,
+      passportPhotoUrl,     // Cloudinary URL for passport photo.
     ];
     
     const result = await pool.query(query, values);
@@ -135,13 +140,11 @@ const submitGuarantor = async (req, res, next) => {
       signature_url,
     } = req.body;
     
-    // Use the marketer's internal numeric id.
     const marketerId = req.user.id;
     if (!marketerId) {
       return res.status(400).json({ message: "User ID is missing from token." });
     }
     
-    // Check if guarantor form has already been submitted.
     const checkQuery = "SELECT guarantor_submitted FROM users WHERE id = $1";
     const checkResult = await pool.query(checkQuery, [marketerId]);
     if (checkResult.rowCount > 0 && checkResult.rows[0].guarantor_submitted) {
@@ -160,7 +163,7 @@ const submitGuarantor = async (req, res, next) => {
       RETURNING *
     `;
     const values = [
-      marketerId,  // Use the numeric id.
+      marketerId,
       is_candidate_well_known,
       relationship,
       known_duration,
@@ -172,7 +175,6 @@ const submitGuarantor = async (req, res, next) => {
     
     const result = await pool.query(query, values);
     
-    // Update the user's guarantor flag.
     await pool.query(
       "UPDATE users SET guarantor_submitted = true, updated_at = NOW() WHERE id = $1",
       [marketerId]
@@ -212,13 +214,11 @@ const submitCommitment = async (req, res, next) => {
       date_signed,
     } = req.body;
     
-    // Use the marketer's internal numeric id.
     const marketerId = req.user.id;
     if (!marketerId) {
       return res.status(400).json({ message: "User ID is missing from token." });
     }
     
-    // Check if commitment form has already been submitted.
     const checkQuery = "SELECT commitment_submitted FROM users WHERE id = $1";
     const checkResult = await pool.query(checkQuery, [marketerId]);
     if (checkResult.rowCount > 0 && checkResult.rows[0].commitment_submitted) {
@@ -252,7 +252,7 @@ const submitCommitment = async (req, res, next) => {
     `;
     const parsePromise = (val) => val && val.toLowerCase() === "yes";
     const values = [
-      marketerId,  // Numeric id.
+      marketerId,
       promise_accept_false_documents,
       promise_not_request_unrelated_info,
       promise_not_charge_customer_fees,
@@ -271,7 +271,6 @@ const submitCommitment = async (req, res, next) => {
     
     const result = await pool.query(query, values);
     
-    // Update the user's commitment flag.
     await pool.query(
       "UPDATE users SET commitment_submitted = true, updated_at = NOW() WHERE id = $1",
       [marketerId]
@@ -462,7 +461,7 @@ const deleteBiodataSubmission = async (req, res, next) => {
       return res.status(403).json({ message: "Only a Master Admin can delete submissions." });
     }
     const { submissionId } = req.params;
-    const query = "DELETE FROM marketer_bio_data WHERE id = $1 RETURNING *";
+    const query = "DELETE FROM marketer_biodata WHERE id = $1 RETURNING *";
     const result = await pool.query(query, [submissionId]);
     if (result.rowCount === 0) {
       return res.status(404).json({ message: "Biodata submission not found." });
@@ -524,6 +523,60 @@ const deleteCommitmentSubmission = async (req, res, next) => {
   }
 };
 
+/**
+ * getBiodataSubmissionById
+ * Retrieves a single biodata submission by its submission ID,
+ * and returns data from both the marketer_biodata and users tables.
+ */
+const getBiodataSubmissionById = async (req, res, next) => {
+  try {
+    const submissionId = req.params.id;
+    const query = `
+      SELECT 
+        b.id AS biodata_submission_id,
+        b.marketer_id,
+        b.name,
+        b.address,
+        b.phone,
+        b.religion,
+        b.date_of_birth,
+        b.marital_status,
+        b.state_of_origin,
+        b.state_of_residence,
+        b.mothers_maiden_name,
+        b.school_attended,
+        b.means_of_identification,
+        b.id_document_url,
+        b.last_place_of_work,
+        b.job_description,
+        b.reason_for_quitting,
+        b.medical_condition,
+        b.next_of_kin_name,
+        b.next_of_kin_phone,
+        b.next_of_kin_address,
+        b.next_of_kin_relationship,
+        b.bank_name,
+        b.account_name,
+        b.account_number,
+        b.passport_photo_url,
+        u.unique_id AS user_unique_id,
+        u.first_name || ' ' || u.last_name AS marketer_full_name,
+        u.location AS marketer_location
+      FROM marketer_biodata b
+      JOIN users u ON b.marketer_id = u.id
+      WHERE b.id = $1;
+    `;
+    const values = [submissionId];
+    const result = await pool.query(query, values);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: "Submission not found." });
+    }
+    res.status(200).json({ submission: result.rows[0] });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   submitBiodata,
   submitGuarantor,
@@ -535,4 +588,5 @@ module.exports = {
   deleteBiodataSubmission,
   deleteGuarantorSubmission,
   deleteCommitmentSubmission,
+  getBiodataSubmissionById,
 };

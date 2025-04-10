@@ -8,7 +8,8 @@ const fs = require('fs');
 const { verifyToken } = require('../middlewares/authMiddleware');
 const { verifyRole } = require('../middlewares/roleMiddleware');
 
-// Import controller functions from masterAdminController
+// Import controller functions from masterAdminController.
+// Ensure that your masterAdminController.js exports these functions exactly.
 const {
   registerMasterAdmin,
   registerSuperAdmin,
@@ -21,10 +22,12 @@ const {
   getUsers,
   getUserSummary,
   getDashboardSummary,
-  assignMarketersToAdmin,     // Multi‑assignment for marketers to admin
-  assignAdminToSuperAdmin,     // Multi‑assignment for admins to super admin
+  assignMarketersToAdmin,
+  assignAdminToSuperAdmin,
   unassignMarketersFromAdmin,
-  unassignAdminsFromSuperadmin // Multi‑unassignment for admins from super admin
+  unassignAdminsFromSuperadmin,
+  listMarketersByAdmin,
+  listAdminsBySuperAdmin
 } = require('../controllers/masterAdminController');
 
 // Define the uploads directory and ensure it exists.
@@ -43,13 +46,13 @@ const storage = multer.diskStorage({
   },
 });
 
-// Multer for profile images (without file filter)
+// Multer for profile images
 const uploadImage = multer({
   storage,
   limits: { fileSize: 1024 * 1024 * 5 }
 });
 
-// Multer for PDF upload (used for dealer registration certificate)
+// Multer for PDF uploads (used for dealer registration certificate)
 const uploadPDF = multer({
   storage,
   limits: { fileSize: 1024 * 1024 * 5 },
@@ -80,17 +83,17 @@ router.put(
   updateProfile
 );
 
+// Get current Master Admin profile.
 router.get(
   '/profile',
   verifyToken,
   verifyRole(['MasterAdmin']),
   (req, res, next) => {
-    // Assuming you have a function to get the current user from req.user
     res.status(200).json({ user: req.user });
   }
 );
 
-// Routes for user management.
+// User management routes.
 router.get('/users', verifyToken, verifyRole(['MasterAdmin']), getUsers);
 router.post(
   '/users',
@@ -100,28 +103,42 @@ router.post(
   addUser
 );
 
-// Dashboard summary routes.
 router.get('/dashboard-summary', verifyToken, verifyRole(['MasterAdmin']), getDashboardSummary);
 router.get('/users/summary', verifyToken, verifyRole(['MasterAdmin']), getUserSummary);
-
 router.put('/users/:id', verifyToken, verifyRole(['MasterAdmin']), updateUser);
 router.delete('/users/:id', verifyToken, verifyRole(['MasterAdmin']), deleteUser);
 router.patch('/users/:id/lock', verifyToken, verifyRole(['MasterAdmin']), lockUser);
 router.patch('/users/:id/unlock', verifyToken, verifyRole(['MasterAdmin']), unlockUser);
 
-// Assignment Routes
-
-// POST endpoint to assign one or multiple marketers to an admin.
+// Assignment routes.
+// Assign marketers to an admin.
 router.post('/assign-marketers-to-admin', verifyToken, verifyRole(['MasterAdmin']), assignMarketersToAdmin);
 
-// POST endpoint to unassign one or multiple marketers from an admin.
+// Unassign marketers from an admin.
 router.post('/unassign-marketers-from-admin', verifyToken, verifyRole(['MasterAdmin']), unassignMarketersFromAdmin);
 
-// POST endpoint to assign one or multiple admins to a super admin.
+// Assign admins to a super admin.
 router.post('/assign-admins-to-superadmin', verifyToken, verifyRole(['MasterAdmin']), assignAdminToSuperAdmin);
 
-// POST endpoint to unassign one or multiple admins from a super admin.
+// Unassign admins from a super admin.
 router.post('/unassign-admins-from-superadmin', verifyToken, verifyRole(['MasterAdmin']), unassignAdminsFromSuperadmin);
+
+// New routes to list assigned users:
+// Get marketers assigned to a specific Admin via that admin's unique ID.
+router.get(
+  "/marketers/:adminUniqueId",
+  verifyToken,
+  verifyRole(["MasterAdmin"]),
+  listMarketersByAdmin
+);
+
+// Get admins assigned to a specific SuperAdmin via the superadmin's unique ID.
+router.get(
+  "/admins/:superAdminUniqueId",
+  verifyToken,
+  verifyRole(["MasterAdmin"]),
+  listAdminsBySuperAdmin
+);
 
 // Error handling middleware.
 router.use((err, req, res, next) => {

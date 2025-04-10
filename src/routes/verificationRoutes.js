@@ -1,6 +1,12 @@
 // src/routes/verificationRoutes.js
 const express = require("express");
 const router = express.Router();
+const multer = require("multer");
+
+// Import your Cloudinary storage engine (adjust the path if necessary)
+const storage = require("../config/cloudinaryMulter");
+const upload = multer({ storage });
+
 const { verifyToken } = require("../middlewares/authMiddleware");
 const { verifyRole } = require("../middlewares/roleMiddleware");
 const {
@@ -9,6 +15,7 @@ const {
   submitCommitment,
   adminReview,
   getSubmissions,
+  getBiodataSubmissionById,  // New endpoint to fetch a specific biodata submission
   superadminVerify,
   masterApprove,
   deleteBiodataSubmission,
@@ -17,10 +24,25 @@ const {
 } = require("../controllers/verificationController");
 
 // Submission endpoints
-router.post("/biodata", verifyToken, submitBiodata);
+
+// Updated biodata route to accept two file fields: "passport_photo" and "id_document"
+router.post(
+  "/bio-data",
+  verifyToken,
+  verifyRole(["Marketer"]),
+  upload.fields([
+    { name: "passport_photo", maxCount: 1 },
+    { name: "id_document", maxCount: 1 },
+  ]),
+  submitBiodata
+);
+
 router.post("/guarantor", verifyToken, submitGuarantor);
 router.post("/commitment", verifyToken, submitCommitment);
 router.get("/submissions", verifyToken, getSubmissions);
+
+// New endpoint to retrieve a single biodata submission by submission ID.
+router.get("/bio-data/:id", verifyToken, getBiodataSubmissionById);
 
 // Review endpoints
 router.patch("/admin-review", verifyToken, verifyRole(["Admin"]), adminReview);
