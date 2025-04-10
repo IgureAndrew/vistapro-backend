@@ -402,7 +402,7 @@ const superadminVerify = async (req, res, next) => {
 const getSubmissions = async (req, res, next) => {
   try {
     // Fetch submissions from each table.
-    const biodataResult = await pool.query("SELECT * FROM marketer_bio_data ORDER BY created_at DESC");
+    const biodataResult = await pool.query("SELECT * FROM marketer_biodata ORDER BY created_at DESC");
     const guarantorResult = await pool.query("SELECT * FROM marketer_guarantor_form ORDER BY created_at DESC");
     const commitmentResult = await pool.query("SELECT * FROM marketer_commitment_form ORDER BY created_at DESC");
 
