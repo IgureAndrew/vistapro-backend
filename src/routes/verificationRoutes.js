@@ -3,20 +3,24 @@ const express = require("express");
 const router = express.Router();
 const multer = require("multer");
 
-// Import your Cloudinary storage engine.
-// Ensure the path is correct based on your folder structure.
-const storage = require("../config/cloudinaryMulter");
-const upload = multer({ storage });
+// Use memory storage for Multer so that files are available as buffers.
+const memoryStorage = multer.memoryStorage();
+const upload = multer({ storage: memoryStorage });
 
 // Import authentication and role verification middleware.
 const { verifyToken } = require("../middlewares/authMiddleware");
 const { verifyRole } = require("../middlewares/roleMiddleware");
 
-// Import the controller function for submitting biodata.
-const { submitBiodata,  submitGuarantor, submitCommitment } = require("../controllers/verificationController");
+// Import the controller functions for submitting forms.
+const { submitBiodata, submitGuarantor, submitCommitment } = require("../controllers/verificationController");
 
-// Define the route for biodata submission.
-// It expects file uploads under the field names "passport_photo" and "id_document".
+// -------------------------------------
+// Biodata Submission Route
+// -------------------------------------
+// This route expects two file uploads:
+//   - "passport_photo" (for the passport photo)
+//   - "id_document" (for the means of identification file)
+// Only authenticated users with the Marketer role can submit.
 router.post(
   "/bio-data",
   verifyToken,                    // Ensure the request is authenticated.
@@ -25,34 +29,40 @@ router.post(
     { name: "passport_photo", maxCount: 1 },
     { name: "id_document", maxCount: 1 }
   ]),
-  submitBiodata                   // The controller function handles the submission.
+  submitBiodata                   // Controller function handles the submission.
 );
 
-
-// Guarantor submission endpoint (updated):
-// For the new guarantor form, the marketer chooses a means of identification from a dropdown
-// (with options like "NIN", "International Passport", "Driver's License") and then uploads an image
-// of the selected identification under the field "identification_file". In addition, the guarantor must
-// upload their signature image under "signature".
+// -------------------------------------
+// Guarantor Submission Route
+// -------------------------------------
+// For the new guarantor form, the marketer selects a means of identification
+// (e.g., "NIN", "International Passport", or "Driver's License"). The guarantor then uploads:
+//   - an image of the selected identification (field: "identification_file")
+//   - their signature image (field: "signature")
 // All other required text fields should also be provided.
 router.post(
-    "/guarantor",
-    verifyToken,
-    verifyRole(["Marketer"]),
-    upload.fields([
-      { name: "identification_file", maxCount: 1 },
-      { name: "signature", maxCount: 1 }
-    ]),
-    submitGuarantor
-  );
+  "/guarantor",
+  verifyToken,
+  verifyRole(["Marketer"]),
+  upload.fields([
+    { name: "identification_file", maxCount: 1 },
+    { name: "signature", maxCount: 1 }
+  ]),
+  submitGuarantor
+);
 
-
-  // New Commitment Handbook Route:
+// -------------------------------------
+// Commitment Handbook Submission Route
+// -------------------------------------
+// This route handles the Commitment Handbook form submission.
+// It expects a file upload under the field "signature" for the Direct Sales Rep's signature.
+// Only authenticated users with the Marketer role can submit.
 router.post(
-    "/commitment-handbook",
-    verifyToken,
-    verifyRole(["Marketer"]),
-    upload.single("signature"),
-    submitCommitment
-  );
+  "/commitment-handbook",
+  verifyToken,
+  verifyRole(["Marketer"]),
+  upload.single("signature"),
+  submitCommitment
+);
+
 module.exports = router;

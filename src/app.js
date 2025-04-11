@@ -77,7 +77,7 @@ const cashoutRoutes = require('./routes/cashoutRoutes');
 const performanceRoutes = require('./routes/performanceRoutes');
 const stockupdateRoutes = require('./routes/stockupdateRoutes');
 const bankRoutes = require("./routes/bankRoutes");
-const uploadRoutes = require("./routes/uploadRoutes");
+
 
 
 // Mount routes
@@ -99,7 +99,7 @@ app.use('/api/performance', performanceRoutes);
 app.use('/api/stock', stockupdateRoutes);
 app.use("/api/banks", bankRoutes);
 app.use("/api/verification", verificationRoutes);
-app.use('/api/uploads', uploadRoutes);
+
 // Error handling middleware
 const errorHandler = require('./middlewares/errorHandler');
 app.use(errorHandler);
