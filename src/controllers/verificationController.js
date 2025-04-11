@@ -1,7 +1,14 @@
 // src/controllers/VerificationController.js
 const { pool } = require("../config/database");
-const uploadToCloudinary = require("../utils/uploadToCloudinary");
+const uploadToCloudinary = require("../utils/uploadToCloudinary"); // Helper to upload buffer to Cloudinary
 
+/**
+ * submitBiodata
+ * Inserts a new biodata record into the marketer_biodata table and updates the user's flag.
+ * Expects in req.body: all fields required by marketer_biodata (except marketer_unique_id).
+ * The marketer's **unique ID** is taken from req.user.unique_id.
+ * Files are uploaded via Cloudinary (passport photo under "passport_photo" and identification file under "id_document").
+ */
 const submitBiodata = async (req, res, next) => { 
   try {
     const {
@@ -15,7 +22,7 @@ const submitBiodata = async (req, res, next) => {
       state_of_residence,  // Dropdown of Nigerian states
       mothers_maiden_name,
       school_attended,
-      means_of_identification, // Dropdown selection
+      means_of_identification, // Dropdown selection (e.g., "NIN", "International Passport", "Driver's License")
       last_place_of_work,
       job_description,
       reason_for_quitting,
@@ -29,8 +36,11 @@ const submitBiodata = async (req, res, next) => {
       account_number,
     } = req.body;
     
-    // Upload the passport photo from memory storage using Cloudinary streamifier.
+    // For file uploads, we expect files to be available as buffers
+    // (this requires that multer is configured to use memory storage).
     let passportPhotoUrl = null;
+    let identificationFileUrl = null;
+    
     if (req.files && req.files["passport_photo"] && req.files["passport_photo"][0].buffer) {
       const uploadResult = await uploadToCloudinary(
         req.files["passport_photo"][0].buffer,
@@ -39,19 +49,16 @@ const submitBiodata = async (req, res, next) => {
       passportPhotoUrl = uploadResult.secure_url;
     }
     
-    // Upload the identification file from memory storage.
-    let idDocumentUrl = null;
     if (req.files && req.files["id_document"] && req.files["id_document"][0].buffer) {
       const uploadResult = await uploadToCloudinary(
         req.files["id_document"][0].buffer,
         { folder: "Vistaprouploads", allowed_formats: ["jpg", "jpeg", "png"] }
       );
-      idDocumentUrl = uploadResult.secure_url;
+      identificationFileUrl = uploadResult.secure_url;
     }
     
-    // Use the marketer's unique ID from the token.
+    // Use the marketer's unique ID from req.user.
     const marketerUniqueId = req.user.unique_id;
-    console.log("DEBUG => req.user:", req.user);
     if (!marketerUniqueId) {
       return res.status(400).json({ message: "Marketer Unique ID is missing from token." });
     }
@@ -66,7 +73,7 @@ const submitBiodata = async (req, res, next) => {
     // Convert empty date string to null if needed.
     const dob = date_of_birth === "" ? null : date_of_birth;
     
-    // Build the INSERT query. The marketer's unique ID is stored (not the numeric ID).
+    // Build the INSERT query with exactly 25 placeholders corresponding to the 25 columns.
     const query = `
       INSERT INTO marketer_biodata (
         marketer_unique_id,
@@ -93,52 +100,48 @@ const submitBiodata = async (req, res, next) => {
         bank_name,
         account_name,
         account_number,
-        passport_photo_url,
-        created_at,
-        updated_at
+        passport_photo_url
       )
       VALUES (
-        $1, $2, $3, $4, $5, $6, $7,
-        $8, $9, $10, $11,
-        $12, $13, $14, $15,
-        $16, $17, $18, $19,
-        $20, $21, $22, $23,
-        $24, 25, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+        $1,  $2,  $3,  $4,  $5,  $6,  $7,
+        $8,  $9, $10, $11, $12, $13, $14,
+        $15, $16, $17, $18, $19, $20, $21,
+        $22, $23, $24, $25
       )
       RETURNING *
     `;
     
     const values = [
-      marketerUniqueId,           // Marketer's unique ID.
-      name,
-      address,
-      phone,
-      religion,
-      dob,
-      marital_status,
-      state_of_origin,
-      state_of_residence,
-      mothers_maiden_name,
-      school_attended,
-      means_of_identification,
-      idDocumentUrl,              // Cloudinary URL for identification file.
-      last_place_of_work,
-      job_description,
-      reason_for_quitting,
-      medical_condition,
-      next_of_kin_name,
-      next_of_kin_phone,
-      next_of_kin_address,
-      next_of_kin_relationship,
-      bank_name,
-      account_name,
-      account_number,
-      passportPhotoUrl,           // Cloudinary URL for passport photo.
+      marketerUniqueId,           // Column 1: marketer_unique_id
+      name,                       // 2: name
+      address,                    // 3: address
+      phone,                      // 4: phone
+      religion,                   // 5: religion
+      dob,                        // 6: date_of_birth
+      marital_status,             // 7: marital_status
+      state_of_origin,            // 8: state_of_origin
+      state_of_residence,         // 9: state_of_residence
+      mothers_maiden_name,        // 10: mothers_maiden_name
+      school_attended,            // 11: school_attended
+      means_of_identification,    // 12: means_of_identification
+      identificationFileUrl,      // 13: id_document_url (now holds the identification file URL)
+      last_place_of_work,         // 14: last_place_of_work
+      job_description,            // 15: job_description
+      reason_for_quitting,        // 16: reason_for_quitting
+      medical_condition,          // 17: medical_condition
+      next_of_kin_name,           // 18: next_of_kin_name
+      next_of_kin_phone,          // 19: next_of_kin_phone
+      next_of_kin_address,        // 20: next_of_kin_address
+      next_of_kin_relationship,   // 21: next_of_kin_relationship
+      bank_name,                  // 22: bank_name
+      account_name,               // 23: account_name
+      account_number,             // 24: account_number
+      passportPhotoUrl            // 25: passport_photo_url
     ];
     
     const result = await pool.query(query, values);
     
-    // Update the user's biodata flag.
+    // Update the user's flag.
     await pool.query(
       "UPDATE users SET bio_submitted = true, updated_at = NOW() WHERE unique_id = $1",
       [marketerUniqueId]
@@ -153,26 +156,17 @@ const submitBiodata = async (req, res, next) => {
   }
 };
 
-
 /**
  * submitGuarantor
  * Inserts a new guarantor record into the guarantor_employment_form table and updates the user's flag.
- *
  * Expected form fields (in req.body):
- *   - is_candidate_known: "yes" or "no"
- *   - relationship: Guarantor's relationship to the candidate
- *   - known_duration: How long the guarantor has known the candidate
- *   - occupation: Guarantor's occupation
- *   - means_of_identification: Dropdown selection (e.g., "NIN", "International Passport", "Driver's License")
- *   - guarantor_full_name, guarantor_home_address, guarantor_office_address,
- *     guarantor_email, guarantor_phone
- *   - candidate_name: (Optional) The candidate's name
- *
- * Expected file uploads (via Cloudinary):
- *   - "identification_file": Image file for the selected identification document.
- *   - "signature": Guarantor's signature image.
- *
- * Uses the marketer's **unique ID** (from req.user.unique_id).
+ *   - is_candidate_known, relationship, known_duration, occupation,
+ *     means_of_identification, guarantor_full_name, guarantor_home_address,
+ *     guarantor_office_address, guarantor_email, guarantor_phone, candidate_name.
+ * Expected file uploads via Cloudinary:
+ *   - "identification_file": The image file for the selected identification document.
+ *   - "signature": The guarantor's signature image.
+ * Uses the marketer's **unique ID** (from req.user.unique_id) for the submission.
  */
 const submitGuarantor = async (req, res, next) => {
   try {
@@ -187,11 +181,13 @@ const submitGuarantor = async (req, res, next) => {
       guarantor_office_address,
       guarantor_email,
       guarantor_phone,
-      candidate_name
+      candidate_name,
     } = req.body;
     
-    // Upload the identification file from memory storage.
+    // Retrieve Cloudinary URLs via our custom uploader. We assume files are available in memory.
     let identificationFileUrl = null;
+    let signatureUrl = null;
+    
     if (req.files && req.files["identification_file"] && req.files["identification_file"][0].buffer) {
       const uploadResult = await uploadToCloudinary(
         req.files["identification_file"][0].buffer,
@@ -200,8 +196,6 @@ const submitGuarantor = async (req, res, next) => {
       identificationFileUrl = uploadResult.secure_url;
     }
     
-    // Upload the signature file from memory storage.
-    let signatureUrl = null;
     if (req.files && req.files["signature"] && req.files["signature"][0].buffer) {
       const uploadResult = await uploadToCloudinary(
         req.files["signature"][0].buffer,
@@ -210,20 +204,18 @@ const submitGuarantor = async (req, res, next) => {
       signatureUrl = uploadResult.secure_url;
     }
     
-    // Use marketer's unique ID from token.
+    // Use the marketer's unique ID from the token.
     const marketerUniqueId = req.user.unique_id;
     if (!marketerUniqueId) {
       return res.status(400).json({ message: "Marketer Unique ID is missing from token." });
     }
     
-    // Check if the guarantor form has already been submitted.
     const checkQuery = "SELECT guarantor_submitted FROM users WHERE unique_id = $1";
     const checkResult = await pool.query(checkQuery, [marketerUniqueId]);
     if (checkResult.rowCount > 0 && checkResult.rows[0].guarantor_submitted) {
       return res.status(400).json({ message: "Guarantor form has already been submitted." });
     }
     
-    // Build the INSERT query.
     const query = `
       INSERT INTO guarantor_employment_form (
         marketer_unique_id,
@@ -232,14 +224,14 @@ const submitGuarantor = async (req, res, next) => {
         known_duration,
         occupation,
         means_of_identification,
-        identification_file_url,  -- stores the Cloudinary URL for the uploaded identification file
+        identification_file_url,
         guarantor_full_name,
         guarantor_home_address,
         guarantor_office_address,
         guarantor_email,
         guarantor_phone,
         candidate_name,
-        signature_url,            -- Cloudinary URL for the signature image
+        signature_url,
         created_at,
         updated_at
       )
@@ -248,8 +240,9 @@ const submitGuarantor = async (req, res, next) => {
       )
       RETURNING *
     `;
+    
     const values = [
-      marketerUniqueId,
+      marketerUniqueId,          // Marketer's unique ID.
       is_candidate_known,
       relationship,
       known_duration,
@@ -267,7 +260,6 @@ const submitGuarantor = async (req, res, next) => {
     
     const result = await pool.query(query, values);
     
-    // Update the user's guarantor submitted flag.
     await pool.query(
       "UPDATE users SET guarantor_submitted = true, updated_at = NOW() WHERE unique_id = $1",
       [marketerUniqueId]
@@ -285,26 +277,23 @@ const submitGuarantor = async (req, res, next) => {
 /**
  * submitCommitment
  * Inserts a new commitment record into the direct_sales_commitment_form table and updates the marketer's flag.
- *
  * Expected form fields (in req.body):
- *   - promise_accept_false_documents
- *   - promise_not_request_unrelated_info
- *   - promise_not_charge_customer_fees
- *   - promise_not_modify_contract_info
- *   - promise_not_sell_unapproved_phones
- *   - promise_not_make_unofficial_commitment
- *   - promise_not_operate_customer_account
- *   - promise_accept_fraud_firing
- *   - promise_not_share_company_info
- *   - promise_ensure_loan_recovery
- *   - promise_abide_by_system
- *   - direct_sales_rep_name
- *   - date_signed
- *
+ *   - promise_accept_false_documents,
+ *   - promise_not_request_unrelated_info,
+ *   - promise_not_charge_customer_fees,
+ *   - promise_not_modify_contract_info,
+ *   - promise_not_sell_unapproved_phones,
+ *   - promise_not_make_unofficial_commitment,
+ *   - promise_not_operate_customer_account,
+ *   - promise_accept_fraud_firing,
+ *   - promise_not_share_company_info,
+ *   - promise_ensure_loan_recovery,
+ *   - promise_abide_by_system,
+ *   - direct_sales_rep_name,
+ *   - date_signed.
  * Expected file upload:
- *   - "signature": Direct Sales Rep's signature image.
- *
- * Uses the marketer's **unique ID** from req.user.unique_id.
+ *   - "signature": The direct sales rep's signature image.
+ * Uses the marketer's **unique ID** (from req.user.unique_id) for the submission.
  */
 const submitCommitment = async (req, res, next) => {
   try {
@@ -324,7 +313,7 @@ const submitCommitment = async (req, res, next) => {
       date_signed,
     } = req.body;
     
-    // Upload the direct sales rep's signature image from memory storage.
+    // Retrieve Cloudinary URL for the signature file.
     let directSalesRepSignatureUrl = null;
     if (req.files && req.files["signature"] && req.files["signature"][0].buffer) {
       const uploadResult = await uploadToCloudinary(
@@ -343,7 +332,6 @@ const submitCommitment = async (req, res, next) => {
       return res.status(400).json({ message: "Marketer Unique ID is missing from token." });
     }
     
-    // Helper function to convert yes/no responses into booleans.
     const parseBoolean = (val) => (val && val.toLowerCase() === "yes") ? true : false;
     
     const query = `
@@ -392,7 +380,6 @@ const submitCommitment = async (req, res, next) => {
     
     const result = await pool.query(query, values);
     
-    // Update the user's commitment submission flag.
     await pool.query(
       "UPDATE users SET commitment_submitted = true, updated_at = NOW() WHERE unique_id = $1",
       [marketerUniqueId]
@@ -407,10 +394,8 @@ const submitCommitment = async (req, res, next) => {
   }
 };
 
-
 module.exports = {
   submitBiodata,
   submitGuarantor,
   submitCommitment,
-  // Similarly update submitGuarantor and submitCommitment using uploadToCloudinary.
 };
