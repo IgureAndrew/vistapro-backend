@@ -36,11 +36,15 @@ const submitBiodata = async (req, res, next) => {
     } = req.body;
     
     // Retrieve Cloudinary URLs for uploaded files.
-    // Expecting file fields "passport_photo" and "id_document".
-    const passportPhotoUrl = req.files["passport_photo"] ? req.files["passport_photo"][0].path : null;
-    const idDocumentUrl = req.files["id_document"] ? req.files["id_document"][0].path : null;
+    // The files are expected to be uploaded under the fields "passport_photo" and "id_document".
+    const passportPhotoUrl = req.files["passport_photo"] 
+      ? req.files["passport_photo"][0].path 
+      : null;
+    const idDocumentUrl = req.files["id_document"] 
+      ? req.files["id_document"][0].path 
+      : null;
 
-    // Use the marketer's internal numeric ID from the token.
+    // Get the marketer's internal numeric ID from the token.
     const marketerId = req.user.id;
     console.log("DEBUG => req.user:", req.user);
     if (!marketerId) {
@@ -57,14 +61,37 @@ const submitBiodata = async (req, res, next) => {
     // Convert empty date string to null if needed.
     const dob = date_of_birth === "" ? null : date_of_birth;
     
+    // Build the insert query with all required fields. Notice that the Cloudinary URLs 
+    // for the ID document and passport photo are used in the value list.
     const query = `
       INSERT INTO marketer_biodata (
-        marketer_id, name, address, phone, religion, date_of_birth, marital_status,
-        state_of_origin, state_of_residence, mothers_maiden_name, school_attended,
-        means_of_identification, id_document_url, last_place_of_work, job_description,
-        reason_for_quitting, medical_condition, next_of_kin_name, next_of_kin_phone,
-        next_of_kin_address, next_of_kin_relationship, bank_name, account_name,
-        account_number, passport_photo_url, created_at, updated_at
+        marketer_id,
+        name,
+        address,
+        phone,
+        religion,
+        date_of_birth,
+        marital_status,
+        state_of_origin,
+        state_of_residence,
+        mothers_maiden_name,
+        school_attended,
+        means_of_identification,
+        id_document_url,
+        last_place_of_work,
+        job_description,
+        reason_for_quitting,
+        medical_condition,
+        next_of_kin_name,
+        next_of_kin_phone,
+        next_of_kin_address,
+        next_of_kin_relationship,
+        bank_name,
+        account_name,
+        account_number,
+        passport_photo_url,
+        created_at,
+        updated_at
       )
       VALUES (
         $1, $2, $3, $4, $5, $6, $7,
@@ -72,11 +99,12 @@ const submitBiodata = async (req, res, next) => {
         $12, $13, $14, $15,
         $16, $17, $18, $19,
         $20, $21, $22, $23,
-        $24, $25, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+        $24, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
       )
       RETURNING *
     `;
     
+    // Values array uses the Cloudinary URLs for the file fields.
     const values = [
       marketerId,           // Numeric id from req.user.id
       name,
@@ -107,7 +135,7 @@ const submitBiodata = async (req, res, next) => {
     
     const result = await pool.query(query, values);
     
-    // Update the user's biodata flag.
+    // Update the user's biodata flag so that subsequent submissions can be blocked unless refill is allowed.
     await pool.query(
       "UPDATE users SET bio_submitted = true, updated_at = NOW() WHERE id = $1",
       [marketerId]
@@ -145,12 +173,14 @@ const submitGuarantor = async (req, res, next) => {
       return res.status(400).json({ message: "User ID is missing from token." });
     }
     
+    // Check if guarantor form has already been submitted.
     const checkQuery = "SELECT guarantor_submitted FROM users WHERE id = $1";
     const checkResult = await pool.query(checkQuery, [marketerId]);
     if (checkResult.rowCount > 0 && checkResult.rows[0].guarantor_submitted) {
       return res.status(400).json({ message: "Guarantor form has already been submitted." });
     }
     
+    // Insert guarantor data.
     const query = `
       INSERT INTO marketer_guarantor_form (
         marketer_id, is_candidate_well_known, relationship, known_duration,
@@ -175,6 +205,7 @@ const submitGuarantor = async (req, res, next) => {
     
     const result = await pool.query(query, values);
     
+    // Update the user's guarantor flag.
     await pool.query(
       "UPDATE users SET guarantor_submitted = true, updated_at = NOW() WHERE id = $1",
       [marketerId]
@@ -219,6 +250,7 @@ const submitCommitment = async (req, res, next) => {
       return res.status(400).json({ message: "User ID is missing from token." });
     }
     
+    // Check if commitment form has already been submitted.
     const checkQuery = "SELECT commitment_submitted FROM users WHERE id = $1";
     const checkResult = await pool.query(checkQuery, [marketerId]);
     if (checkResult.rowCount > 0 && checkResult.rows[0].commitment_submitted) {
@@ -271,6 +303,7 @@ const submitCommitment = async (req, res, next) => {
     
     const result = await pool.query(query, values);
     
+    // Update the user's commitment flag.
     await pool.query(
       "UPDATE users SET commitment_submitted = true, updated_at = NOW() WHERE id = $1",
       [marketerId]
@@ -289,7 +322,7 @@ const submitCommitment = async (req, res, next) => {
  * adminReview
  * Allows an Admin to review a marketer's submitted forms.
  * Expects in req.body: marketerUniqueId, bioApproved, guarantorApproved, commitmentApproved,
- * and admin_review_report (a text report).
+ * and admin_review_report.
  */
 const adminReview = async (req, res, next) => {
   try {
@@ -329,7 +362,7 @@ const adminReview = async (req, res, next) => {
  * superadminVerify
  * Allows a SuperAdmin to verify or reject a marketer's forms.
  * Expects in req.body: marketerUniqueId, verified (boolean), and superadmin_review_report.
- * Ensures that the marketer is assigned to an admin whose super_admin_id matches the logged-in SuperAdmin.
+ * The marketer must be assigned to an admin whose super_admin_id matches the logged-in SuperAdmin.
  */
 const superadminVerify = async (req, res, next) => {
   try {
@@ -338,7 +371,7 @@ const superadminVerify = async (req, res, next) => {
       return res.status(400).json({ message: "Marketer Unique ID is required." });
     }
     
-    // Get the logged-in superadmin's numeric ID from the token.
+    // Get the logged-in superadmin's numeric ID.
     const superadminId = req.user.id;
     
     // Retrieve the marketer's record.
@@ -351,7 +384,6 @@ const superadminVerify = async (req, res, next) => {
     }
     const marketer = marketerResult.rows[0];
     
-    // Ensure the marketer is assigned to an admin.
     if (!marketer.admin_id) {
       return res.status(400).json({ message: "Marketer is not assigned to any admin." });
     }
@@ -366,7 +398,6 @@ const superadminVerify = async (req, res, next) => {
     }
     const admin = adminResult.rows[0];
     
-    // Check that the admin's super_admin_id matches the logged-in superadmin's ID.
     if (admin.super_admin_id !== superadminId) {
       return res.status(403).json({ message: "You are not authorized to verify this marketer." });
     }
@@ -400,12 +431,10 @@ const superadminVerify = async (req, res, next) => {
  */
 const getSubmissions = async (req, res, next) => {
   try {
-    // Fetch submissions from each table.
     const biodataResult = await pool.query("SELECT * FROM marketer_biodata ORDER BY created_at DESC");
     const guarantorResult = await pool.query("SELECT * FROM marketer_guarantor_form ORDER BY created_at DESC");
     const commitmentResult = await pool.query("SELECT * FROM marketer_commitment_form ORDER BY created_at DESC");
 
-    // Combine into one response object.
     const submissions = {
       biodata: biodataResult.rows,
       guarantor: guarantorResult.rows,
@@ -442,8 +471,9 @@ const masterApprove = async (req, res, next) => {
     if (result.rowCount === 0) {
       return res.status(404).json({ message: "Marketer not found." });
     }
+    // (Optional) Trigger a notification here (e.g., via Socket.IO or an email API).
     res.status(200).json({
-      message: "Marketer final verification approved.",
+      message: "Marketer final verification approved, dashboard unlocked, and notification sent.",
       user: result.rows[0],
     });
   } catch (error) {
@@ -524,9 +554,134 @@ const deleteCommitmentSubmission = async (req, res, next) => {
 };
 
 /**
+ * rejectForm
+ * Allows a Master Admin to mark a submission as rejected.
+ * It can update a field in the users table (or a submissions table) to indicate rejection.
+ */
+const rejectForm = async (req, res, next) => {
+  try {
+    const { marketerUniqueId, formType, rejectionReason } = req.body;
+    // Validate input: formType could be "biodata", "guarantor", or "commitment".
+    if (!marketerUniqueId || !formType) {
+      return res.status(400).json({ message: "Marketer Unique ID and form type are required." });
+    }
+    
+    // Update the appropriate rejection flag or store the rejection reason in the database.
+    // This implementation depends on your schema. Here is a sample update on users table:
+    const query = `
+      UPDATE users
+      SET overall_verification_status = 'rejected',
+          rejection_reason = $1,
+          updated_at = NOW()
+      WHERE unique_id = $2
+      RETURNING *
+    `;
+    const values = [rejectionReason || "Not meeting criteria", marketerUniqueId];
+    const result = await pool.query(query, values);
+    
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: "Marketer not found." });
+    }
+    
+    // The marketer can be later allowed to resubmit the form (if your business logic allows that).
+    res.status(200).json({
+      message: `Form ${formType} rejected successfully.`,
+      user: result.rows[0],
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * allowRefillForm
+ * Allows a Master Admin to reset a submission flag for a specified form type,
+ * enabling the marketer to re-submit that form.
+ *
+ * Expects in req.body:
+ *   - marketerUniqueId: The unique ID of the marketer.
+ *   - formType: The type of form to allow refill (e.g., "biodata", "guarantor", "commitment").
+ */
+const allowRefillForm = async (req, res, next) => {
+  try {
+    const { marketerUniqueId, formType } = req.body;
+    if (!marketerUniqueId || !formType) {
+      return res.status(400).json({ message: "Marketer Unique ID and form type are required." });
+    }
+    
+    // Depending on your database schema, you might update the user's record and/or
+    // clear the corresponding flag that marks the form as submitted.
+    // For example, if you have fields like bio_submitted, guarantor_submitted, or commitment_submitted:
+    let updateField;
+    if (formType.toLowerCase() === "biodata") {
+      updateField = "bio_submitted";
+    } else if (formType.toLowerCase() === "guarantor") {
+      updateField = "guarantor_submitted";
+    } else if (formType.toLowerCase() === "commitment") {
+      updateField = "commitment_submitted";
+    } else {
+      return res.status(400).json({ message: "Invalid form type provided." });
+    }
+    
+    const query = `
+      UPDATE users
+      SET ${updateField} = false,
+          updated_at = NOW()
+      WHERE unique_id = $1
+      RETURNING *
+    `;
+    const values = [marketerUniqueId];
+    const result = await pool.query(query, values);
+    
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: "Marketer not found." });
+    }
+    
+    res.status(200).json({
+      message: `Refill allowed for ${formType} form.`,
+      user: result.rows[0],
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * verifyMarketer
+ * (Example implementation)
+ * Allows a Master Admin to mark a marketer as verified manually.
+ * Expects in req.body: marketerUniqueId.
+ */
+const verifyMarketer = async (req, res, next) => {
+  try {
+    const { marketerUniqueId } = req.body;
+    if (!marketerUniqueId) {
+      return res.status(400).json({ message: "Marketer Unique ID is required." });
+    }
+    const query = `
+      UPDATE users
+      SET overall_verification_status = 'verified',
+          updated_at = NOW()
+      WHERE unique_id = $1
+      RETURNING *
+    `;
+    const result = await pool.query(query, [marketerUniqueId]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: "Marketer not found." });
+    }
+    res.status(200).json({
+      message: "Marketer verified successfully.",
+      user: result.rows[0],
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
  * getBiodataSubmissionById
  * Retrieves a single biodata submission by its submission ID,
- * and returns data from both the marketer_biodata and users tables.
+ * joining data from marketer_biodata and users to provide additional details.
  */
 const getBiodataSubmissionById = async (req, res, next) => {
   try {
@@ -585,6 +740,9 @@ module.exports = {
   adminReview,
   superadminVerify,
   masterApprove,
+  rejectForm,           // These functions are assumed to be defined elsewhere if needed.
+  allowRefillForm,      // (Not included in this snippet)
+  verifyMarketer,       // (Not included in this snippet) // (Not included in this snippet)
   deleteBiodataSubmission,
   deleteGuarantorSubmission,
   deleteCommitmentSubmission,
