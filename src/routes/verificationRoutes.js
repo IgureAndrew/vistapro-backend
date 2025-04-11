@@ -3,7 +3,7 @@ const express = require("express");
 const router = express.Router();
 const multer = require("multer");
 
-// Use memory storage for Multer so that files are available as buffers.
+// Use memory storage so that files are available as buffers.
 const memoryStorage = multer.memoryStorage();
 const upload = multer({ storage: memoryStorage });
 
@@ -11,35 +11,47 @@ const upload = multer({ storage: memoryStorage });
 const { verifyToken } = require("../middlewares/authMiddleware");
 const { verifyRole } = require("../middlewares/roleMiddleware");
 
-// Import the controller functions for submitting forms.
-const { submitBiodata, submitGuarantor, submitCommitment } = require("../controllers/verificationController");
+// Import all controller functions from the VerificationController.
+const {
+  submitBiodata,
+  submitGuarantor,
+  submitCommitment,
+  updateBiodata,
+  allowRefillForm,
+  adminReview,
+  superadminVerify,
+  masterApprove,
+  deleteBiodataSubmission,
+  deleteGuarantorSubmission,
+  deleteCommitmentSubmission,
+  getBiodataSubmissionById,
+} = require("../controllers/verificationController");
 
-// -------------------------------------
-// Biodata Submission Route
-// -------------------------------------
-// This route expects two file uploads:
-//   - "passport_photo" (for the passport photo)
-//   - "id_document" (for the means of identification file)
-// Only authenticated users with the Marketer role can submit.
+/**
+ * *********************** Submission Endpoints *************************
+ */
+
+// Biodata Submission Route:
+// - Expects two file uploads via FormData:
+//    - "passport_photo" (passport photo)
+//    - "id_document" (means of identification file)
+// Only authenticated Marketers can submit.
 router.post(
   "/bio-data",
-  verifyToken,                    // Ensure the request is authenticated.
-  verifyRole(["Marketer"]),       // Only users with the Marketer role can submit.
+  verifyToken,
+  verifyRole(["Marketer"]),
   upload.fields([
     { name: "passport_photo", maxCount: 1 },
     { name: "id_document", maxCount: 1 }
   ]),
-  submitBiodata                   // Controller function handles the submission.
+  submitBiodata
 );
 
-// -------------------------------------
-// Guarantor Submission Route
-// -------------------------------------
-// For the new guarantor form, the marketer selects a means of identification
-// (e.g., "NIN", "International Passport", or "Driver's License"). The guarantor then uploads:
-//   - an image of the selected identification (field: "identification_file")
-//   - their signature image (field: "signature")
-// All other required text fields should also be provided.
+// Guarantor Submission Route:
+// - Expects file uploads:
+//    - "identification_file" (for the selected identification document image)
+//    - "signature" (for the guarantor's signature image)
+// Only authenticated Marketers can submit.
 router.post(
   "/guarantor",
   verifyToken,
@@ -51,18 +63,110 @@ router.post(
   submitGuarantor
 );
 
-// -------------------------------------
-// Commitment Handbook Submission Route
-// -------------------------------------
-// This route handles the Commitment Handbook form submission.
-// It expects a file upload under the field "signature" for the Direct Sales Rep's signature.
-// Only authenticated users with the Marketer role can submit.
+// Commitment Handbook Submission Route:
+// - Expects a single file upload under "signature" (Direct Sales Rep's signature)
+// Only authenticated Marketers can submit.
 router.post(
   "/commitment-handbook",
   verifyToken,
   verifyRole(["Marketer"]),
   upload.single("signature"),
   submitCommitment
+);
+
+/**
+ * *********************** Update Endpoints *************************
+ */
+
+// Update Biodata (for cases where the marketer needs to refill/update the biodata form)
+router.put(
+  "/bio-data",
+  verifyToken,
+  verifyRole(["Marketer"]),
+  upload.fields([
+    { name: "passport_photo", maxCount: 1 },
+    { name: "id_document", maxCount: 1 }
+  ]),
+  updateBiodata
+);
+
+/**
+ * *********************** Admin / Master Admin Endpoints *************************
+ */
+
+// Allow Master Admin to reset a form (allow the marketer to refill a form if needed)
+// The request body must contain { marketerUniqueId, formType }.
+router.patch(
+  "/allow-refill",
+  verifyToken,
+  verifyRole(["MasterAdmin"]),
+  allowRefillForm
+);
+
+// Admin review endpoint to review submitted forms.
+// Expects necessary review details in the request body.
+router.patch(
+  "/admin-review",
+  verifyToken,
+  verifyRole(["Admin"]),
+  adminReview
+);
+
+// SuperAdmin verification endpoint.
+// Expects necessary verification details in the request body.
+router.patch(
+  "/superadmin-verify",
+  verifyToken,
+  verifyRole(["SuperAdmin"]),
+  superadminVerify
+);
+
+// Master Admin final approval endpoint.
+// Expects { marketerUniqueId } in the body.
+router.patch(
+  "/master-approve",
+  verifyToken,
+  verifyRole(["MasterAdmin"]),
+  masterApprove
+);
+
+/**
+ * *********************** Deletion Endpoints (Master Admin Only) *************************
+ */
+
+// Delete a biodata submission by its submissionId.
+router.delete(
+  "/bio-data/:submissionId",
+  verifyToken,
+  verifyRole(["MasterAdmin"]),
+  deleteBiodataSubmission
+);
+
+// Delete a guarantor submission by its submissionId.
+router.delete(
+  "/guarantor/:submissionId",
+  verifyToken,
+  verifyRole(["MasterAdmin"]),
+  deleteGuarantorSubmission
+);
+
+// Delete a commitment submission by its submissionId.
+router.delete(
+  "/commitment/:submissionId",
+  verifyToken,
+  verifyRole(["MasterAdmin"]),
+  deleteCommitmentSubmission
+);
+
+/**
+ * *********************** GET Endpoints *************************
+ */
+
+// Get a single biodata submission by its submission ID.
+router.get(
+  "/bio-data/:id",
+  verifyToken,
+  getBiodataSubmissionById
 );
 
 module.exports = router;

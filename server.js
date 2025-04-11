@@ -3,9 +3,14 @@ const app = require('./src/app'); // Your Express app
 const { connectDB } = require('./src/config/database'); // Database connection function
 const http = require('http');
 const { Server } = require("socket.io");
+const { initSocket } = require('./src/socket');
 
 // Create an HTTP server from your Express app
 const server = http.createServer(app);
+
+
+// Initialize Socket.IO with the HTTP server
+initSocket(server);
 
 // Initialize Socket.IO on the same server with CORS configuration
 const io = new Server(server, {

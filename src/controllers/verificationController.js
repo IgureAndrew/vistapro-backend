@@ -1,28 +1,32 @@
 // src/controllers/VerificationController.js
 const { pool } = require("../config/database");
-const uploadToCloudinary = require("../utils/uploadToCloudinary"); // Helper to upload buffer to Cloudinary
+const uploadToCloudinary = require("../utils/uploadToCloudinary"); // Helper to upload a buffer to Cloudinary
+const { sendSocketNotification } = require("../utils/notifications");
 
 /**
  * submitBiodata
- * Inserts a new biodata record into the marketer_biodata table and updates the user's flag.
- * Expects in req.body: all fields required by marketer_biodata (except marketer_unique_id).
- * The marketer's **unique ID** is taken from req.user.unique_id.
- * Files are uploaded via Cloudinary (passport photo under "passport_photo" and identification file under "id_document").
+ * Inserts a new record into the marketer_biodata table and updates the marketer's submission flag.
+ * - Expects text form fields in req.body.
+ * - Expects two file uploads (as buffers) in req.files:
+ *     - "passport_photo": the passport photo.
+ *     - "id_document": the image for the selected means of identification.
+ * - Uses the marketer's unique ID (req.user.unique_id) for all records.
  */
-const submitBiodata = async (req, res, next) => { 
+const submitBiodata = async (req, res, next) => {
   try {
+    // Extract text fields from req.body.
     const {
       name,
       address,
       phone,
-      religion,            // Dropdown: "Christian" or "Muslim"
+      religion,
       date_of_birth,
-      marital_status,      // Dropdown: "Single" or "Married"
-      state_of_origin,     // Dropdown of Nigerian states
-      state_of_residence,  // Dropdown of Nigerian states
+      marital_status,
+      state_of_origin,
+      state_of_residence,
       mothers_maiden_name,
       school_attended,
-      means_of_identification, // Dropdown selection (e.g., "NIN", "International Passport", "Driver's License")
+      means_of_identification,
       last_place_of_work,
       job_description,
       reason_for_quitting,
@@ -35,45 +39,54 @@ const submitBiodata = async (req, res, next) => {
       account_name,
       account_number,
     } = req.body;
-    
-    // For file uploads, we expect files to be available as buffers
-    // (this requires that multer is configured to use memory storage).
+
+    // Initialize file URL variables.
     let passportPhotoUrl = null;
     let identificationFileUrl = null;
-    
-    if (req.files && req.files["passport_photo"] && req.files["passport_photo"][0].buffer) {
+
+    // Upload passport photo if file buffer is available.
+    if (
+      req.files &&
+      req.files["passport_photo"] &&
+      req.files["passport_photo"][0].buffer
+    ) {
       const uploadResult = await uploadToCloudinary(
         req.files["passport_photo"][0].buffer,
         { folder: "Vistaprouploads", allowed_formats: ["jpg", "jpeg", "png"] }
       );
       passportPhotoUrl = uploadResult.secure_url;
     }
-    
-    if (req.files && req.files["id_document"] && req.files["id_document"][0].buffer) {
+
+    // Upload identification file if file buffer is available.
+    if (
+      req.files &&
+      req.files["id_document"] &&
+      req.files["id_document"][0].buffer
+    ) {
       const uploadResult = await uploadToCloudinary(
         req.files["id_document"][0].buffer,
         { folder: "Vistaprouploads", allowed_formats: ["jpg", "jpeg", "png"] }
       );
       identificationFileUrl = uploadResult.secure_url;
     }
-    
-    // Use the marketer's unique ID from req.user.
+
+    // Get the marketer's unique ID from req.user.
     const marketerUniqueId = req.user.unique_id;
     if (!marketerUniqueId) {
       return res.status(400).json({ message: "Marketer Unique ID is missing from token." });
     }
-    
-    // Check if biodata has already been submitted.
+
+    // Check if the marketer has already submitted their biodata.
     const checkQuery = "SELECT bio_submitted FROM users WHERE unique_id = $1";
     const checkResult = await pool.query(checkQuery, [marketerUniqueId]);
     if (checkResult.rowCount > 0 && checkResult.rows[0].bio_submitted) {
       return res.status(400).json({ message: "Biodata form has already been submitted." });
     }
-    
-    // Convert empty date string to null if needed.
+
+    // Convert empty date strings to null.
     const dob = date_of_birth === "" ? null : date_of_birth;
-    
-    // Build the INSERT query with exactly 25 placeholders corresponding to the 25 columns.
+
+    // Build the INSERT query.
     const query = `
       INSERT INTO marketer_biodata (
         marketer_unique_id,
@@ -110,43 +123,42 @@ const submitBiodata = async (req, res, next) => {
       )
       RETURNING *
     `;
-    
     const values = [
-      marketerUniqueId,           // Column 1: marketer_unique_id
-      name,                       // 2: name
-      address,                    // 3: address
-      phone,                      // 4: phone
-      religion,                   // 5: religion
-      dob,                        // 6: date_of_birth
-      marital_status,             // 7: marital_status
-      state_of_origin,            // 8: state_of_origin
-      state_of_residence,         // 9: state_of_residence
-      mothers_maiden_name,        // 10: mothers_maiden_name
-      school_attended,            // 11: school_attended
-      means_of_identification,    // 12: means_of_identification
-      identificationFileUrl,      // 13: id_document_url (now holds the identification file URL)
-      last_place_of_work,         // 14: last_place_of_work
-      job_description,            // 15: job_description
-      reason_for_quitting,        // 16: reason_for_quitting
-      medical_condition,          // 17: medical_condition
-      next_of_kin_name,           // 18: next_of_kin_name
-      next_of_kin_phone,          // 19: next_of_kin_phone
-      next_of_kin_address,        // 20: next_of_kin_address
-      next_of_kin_relationship,   // 21: next_of_kin_relationship
-      bank_name,                  // 22: bank_name
-      account_name,               // 23: account_name
-      account_number,             // 24: account_number
-      passportPhotoUrl            // 25: passport_photo_url
+      marketerUniqueId,
+      name,
+      address,
+      phone,
+      religion,
+      dob,
+      marital_status,
+      state_of_origin,
+      state_of_residence,
+      mothers_maiden_name,
+      school_attended,
+      means_of_identification,
+      identificationFileUrl,
+      last_place_of_work,
+      job_description,
+      reason_for_quitting,
+      medical_condition,
+      next_of_kin_name,
+      next_of_kin_phone,
+      next_of_kin_address,
+      next_of_kin_relationship,
+      bank_name,
+      account_name,
+      account_number,
+      passportPhotoUrl,
     ];
-    
+
     const result = await pool.query(query, values);
-    
-    // Update the user's flag.
+
+    // Update the user flag to block subsequent submissions.
     await pool.query(
       "UPDATE users SET bio_submitted = true, updated_at = NOW() WHERE unique_id = $1",
       [marketerUniqueId]
     );
-    
+
     res.status(201).json({
       message: "Biodata submitted successfully.",
       biodata: result.rows[0],
@@ -158,15 +170,11 @@ const submitBiodata = async (req, res, next) => {
 
 /**
  * submitGuarantor
- * Inserts a new guarantor record into the guarantor_employment_form table and updates the user's flag.
- * Expected form fields (in req.body):
- *   - is_candidate_known, relationship, known_duration, occupation,
- *     means_of_identification, guarantor_full_name, guarantor_home_address,
- *     guarantor_office_address, guarantor_email, guarantor_phone, candidate_name.
- * Expected file uploads via Cloudinary:
- *   - "identification_file": The image file for the selected identification document.
- *   - "signature": The guarantor's signature image.
- * Uses the marketer's **unique ID** (from req.user.unique_id) for the submission.
+ * Inserts a new record into the guarantor_employment_form table and updates the user's flag.
+ * Expects text fields in req.body and two file uploads (as buffers) in req.files:
+ *   - "identification_file": for the image of the selected identification.
+ *   - "signature": for the guarantor's signature image.
+ * Uses the marketer's unique ID (req.user.unique_id).
  */
 const submitGuarantor = async (req, res, next) => {
   try {
@@ -183,39 +191,45 @@ const submitGuarantor = async (req, res, next) => {
       guarantor_phone,
       candidate_name,
     } = req.body;
-    
-    // Retrieve Cloudinary URLs via our custom uploader. We assume files are available in memory.
+
     let identificationFileUrl = null;
     let signatureUrl = null;
-    
-    if (req.files && req.files["identification_file"] && req.files["identification_file"][0].buffer) {
+
+    if (
+      req.files &&
+      req.files["identification_file"] &&
+      req.files["identification_file"][0].buffer
+    ) {
       const uploadResult = await uploadToCloudinary(
         req.files["identification_file"][0].buffer,
         { folder: "Vistaprouploads", allowed_formats: ["jpg", "jpeg", "png"] }
       );
       identificationFileUrl = uploadResult.secure_url;
     }
-    
-    if (req.files && req.files["signature"] && req.files["signature"][0].buffer) {
+
+    if (
+      req.files &&
+      req.files["signature"] &&
+      req.files["signature"][0].buffer
+    ) {
       const uploadResult = await uploadToCloudinary(
         req.files["signature"][0].buffer,
         { folder: "Vistaprouploads", allowed_formats: ["jpg", "jpeg", "png"] }
       );
       signatureUrl = uploadResult.secure_url;
     }
-    
-    // Use the marketer's unique ID from the token.
+
     const marketerUniqueId = req.user.unique_id;
     if (!marketerUniqueId) {
       return res.status(400).json({ message: "Marketer Unique ID is missing from token." });
     }
-    
+
     const checkQuery = "SELECT guarantor_submitted FROM users WHERE unique_id = $1";
     const checkResult = await pool.query(checkQuery, [marketerUniqueId]);
     if (checkResult.rowCount > 0 && checkResult.rows[0].guarantor_submitted) {
       return res.status(400).json({ message: "Guarantor form has already been submitted." });
     }
-    
+
     const query = `
       INSERT INTO guarantor_employment_form (
         marketer_unique_id,
@@ -240,9 +254,8 @@ const submitGuarantor = async (req, res, next) => {
       )
       RETURNING *
     `;
-    
     const values = [
-      marketerUniqueId,          // Marketer's unique ID.
+      marketerUniqueId,
       is_candidate_known,
       relationship,
       known_duration,
@@ -255,19 +268,19 @@ const submitGuarantor = async (req, res, next) => {
       guarantor_email,
       guarantor_phone,
       candidate_name || null,
-      signatureUrl
+      signatureUrl,
     ];
-    
     const result = await pool.query(query, values);
-    
+
+    // Update the user's flag.
     await pool.query(
       "UPDATE users SET guarantor_submitted = true, updated_at = NOW() WHERE unique_id = $1",
       [marketerUniqueId]
     );
-    
+
     res.status(201).json({
       message: "Guarantor form submitted successfully.",
-      guarantor: result.rows[0]
+      guarantor: result.rows[0],
     });
   } catch (error) {
     next(error);
@@ -373,6 +386,19 @@ const submitCommitment = async (req, res, next) => {
       [marketerUniqueId]
     );
     
+    // Check if all three forms have been submitted.
+    const statusQuery = "SELECT bio_submitted, guarantor_submitted, commitment_submitted FROM users WHERE unique_id = $1";
+    const statusResult = await pool.query(statusQuery, [marketerUniqueId]);
+    const { bio_submitted, guarantor_submitted, commitment_submitted } = statusResult.rows[0];
+    
+    if (bio_submitted && guarantor_submitted && commitment_submitted) {
+      // All forms have been submitted; send a final notification.
+      await sendSocketNotification(
+        marketerUniqueId,
+        "All your forms have been submitted successfully. Your submission is complete. You will be notified once reviewed and approved; your dashboard is now unlocked."
+      );
+    }
+    
     res.status(201).json({
       message: "Commitment Handbook form submitted successfully.",
       commitment: result.rows[0],
@@ -381,8 +407,465 @@ const submitCommitment = async (req, res, next) => {
     next(error);
   }
 };
+/**
+ * updateBiodata
+ * Allows a marketer to update their biodata if needed.
+ * Expects updated fields in req.body and optionally updated file uploads in req.files.
+ * Uses the marketer's unique ID (req.user.unique_id) to find their record.
+ */
+const updateBiodata = async (req, res, next) => {
+  try {
+    const {
+      name,
+      address,
+      phone,
+      religion,
+      date_of_birth,
+      marital_status,
+      state_of_origin,
+      state_of_residence,
+      mothers_maiden_name,
+      school_attended,
+      means_of_identification,
+      last_place_of_work,
+      job_description,
+      reason_for_quitting,
+      medical_condition,
+      next_of_kin_name,
+      next_of_kin_phone,
+      next_of_kin_address,
+      next_of_kin_relationship,
+      bank_name,
+      account_name,
+      account_number,
+    } = req.body;
+
+    // Optionally process file uploads for passport photo and identification file.
+    let passportPhotoUrl = null;
+    let identificationFileUrl = null;
+
+    if (req.files && req.files["passport_photo"] && req.files["passport_photo"][0].buffer) {
+      const uploadResult = await uploadToCloudinary(
+        req.files["passport_photo"][0].buffer,
+        { folder: "Vistaprouploads", allowed_formats: ["jpg", "jpeg", "png"] }
+      );
+      passportPhotoUrl = uploadResult.secure_url;
+    }
+
+    if (req.files && req.files["id_document"] && req.files["id_document"][0].buffer) {
+      const uploadResult = await uploadToCloudinary(
+        req.files["id_document"][0].buffer,
+        { folder: "Vistaprouploads", allowed_formats: ["jpg", "jpeg", "png"] }
+      );
+      identificationFileUrl = uploadResult.secure_url;
+    }
+
+    const marketerUniqueId = req.user.unique_id;
+    if (!marketerUniqueId) {
+      return res.status(400).json({ message: "Marketer Unique ID is missing from token." });
+    }
+
+    const dob = date_of_birth === "" ? null : date_of_birth;
+
+    // Update query for the biodata record.
+    const query = `
+      UPDATE marketer_biodata
+      SET name = $2,
+          address = $3,
+          phone = $4,
+          religion = $5,
+          date_of_birth = $6,
+          marital_status = $7,
+          state_of_origin = $8,
+          state_of_residence = $9,
+          mothers_maiden_name = $10,
+          school_attended = $11,
+          means_of_identification = $12,
+          id_document_url = $13,
+          last_place_of_work = $14,
+          job_description = $15,
+          reason_for_quitting = $16,
+          medical_condition = $17,
+          next_of_kin_name = $18,
+          next_of_kin_phone = $19,
+          next_of_kin_address = $20,
+          next_of_kin_relationship = $21,
+          bank_name = $22,
+          account_name = $23,
+          account_number = $24,
+          passport_photo_url = $25,
+          updated_at = NOW()
+      WHERE marketer_unique_id = $1
+      RETURNING *
+    `;
+    const values = [
+      marketerUniqueId,
+      name,
+      address,
+      phone,
+      religion,
+      dob,
+      marital_status,
+      state_of_origin,
+      state_of_residence,
+      mothers_maiden_name,
+      school_attended,
+      means_of_identification,
+      identificationFileUrl,
+      last_place_of_work,
+      job_description,
+      reason_for_quitting,
+      medical_condition,
+      next_of_kin_name,
+      next_of_kin_phone,
+      next_of_kin_address,
+      next_of_kin_relationship,
+      bank_name,
+      account_name,
+      account_number,
+      passportPhotoUrl,
+    ];
+
+    const result = await pool.query(query, values);
+
+    res.status(200).json({
+      message: "Biodata updated successfully.",
+      biodata: result.rows[0],
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * allowRefillForm
+ * Allows a Master Admin to reset a submission flag for a specific form type (biodata, guarantor, or commitment),
+ * letting the marketer re-submit that form.
+ * Expects in req.body: 
+ *   - marketerUniqueId: Marketer’s unique ID.
+ *   - formType: One of "biodata", "guarantor", "commitment".
+ */
+const allowRefillForm = async (req, res, next) => {
+  try {
+    const { marketerUniqueId, formType } = req.body;
+    if (!marketerUniqueId || !formType) {
+      return res.status(400).json({ message: "Marketer Unique ID and form type are required." });
+    }
+    
+    let updateField;
+    if (formType.toLowerCase() === "biodata") {
+      updateField = "bio_submitted";
+    } else if (formType.toLowerCase() === "guarantor") {
+      updateField = "guarantor_submitted";
+    } else if (formType.toLowerCase() === "commitment") {
+      updateField = "commitment_submitted";
+    } else {
+      return res.status(400).json({ message: "Invalid form type provided." });
+    }
+    
+    const query = `
+      UPDATE users
+      SET ${updateField} = false,
+          updated_at = NOW()
+      WHERE unique_id = $1
+      RETURNING *
+    `;
+    const values = [marketerUniqueId];
+    const result = await pool.query(query, values);
+    
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: "Marketer not found." });
+    }
+    
+    res.status(200).json({
+      message: `Refill allowed for ${formType} form.`,
+      user: result.rows[0],
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * adminReview
+ * Allows an Admin to review a marketer's submitted forms.
+ * Expects in req.body:
+ *   - marketerUniqueId
+ *   - bioApproved, guarantorApproved, commitmentApproved (e.g., "yes" or "no")
+ *   - admin_review_report (text report)
+ */
+const adminReview = async (req, res, next) => {
+  try {
+    const { marketerUniqueId, bioApproved, guarantorApproved, commitmentApproved, admin_review_report } = req.body;
+    if (!marketerUniqueId) {
+      return res.status(400).json({ message: "Marketer Unique ID is required." });
+    }
+    const query = `
+      UPDATE users
+      SET bio_submitted = $1,
+          guarantor_submitted = $2,
+          commitment_submitted = $3,
+          admin_review_report = $4,
+          overall_verification_status = 'admin reviewed',
+          updated_at = NOW()
+      WHERE unique_id = $5
+      RETURNING *
+    `;
+    const values = [
+      !!(bioApproved && bioApproved.toLowerCase() === "yes"),
+      !!(guarantorApproved && guarantorApproved.toLowerCase() === "yes"),
+      !!(commitmentApproved && commitmentApproved.toLowerCase() === "yes"),
+      admin_review_report,
+      marketerUniqueId,
+    ];
+    const result = await pool.query(query, values);
+    res.status(200).json({
+      message: "Marketer reviewed by Admin.",
+      user: result.rows[0],
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * superadminVerify
+ * Allows a SuperAdmin to verify or reject a marketer's forms.
+ * Expects in req.body:
+ *   - marketerUniqueId
+ *   - verified (boolean as string "yes"/"no")
+ *   - superadmin_review_report
+ * Only allows verification if the marketer is assigned to an admin whose super_admin_id matches the logged-in SuperAdmin.
+ */
+const superadminVerify = async (req, res, next) => {
+  try {
+    const { marketerUniqueId, verified, superadmin_review_report } = req.body;
+    if (!marketerUniqueId) {
+      return res.status(400).json({ message: "Marketer Unique ID is required." });
+    }
+
+    const superadminId = req.user.id;
+    // Retrieve the marketer's record.
+    const marketerResult = await pool.query(
+      "SELECT id, admin_id FROM users WHERE unique_id = $1",
+      [marketerUniqueId]
+    );
+    if (marketerResult.rowCount === 0) {
+      return res.status(404).json({ message: "Marketer not found." });
+    }
+    const marketer = marketerResult.rows[0];
+    if (!marketer.admin_id) {
+      return res.status(400).json({ message: "Marketer is not assigned to any admin." });
+    }
+    // Retrieve the assigned admin's record.
+    const adminResult = await pool.query(
+      "SELECT super_admin_id FROM users WHERE id = $1",
+      [marketer.admin_id]
+    );
+    if (adminResult.rowCount === 0) {
+      return res.status(404).json({ message: "Admin not found." });
+    }
+    const admin = adminResult.rows[0];
+    if (admin.super_admin_id !== superadminId) {
+      return res.status(403).json({ message: "You are not authorized to verify this marketer." });
+    }
+    
+    const overallStatus = (verified && verified.toLowerCase() === "yes") ? "superadmin verified" : "superadmin rejected";
+    
+    const queryUpdate = `
+      UPDATE users
+      SET overall_verification_status = $1,
+          superadmin_review_report = $2,
+          updated_at = NOW()
+      WHERE unique_id = $3
+      RETURNING *
+    `;
+    const valuesUpdate = [overallStatus, superadmin_review_report, marketerUniqueId];
+    const resultUpdate = await pool.query(queryUpdate, valuesUpdate);
+    
+    res.status(200).json({
+      message: "Marketer verified by SuperAdmin.",
+      user: resultUpdate.rows[0],
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * masterApprove
+ * Allows the Master Admin to give final approval to a marketer.
+ * Expects in req.body:
+ *   - marketerUniqueId
+ * Final approval sets overall_verification_status to "approved" and account_status to "active".
+ * Optionally triggers notifications.
+ */
+const masterApprove = async (req, res, next) => {
+  try {
+    const { marketerUniqueId } = req.body;
+    if (!marketerUniqueId) {
+      return res.status(400).json({ message: "Marketer Unique ID is required." });
+    }
+    const query = `
+      UPDATE users
+      SET overall_verification_status = 'approved',
+          account_status = 'active',
+          updated_at = NOW()
+      WHERE unique_id = $1
+      RETURNING *
+    `;
+    const result = await pool.query(query, [marketerUniqueId]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: "Marketer not found." });
+    }
+    // (Optional) Trigger notification logic here.
+    res.status(200).json({
+      message: "Marketer final verification approved, dashboard unlocked, and notification sent.",
+      user: result.rows[0],
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * deleteBiodataSubmission
+ * Allows a Master Admin to delete a biodata submission.
+ */
+const deleteBiodataSubmission = async (req, res, next) => {
+  try {
+    if (req.user.role !== "MasterAdmin") {
+      return res.status(403).json({ message: "Only a Master Admin can delete submissions." });
+    }
+    const { submissionId } = req.params;
+    const query = "DELETE FROM marketer_biodata WHERE id = $1 RETURNING *";
+    const result = await pool.query(query, [submissionId]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: "Biodata submission not found." });
+    }
+    res.status(200).json({
+      message: "Biodata submission deleted successfully.",
+      submission: result.rows[0],
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * deleteGuarantorSubmission
+ * Allows a Master Admin to delete a guarantor submission.
+ */
+const deleteGuarantorSubmission = async (req, res, next) => {
+  try {
+    if (req.user.role !== "MasterAdmin") {
+      return res.status(403).json({ message: "Only a Master Admin can delete submissions." });
+    }
+    const { submissionId } = req.params;
+    const query = "DELETE FROM guarantor_employment_form WHERE id = $1 RETURNING *";
+    const result = await pool.query(query, [submissionId]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: "Guarantor submission not found." });
+    }
+    res.status(200).json({
+      message: "Guarantor submission deleted successfully.",
+      submission: result.rows[0],
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * deleteCommitmentSubmission
+ * Allows a Master Admin to delete a commitment submission.
+ */
+const deleteCommitmentSubmission = async (req, res, next) => {
+  try {
+    if (req.user.role !== "MasterAdmin") {
+      return res.status(403).json({ message: "Only a Master Admin can delete submissions." });
+    }
+    const { submissionId } = req.params;
+    const query = "DELETE FROM direct_sales_commitment_form WHERE id = $1 RETURNING *";
+    const result = await pool.query(query, [submissionId]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: "Commitment submission not found." });
+    }
+    res.status(200).json({
+      message: "Commitment submission deleted successfully.",
+      submission: result.rows[0],
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * getBiodataSubmissionById
+ * Retrieves a single biodata submission by its submission ID.
+ * It joins marketer_biodata and users to provide additional marketer details.
+ */
+const getBiodataSubmissionById = async (req, res, next) => {
+  try {
+    const submissionId = req.params.id;
+    const query = `
+      SELECT 
+        b.id AS biodata_submission_id,
+        b.marketer_unique_id,
+        b.name,
+        b.address,
+        b.phone,
+        b.religion,
+        b.date_of_birth,
+        b.marital_status,
+        b.state_of_origin,
+        b.state_of_residence,
+        b.mothers_maiden_name,
+        b.school_attended,
+        b.means_of_identification,
+        b.id_document_url,
+        b.last_place_of_work,
+        b.job_description,
+        b.reason_for_quitting,
+        b.medical_condition,
+        b.next_of_kin_name,
+        b.next_of_kin_phone,
+        b.next_of_kin_address,
+        b.next_of_kin_relationship,
+        b.bank_name,
+        b.account_name,
+        b.account_number,
+        b.passport_photo_url,
+        u.unique_id AS user_unique_id,
+        u.first_name || ' ' || u.last_name AS marketer_full_name,
+        u.location AS marketer_location
+      FROM marketer_biodata b
+      JOIN users u ON b.marketer_unique_id = u.unique_id
+      WHERE b.id = $1;
+    `;
+    const values = [submissionId];
+    const result = await pool.query(query, values);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: "Submission not found." });
+    }
+    res.status(200).json({ submission: result.rows[0] });
+  } catch (error) {
+    next(error);
+  }
+};
+
+
 module.exports = {
   submitBiodata,
   submitGuarantor,
   submitCommitment,
+  updateBiodata,
+  allowRefillForm,
+  adminReview,
+  superadminVerify,
+  masterApprove,
+  deleteBiodataSubmission,
+  deleteGuarantorSubmission,
+  deleteCommitmentSubmission,
+  getBiodataSubmissionById,
 };
