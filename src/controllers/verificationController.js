@@ -5,7 +5,7 @@ const { pool } = require("../config/database");
  * submitBiodata
  * Inserts a new biodata record into the marketer_biodata table and updates the user's flag.
  * Expects in req.body: all fields required by marketer_biodata (except marketer_id).
- * The marketer's internal numeric ID is taken from req.user.id.
+ * The marketer's unique ID is taken from req.user.unique_id.
  * Uses Cloudinary URLs for passport photo and ID document retrieved from req.files.
  */
 const submitBiodata = async (req, res, next) => { 
@@ -44,16 +44,17 @@ const submitBiodata = async (req, res, next) => {
       ? req.files["id_document"][0].path 
       : null;
 
-    // Get the marketer's internal numeric ID from the token.
-    const marketerId = req.user.id;
+    // Use the marketer's unique ID from the token.
+    // Make sure that your authentication middleware sets req.user.unique_id.
+    const marketerUniqueId = req.user.unique_id;
     console.log("DEBUG => req.user:", req.user);
-    if (!marketerId) {
-      return res.status(400).json({ message: "User ID is missing from token." });
+    if (!marketerUniqueId) {
+      return res.status(400).json({ message: "User unique ID is missing from token." });
     }
     
-    // Check if biodata has already been submitted.
-    const checkQuery = "SELECT bio_submitted FROM users WHERE id = $1";
-    const checkResult = await pool.query(checkQuery, [marketerId]);
+    // Check if biodata has already been submitted, using the unique ID.
+    const checkQuery = "SELECT bio_submitted FROM users WHERE unique_id = $1";
+    const checkResult = await pool.query(checkQuery, [marketerUniqueId]);
     if (checkResult.rowCount > 0 && checkResult.rows[0].bio_submitted) {
       return res.status(400).json({ message: "Biodata form has already been submitted." });
     }
@@ -61,8 +62,8 @@ const submitBiodata = async (req, res, next) => {
     // Convert empty date string to null if needed.
     const dob = date_of_birth === "" ? null : date_of_birth;
     
-    // Build the insert query with all required fields. Notice that the Cloudinary URLs 
-    // for the ID document and passport photo are used in the value list.
+    // Build the insert query.
+    // Notice that we use the Cloudinary URLs for the ID document and passport photo.
     const query = `
       INSERT INTO marketer_biodata (
         marketer_id,
@@ -106,7 +107,7 @@ const submitBiodata = async (req, res, next) => {
     
     // Values array uses the Cloudinary URLs for the file fields.
     const values = [
-      marketerId,           // Numeric id from req.user.id
+      marketerUniqueId,   // Use the unique ID from req.user.unique_id.
       name,
       address,
       phone,
@@ -133,12 +134,13 @@ const submitBiodata = async (req, res, next) => {
       passportPhotoUrl,     // Cloudinary URL for passport photo.
     ];
     
+    // Execute the insert query.
     const result = await pool.query(query, values);
     
-    // Update the user's biodata flag so that subsequent submissions can be blocked unless refill is allowed.
+    // Update the user's biodata flag using the unique ID.
     await pool.query(
-      "UPDATE users SET bio_submitted = true, updated_at = NOW() WHERE id = $1",
-      [marketerId]
+      "UPDATE users SET bio_submitted = true, updated_at = NOW() WHERE unique_id = $1",
+      [marketerUniqueId]
     );
     
     res.status(201).json({
@@ -152,9 +154,13 @@ const submitBiodata = async (req, res, next) => {
 
 /**
  * submitGuarantor
- * Inserts a new guarantor record into the marketer_guarantor_form table and updates the user's flag.
- * Expects in req.body: all fields required by marketer_guarantor_form.
- * The marketer's internal numeric ID is taken from req.user.id.
+ * Inserts a new record into the marketer_guarantor_form table with updated fields.
+ * Now the form expects:
+ *   - Standard form fields (e.g., is_candidate_well_known, relationship, known_duration, occupation).
+ *   - A "means_of_identification" value from a dropdown (with options like "International Passport", "NIN", "Driver's License").
+ *   - Two file uploads: one for the guarantor's passport image and one for the signature image.
+ * The Cloudinary URLs for these files are retrieved from req.files.
+ * **Updated:** Uses the marketer's unique ID (req.user.unique_id) instead of the internal numeric ID.
  */
 const submitGuarantor = async (req, res, next) => {
   try {
@@ -163,29 +169,50 @@ const submitGuarantor = async (req, res, next) => {
       relationship,
       known_duration,
       occupation,
-      id_document_url,
-      passport_photo_url,
-      signature_url,
+      means_of_identification, // New field from dropdown.
+      // Removed the previous id_document_url field.
+      // Now the form relies on the uploaded passport photo and signature.
     } = req.body;
     
-    const marketerId = req.user.id;
-    if (!marketerId) {
-      return res.status(400).json({ message: "User ID is missing from token." });
+    // Retrieve Cloudinary URLs for uploaded files.
+    // Expecting file fields "passport_photo" and "signature".
+    const passportPhotoUrl = req.files["passport_photo"]
+      ? req.files["passport_photo"][0].path
+      : null;
+    const signatureUrl = req.files["signature"]
+      ? req.files["signature"][0].path
+      : null;
+    
+    // Use the marketer's unique ID from the token.
+    // (Ensure that req.user.unique_id is set when the user is authenticated.)
+    const marketerUniqueId = req.user.unique_id;
+    if (!marketerUniqueId) {
+      return res.status(400).json({ message: "User unique ID is missing from token." });
     }
     
-    // Check if guarantor form has already been submitted.
-    const checkQuery = "SELECT guarantor_submitted FROM users WHERE id = $1";
-    const checkResult = await pool.query(checkQuery, [marketerId]);
+    // Check if the guarantor form has already been submitted,
+    // by querying the users table using the unique ID.
+    const checkQuery = "SELECT guarantor_submitted FROM users WHERE unique_id = $1";
+    const checkResult = await pool.query(checkQuery, [marketerUniqueId]);
     if (checkResult.rowCount > 0 && checkResult.rows[0].guarantor_submitted) {
       return res.status(400).json({ message: "Guarantor form has already been submitted." });
     }
     
-    // Insert guarantor data.
+    // Build the INSERT query.
+    // Notice we include the new means_of_identification and use the Cloudinary URLs
+    // for the passport image and signature.
     const query = `
       INSERT INTO marketer_guarantor_form (
-        marketer_id, is_candidate_well_known, relationship, known_duration,
-        occupation, id_document_url, passport_photo_url, signature_url,
-        created_at, updated_at
+        marketer_id,
+        is_candidate_well_known,
+        relationship,
+        known_duration,
+        occupation,
+        means_of_identification,  -- New field added
+        passport_photo_url,       -- Cloudinary URL for passport image.
+        signature_url,            -- Cloudinary URL for signature image.
+        created_at,
+        updated_at
       )
       VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
@@ -193,22 +220,22 @@ const submitGuarantor = async (req, res, next) => {
       RETURNING *
     `;
     const values = [
-      marketerId,
+      marketerUniqueId,         // Using the unique ID instead of the numeric ID.
       is_candidate_well_known,
       relationship,
       known_duration,
       occupation,
-      id_document_url,
-      passport_photo_url,
-      signature_url,
+      means_of_identification,
+      passportPhotoUrl,         // Cloudinary URL from "passport_photo"
+      signatureUrl,             // Cloudinary URL from "signature"
     ];
     
     const result = await pool.query(query, values);
     
-    // Update the user's guarantor flag.
+    // Update the user's guarantor submission flag using the unique ID.
     await pool.query(
-      "UPDATE users SET guarantor_submitted = true, updated_at = NOW() WHERE id = $1",
-      [marketerId]
+      "UPDATE users SET guarantor_submitted = true, updated_at = NOW() WHERE unique_id = $1",
+      [marketerUniqueId]
     );
     
     res.status(201).json({
