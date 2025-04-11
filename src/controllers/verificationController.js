@@ -277,25 +277,8 @@ const submitGuarantor = async (req, res, next) => {
 /**
  * submitCommitment
  * Inserts a new commitment record into the direct_sales_commitment_form table and updates the marketer's flag.
- *
- * Expected form fields (in req.body):
- *   - promise_accept_false_documents
- *   - promise_not_request_unrelated_info
- *   - promise_not_charge_customer_fees
- *   - promise_not_modify_contract_info
- *   - promise_not_sell_unapproved_phones
- *   - promise_not_make_unofficial_commitment
- *   - promise_not_operate_customer_account
- *   - promise_accept_fraud_firing
- *   - promise_not_share_company_info
- *   - promise_ensure_loan_recovery
- *   - promise_abide_by_system
- *   - direct_sales_rep_name
- *   - date_signed
- *
- * Expected file upload:
- *   - "signature": The direct sales representative's signature image.
- *
+ * Expects in req.body the necessary commitment fields.
+ * Expects a file upload via multer (using memory storage) under the field "signature".
  * Uses the marketer's unique ID (from req.user.unique_id) for the submission.
  */
 const submitCommitment = async (req, res, next) => {
@@ -316,12 +299,17 @@ const submitCommitment = async (req, res, next) => {
       date_signed,
     } = req.body;
     
-    // Since the route uses upload.single("signature"), the file is available as req.file.
-    const directSalesRepSignatureUrl = req.file ? req.file.path : null;
-    
-    if (!directSalesRepSignatureUrl) {
+    // Check that a file was uploaded by verifying the buffer.
+    if (!req.file || !req.file.buffer) {
       return res.status(400).json({ message: "Direct Sales Rep signature image is required." });
     }
+
+    // Upload the file buffer to Cloudinary.
+    const uploadResult = await uploadToCloudinary(req.file.buffer, {
+      folder: "Vistaprouploads", // Your Cloudinary folder
+      allowed_formats: ["jpg", "jpeg", "png"],
+    });
+    const directSalesRepSignatureUrl = uploadResult.secure_url;
     
     // Use the marketer's unique ID from the token.
     const marketerUniqueId = req.user.unique_id;
@@ -330,7 +318,8 @@ const submitCommitment = async (req, res, next) => {
     }
     
     // Helper function to convert yes/no responses to booleans.
-    const parseBoolean = (val) => (val && val.toLowerCase() === "yes") ? true : false;
+    const parseBoolean = (val) =>
+      val && val.toLowerCase() === "yes" ? true : false;
     
     const query = `
       INSERT INTO direct_sales_commitment_form (
@@ -392,7 +381,6 @@ const submitCommitment = async (req, res, next) => {
     next(error);
   }
 };
-
 module.exports = {
   submitBiodata,
   submitGuarantor,
