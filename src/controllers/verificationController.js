@@ -817,21 +817,20 @@ const getBiodataSubmissionById = async (req, res, next) => {
   }
 };
 
-/**
- * getAllSubmissionsForMasterAdmin
- * Returns all submissions (biodata, guarantor, and commitment) for Master Admin review.
- */
 const getAllSubmissionsForMasterAdmin = async (req, res, next) => {
   try {
+    // Fetch submissions from all three forms without filtering by assignment.
     const biodataResult = await pool.query("SELECT * FROM marketer_biodata ORDER BY created_at DESC");
     const guarantorResult = await pool.query("SELECT * FROM guarantor_employment_form ORDER BY created_at DESC");
     const commitmentResult = await pool.query("SELECT * FROM direct_sales_commitment_form ORDER BY created_at DESC");
 
-    res.status(200).json({
+    const submissions = {
       biodata: biodataResult.rows,
       guarantor: guarantorResult.rows,
       commitment: commitmentResult.rows,
-    });
+    };
+
+    res.status(200).json({ submissions });
   } catch (error) {
     next(error);
   }

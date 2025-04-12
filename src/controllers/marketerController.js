@@ -44,14 +44,13 @@ const updateProfile = async (req, res, next) => {
 
 /**
  * placeOrder - Allows a Marketer to record the sale (order) of device(s).
- * Now includes an IMEI field and removes the marketer selling price.
+ * This updated function automatically sets the sale date to the current date/time.
  * Expects in req.body:
  *   - device_name, device_model, device_type,
  *   - imei,
  *   - number_of_devices, sold_amount,
  *   - customer_name, customer_phone, customer_address,
- *   - bnpl_platform (optional),
- *   - sale_date (optional; if not provided, current date/time is used)
+ *   - bnpl_platform (optional)
  */
 const placeOrder = async (req, res, next) => {
   try {
@@ -67,7 +66,6 @@ const placeOrder = async (req, res, next) => {
       customer_phone,
       customer_address,
       bnpl_platform,
-      sale_date,
     } = req.body;
 
     // Validate required fields.
@@ -85,8 +83,8 @@ const placeOrder = async (req, res, next) => {
       return res.status(400).json({ message: "All required order fields must be provided." });
     }
 
-    // Use provided sale_date or default to current date/time.
-    const finalSaleDate = sale_date ? sale_date : new Date().toISOString();
+    // Automatically set the sale date to the current date/time.
+    const sale_date = new Date().toISOString();
 
     const query = `
       INSERT INTO orders (
@@ -119,7 +117,7 @@ const placeOrder = async (req, res, next) => {
       customer_phone,
       customer_address,
       bnpl_platform || null,
-      finalSaleDate,
+      sale_date,
     ];
 
     const result = await pool.query(query, values);
@@ -132,7 +130,6 @@ const placeOrder = async (req, res, next) => {
     next(error);
   }
 };
-
 /**
  * submitBioData - Submits the marketer's bio data form.
  */
