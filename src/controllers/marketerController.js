@@ -131,18 +131,30 @@ const placeOrder = async (req, res, next) => {
   }
 };
 
+/**
+ * getPendingOrdersForMarketer - Retrieves pending orders for the marketer.
+ * This implementation uses a JOIN between the orders and users tables so that we can
+ * filter orders by the marketer's unique_id from the users table.
+ */
 const getPendingOrdersForMarketer = async (req, res) => {
   try {
-    // Use the marketer unique id from the request's user data.
-    const marketerUniqueId = req.user.marketer_unique_id; // Ensure verifyToken middleware sets this property.
-    // Query orders that are pending and belong to the marketer identified by their unique id.
-    const orders = await Order.find({ marketer_unique_id: marketerUniqueId, status: "pending" });
-    res.status(200).json({ orders });
+    // Get the unique id from the authenticated user (set via your auth middleware)
+    const userUniqueId = req.user.unique_id;
+    const query = `
+      SELECT o.*
+      FROM orders o
+      JOIN users u ON o.marketer_id = u.id
+      WHERE u.unique_id = $1
+        AND o.status = 'pending'
+    `;
+    const { rows } = await pool.query(query, [userUniqueId]);
+    res.status(200).json({ orders: rows });
   } catch (error) {
     console.error("Error fetching marketer orders:", error);
     res.status(500).json({ message: "Error fetching orders" });
   }
 };
+
 
 /**
  * submitBioData - Submits the marketer's bio data form.
