@@ -1,47 +1,30 @@
 // server.js
 const app = require('./src/app'); // Your Express app
-const { connectDB } = require('./src/config/database'); // Database connection function
+const { connectDB } = require('./src/config/database');
 const http = require('http');
-const { Server } = require("socket.io");
 const { initSocket } = require('./src/socket');
 
 // Create an HTTP server from your Express app
 const server = http.createServer(app);
 
+// Initialize Socket.IO with the HTTP server using your custom function.
+const io = initSocket(server); // This should initialize and return the Socket.IO instance.
 
-// Initialize Socket.IO with the HTTP server
-initSocket(server);
-
-// Initialize Socket.IO on the same server with CORS configuration
-const io = new Server(server, {
-  cors: { origin: "https://www.vistapro.ng/" } // Adjust origin as needed for production
-});
-
-// Listen for client connections and handle events via Socket.IO
+// (Optional) Set up socket event listeners here if not already set inside initSocket.
 io.on("connection", (socket) => {
   console.log("A user connected: " + socket.id);
-
-  // Listen for a 'send-message' event from clients
   socket.on("send-message", (messageData) => {
-    // For instance, messageData could be { to: recipientId, from: senderId, content: "Hello!" }
-    // For simplicity, broadcast to all connected clients:
     io.emit("receive-message", messageData);
   });
-  
   socket.on("disconnect", () => {
     console.log("User disconnected: " + socket.id);
   });
 });
 
-// Helper function to emit notifications to all connected clients
-function sendNotification(notification) {
-  io.emit("notification", notification);
-}
+// Export a helper function if needed (or use the one from src/socket.js directly)
+// Example:
+// module.exports = { sendNotification };
 
-// Export the sendNotification function if needed elsewhere in your app
-module.exports = { sendNotification };
-
-// Define the port
 const PORT = process.env.PORT || 5000;
 
 // Connect to the database and then start the server
