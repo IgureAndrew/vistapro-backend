@@ -130,6 +130,20 @@ const placeOrder = async (req, res, next) => {
     next(error);
   }
 };
+
+const getPendingOrdersForMarketer = async (req, res) => {
+  try {
+    // Use the marketer unique id from the request's user data.
+    const marketerUniqueId = req.user.marketer_unique_id; // Ensure verifyToken middleware sets this property.
+    // Query orders that are pending and belong to the marketer identified by their unique id.
+    const orders = await Order.find({ marketer_unique_id: marketerUniqueId, status: "pending" });
+    res.status(200).json({ orders });
+  } catch (error) {
+    console.error("Error fetching marketer orders:", error);
+    res.status(500).json({ message: "Error fetching orders" });
+  }
+};
+
 /**
  * submitBioData - Submits the marketer's bio data form.
  */
@@ -390,6 +404,7 @@ const submitCommitmentForm = async (req, res, next) => {
 module.exports = {
   updateProfile,
   placeOrder,
+  getPendingOrdersForMarketer, 
   submitBioData,
   submitGuarantorForm,
   submitCommitmentForm,

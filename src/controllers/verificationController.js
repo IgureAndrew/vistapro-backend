@@ -515,8 +515,12 @@ const updateBiodata = async (req, res, next) => {
 
 /**
  * allowRefillForm
- * Allows a Master Admin to reset the submission flag for a specific form type.
- * Expects { marketerUniqueId, formType } in req.body.
+ * Allows a Master Admin to reset a submission flag for a specific form type (biodata, guarantor, or commitment),
+ * thereby letting the marketer re-submit (update) that form without starting all over.
+ *
+ * Expects in req.body: 
+ *   - marketerUniqueId: The marketer’s unique ID.
+ *   - formType: One of "biodata", "guarantor", or "commitment".
  */
 const allowRefillForm = async (req, res, next) => {
   try {
@@ -525,6 +529,7 @@ const allowRefillForm = async (req, res, next) => {
       return res.status(400).json({ message: "Marketer Unique ID and form type are required." });
     }
     
+    // Determine which flag to reset based on the formType value.
     let updateField;
     if (formType.toLowerCase() === "biodata") {
       updateField = "bio_submitted";
@@ -536,6 +541,7 @@ const allowRefillForm = async (req, res, next) => {
       return res.status(400).json({ message: "Invalid form type provided." });
     }
     
+    // Reset the specified flag for the marketer.
     const query = `
       UPDATE users
       SET ${updateField} = false,
@@ -558,6 +564,7 @@ const allowRefillForm = async (req, res, next) => {
     next(error);
   }
 };
+
 
 /**
  * adminReview
@@ -681,16 +688,17 @@ const masterApprove = async (req, res, next) => {
     if (result.rowCount === 0) {
       return res.status(404).json({ message: "Marketer not found." });
     }
-    // (Optional) Trigger notifications here.
+    // Optionally, you can trigger a notification to the marketer here.
+    // For example:
+    // await sendSocketNotification(marketerUniqueId, "Your account has been verified and approved. Your dashboard is now unlocked!");
     res.status(200).json({
-      message: "Marketer final verification approved, dashboard unlocked, and notification sent.",
+      message: "Marketer final verification approved and dashboard unlocked.",
       user: result.rows[0],
     });
   } catch (error) {
     next(error);
   }
 };
-
 /**
  * deleteBiodataSubmission
  * Allows a Master Admin to delete a biodata submission.

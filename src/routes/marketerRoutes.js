@@ -12,6 +12,7 @@ const { verifyRole } = require('../middlewares/roleMiddleware');
 const {
   updateProfile,
   placeOrder,
+  getPendingOrdersForMarketer,
   submitBioData,
   submitGuarantorForm,
   submitCommitmentForm,
@@ -89,6 +90,13 @@ router.post(
   verifyRole(["Marketer"]),
   upload.single("signature"),
   submitCommitmentForm
+);
+
+// GET /api/marketer/orders -> Retrieve pending orders for the logged-in marketer.
+router.get(
+  "/orders",
+  verifyToken,
+  getPendingOrdersForMarketer
 );
 
 module.exports = router;
