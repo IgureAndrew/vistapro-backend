@@ -680,10 +680,10 @@ const superadminVerify = async (req, res, next) => {
         if (!marketerUniqueId) {
           return res.status(400).json({ message: "Marketer Unique ID is required." });
         }
+    
         const query = `
           UPDATE users
           SET overall_verification_status = 'approved',
-              account_status = 'active',
               updated_at = NOW()
           WHERE unique_id = $1
           RETURNING *
@@ -692,6 +692,7 @@ const superadminVerify = async (req, res, next) => {
         if (result.rowCount === 0) {
           return res.status(404).json({ message: "Marketer not found." });
         }
+        
         // Optionally, trigger a notification here.
         res.status(200).json({
           message: "Marketer final verification approved and dashboard unlocked.",
@@ -702,6 +703,7 @@ const superadminVerify = async (req, res, next) => {
       }
     };
     
+
 /**
  * deleteBiodataSubmission
  * Allows a Master Admin to delete a biodata submission.
