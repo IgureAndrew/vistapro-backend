@@ -670,35 +670,38 @@ const superadminVerify = async (req, res, next) => {
  * Expects { marketerUniqueId } in req.body.
  * Sets overall_verification_status to "approved", account_status to "active", and triggers (optional) notifications.
  */
-const masterApprove = async (req, res, next) => {
-  try {
-    const { marketerUniqueId } = req.body;
-    if (!marketerUniqueId) {
-      return res.status(400).json({ message: "Marketer Unique ID is required." });
-    }
-    const query = `
-      UPDATE users
-      SET overall_verification_status = 'approved',
-          account_status = 'active',
-          updated_at = NOW()
-      WHERE unique_id = $1
-      RETURNING *
-    `;
-    const result = await pool.query(query, [marketerUniqueId]);
-    if (result.rowCount === 0) {
-      return res.status(404).json({ message: "Marketer not found." });
-    }
-    // Optionally, you can trigger a notification to the marketer here.
+
+// Optionally, you can trigger a notification to the marketer here.
     // For example:
     // await sendSocketNotification(marketerUniqueId, "Your account has been verified and approved. Your dashboard is now unlocked!");
-    res.status(200).json({
-      message: "Marketer final verification approved and dashboard unlocked.",
-      user: result.rows[0],
-    });
-  } catch (error) {
-    next(error);
-  }
-};
+    const masterApprove = async (req, res, next) => {
+      try {
+        const { marketerUniqueId } = req.body;
+        if (!marketerUniqueId) {
+          return res.status(400).json({ message: "Marketer Unique ID is required." });
+        }
+        const query = `
+          UPDATE users
+          SET overall_verification_status = 'approved',
+              account_status = 'active',
+              updated_at = NOW()
+          WHERE unique_id = $1
+          RETURNING *
+        `;
+        const result = await pool.query(query, [marketerUniqueId]);
+        if (result.rowCount === 0) {
+          return res.status(404).json({ message: "Marketer not found." });
+        }
+        // Optionally, trigger a notification here.
+        res.status(200).json({
+          message: "Marketer final verification approved and dashboard unlocked.",
+          user: result.rows[0],
+        });
+      } catch (error) {
+        next(error);
+      }
+    };
+    
 /**
  * deleteBiodataSubmission
  * Allows a Master Admin to delete a biodata submission.

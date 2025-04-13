@@ -4,38 +4,34 @@ const { pool } = require('../config/database');
 const { createUser } = require('../models/userModel');
 
 /**
- * updateProfile - Allows a Marketer to update their profile details.
+ * getAccountSettings - Retrieves the current account settings for the authenticated marketer.
+ * Returns:
+ *  - displayName (first_name)
+ *  - email
+ *  - phone
+ *  - profile_image (avatar)
  */
-const updateProfile = async (req, res, next) => {
+const getAccountSettings = async (req, res, next) => {
   try {
-    const marketerId = req.user.id;
-    const { name, email, phone, newPassword } = req.body;
-
-    let hashedPassword = null;
-    if (newPassword) {
-      const saltRounds = 10;
-      hashedPassword = await bcrypt.hash(newPassword, saltRounds);
+    // Retrieve marketer's unique ID from the authenticated user.
+    const marketerUniqueId = req.user.unique_id;
+    if (!marketerUniqueId) {
+      return res.status(400).json({ message: "Marketer unique ID not available." });
     }
-
-    const profileImage = req.file ? req.file.path : null;
-
     const query = `
-      UPDATE users
-      SET name = COALESCE($1, name),
-          email = COALESCE($2, email),
-          phone = COALESCE($3, phone),
-          profile_image = COALESCE($4, profile_image),
-          password = COALESCE($5, password),
-          updated_at = NOW()
-      WHERE id = $6
-      RETURNING *
+      SELECT first_name AS displayName,
+             email,
+             phone,
+             profile_image
+      FROM users
+      WHERE unique_id = $1
     `;
-    const values = [name, email, phone, profileImage, hashedPassword, marketerId];
-    const result = await pool.query(query, values);
-
+    const result = await pool.query(query, [marketerUniqueId]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: "User not found." });
+    }
     return res.status(200).json({
-      message: 'Marketer profile updated successfully.',
-      marketer: result.rows[0],
+      settings: result.rows[0],
     });
   } catch (error) {
     next(error);
@@ -43,8 +39,114 @@ const updateProfile = async (req, res, next) => {
 };
 
 /**
+ * updateAccountSettings - Allows a marketer to update their account settings.
+ * Updatable fields include:
+ *   - Display Name (stored in first_name)
+ *   - Email
+ *   - Phone number
+ *   - Avatar (profile_image)
+ *   - Password (if changing password, the marketer must provide oldPassword and newPassword)
+ *
+ * Only provided fields are updated.
+ */
+const updateAccountSettings = async (req, res, next) => {
+  try {
+    // Retrieve the marketer's unique ID from the authenticated user.
+    const marketerUniqueId = req.user.unique_id;
+    if (!marketerUniqueId) {
+      return res.status(400).json({ message: "Marketer unique ID not available." });
+    }
+
+    // Extract fields from the request body.
+    // "displayName" is stored in the first_name column.
+    const { displayName, email, phone, oldPassword, newPassword } = req.body;
+
+    // Prepare dynamic update clauses and values.
+    let updateClauses = [];
+    let updateValues = [];
+    let paramIndex = 1;
+
+    // Handle password update: newPassword provided must be accompanied by a valid oldPassword.
+    if (newPassword) {
+      if (!oldPassword) {
+        return res.status(400).json({ message: "Old password is required to change password." });
+      }
+      const userQuery = "SELECT password FROM users WHERE unique_id = $1";
+      const userResult = await pool.query(userQuery, [marketerUniqueId]);
+      if (userResult.rowCount === 0) {
+        return res.status(404).json({ message: "User not found." });
+      }
+      const currentHashedPassword = userResult.rows[0].password;
+      const isMatch = await bcrypt.compare(oldPassword, currentHashedPassword);
+      if (!isMatch) {
+        return res.status(400).json({ message: "Old password is incorrect." });
+      }
+      const hashedPassword = await bcrypt.hash(newPassword, 10);
+      updateClauses.push(`password = $${paramIndex}`);
+      updateValues.push(hashedPassword);
+      paramIndex++;
+    }
+
+    // Update display name if provided.
+    if (displayName) {
+      updateClauses.push(`first_name = $${paramIndex}`);
+      updateValues.push(displayName);
+      paramIndex++;
+    }
+    
+    // Update email if provided.
+    if (email) {
+      updateClauses.push(`email = $${paramIndex}`);
+      updateValues.push(email);
+      paramIndex++;
+    }
+    
+    // Update phone if provided.
+    if (phone) {
+      updateClauses.push(`phone = $${paramIndex}`);
+      updateValues.push(phone);
+      paramIndex++;
+    }
+    
+    // Update avatar if a file was uploaded via Multer.
+    if (req.file) {
+      updateClauses.push(`profile_image = $${paramIndex}`);
+      updateValues.push(req.file.path);
+      paramIndex++;
+    }
+    
+    if (updateClauses.length === 0) {
+      return res.status(400).json({ message: "No fields provided for update." });
+    }
+    
+    // Always update the updated_at field.
+    updateClauses.push("updated_at = NOW()");
+    const query = `
+      UPDATE users
+      SET ${updateClauses.join(", ")}
+      WHERE unique_id = $${paramIndex}
+      RETURNING id, unique_id, first_name AS displayName, email, phone, profile_image, updated_at
+    `;
+    updateValues.push(marketerUniqueId);
+    
+    const result = await pool.query(query, updateValues);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: "User not found." });
+    }
+    
+    return res.status(200).json({
+      message: "Account settings updated successfully.",
+      marketer: result.rows[0],
+    });
+  } catch (error) {
+    console.error("Error updating account settings:", error);
+    next(error);
+  }
+};
+
+/**
  * placeOrder - Allows a Marketer to record the sale (order) of device(s).
- * This updated function automatically sets the sale date to the current date/time.
+ * Automatically sets the sale date to the current date/time.
  * Expects in req.body:
  *   - device_name, device_model, device_type,
  *   - imei,
@@ -83,7 +185,7 @@ const placeOrder = async (req, res, next) => {
       return res.status(400).json({ message: "All required order fields must be provided." });
     }
 
-    // Automatically set the sale date to the current date/time.
+    // Automatically set the sale date.
     const sale_date = new Date().toISOString();
 
     const query = `
@@ -133,12 +235,11 @@ const placeOrder = async (req, res, next) => {
 
 /**
  * getPendingOrdersForMarketer - Retrieves pending orders for the marketer.
- * This implementation uses a JOIN between the orders and users tables so that we can
- * filter orders by the marketer's unique_id from the users table.
+ * Uses a JOIN between orders and users to filter orders by marketer's unique_id.
  */
 const getPendingOrdersForMarketer = async (req, res) => {
   try {
-    // Get the unique id from the authenticated user (set via your auth middleware)
+    // Get the unique ID from the authenticated user.
     const userUniqueId = req.user.unique_id;
     const query = `
       SELECT o.*
@@ -154,7 +255,6 @@ const getPendingOrdersForMarketer = async (req, res) => {
     res.status(500).json({ message: "Error fetching orders" });
   }
 };
-
 
 /**
  * submitBioData - Submits the marketer's bio data form.
@@ -414,7 +514,8 @@ const submitCommitmentForm = async (req, res, next) => {
 };
 
 module.exports = {
-  updateProfile,
+  getAccountSettings,
+  updateAccountSettings,
   placeOrder,
   getPendingOrdersForMarketer, 
   submitBioData,

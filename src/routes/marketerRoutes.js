@@ -1,4 +1,3 @@
-// src/routes/marketerRoutes.js
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
@@ -7,10 +6,11 @@ const fs = require('fs');     // For file system operations
 
 const { verifyToken } = require('../middlewares/authMiddleware');
 const { verifyRole } = require('../middlewares/roleMiddleware');
-// Only import the functions that belong to the marketer controller.
-// Note: getOrders has been moved to manageOrderController, so we exclude it.
+
+// Import functions from the marketer controller.
 const {
-  updateProfile,
+  getAccountSettings,
+  updateAccountSettings,
   placeOrder,
   getPendingOrdersForMarketer,
   submitBioData,
@@ -18,27 +18,24 @@ const {
   submitCommitmentForm,
 } = require('../controllers/marketerController');
 
-// Define the directory for commitment form uploads.
+// Define directories for file uploads.
 const commitmentUploadDir = path.join(__dirname, "../../uploads/commitment_forms");
 if (!fs.existsSync(commitmentUploadDir)) {
   fs.mkdirSync(commitmentUploadDir, { recursive: true });
 }
 
-// Define the directory for guarantor form uploads.
 const guarantorUploadDir = path.join(__dirname, "../../uploads/guarantor_forms");
 if (!fs.existsSync(guarantorUploadDir)) {
   fs.mkdirSync(guarantorUploadDir, { recursive: true });
 }
 
-// Define the directory to store uploaded files (passport photos and ID documents).
 const marketerUploadDir = path.join(__dirname, "../../uploads/marketer_documents");
 if (!fs.existsSync(marketerUploadDir)) {
   fs.mkdirSync(marketerUploadDir, { recursive: true });
 }
 
 // Configure Multer for file uploads.
-// The storage configuration here uses a generic folder ("uploads/").
-// Adjust if you want to store files in specific folders as per route.
+// Files will be stored in "uploads/" unless otherwise specified.
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, 'uploads/');
@@ -49,8 +46,30 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-// Protected route: Marketer profile update (with optional file upload for profile image)
-router.put('/profile', verifyToken, verifyRole(['Marketer']), upload.single('profileImage'), updateProfile);
+// ------------------------------
+// Account Settings Endpoints
+// ------------------------------
+
+// GET /api/marketer/account-settings - Retrieve current account settings for the marketer.
+router.get(
+  '/account-settings',
+  verifyToken,
+  verifyRole(["Marketer"]),
+  getAccountSettings
+);
+
+// PATCH /api/marketer/account-settings - Update account settings (avatar, display name, email, phone, password).
+router.patch(
+  '/account-settings',
+  verifyToken,
+  verifyRole(["Marketer"]),
+  upload.single('avatar'),
+  updateAccountSettings
+);
+
+// ------------------------------
+// Other Marketer Endpoints
+// ------------------------------
 
 // Protected route: Place a new order.
 router.post('/order', verifyToken, verifyRole(['Marketer']), placeOrder);
@@ -92,7 +111,7 @@ router.post(
   submitCommitmentForm
 );
 
-// GET /api/marketer/orders -> Retrieve pending orders for the logged-in marketer.
+// GET /api/marketer/orders - Retrieve pending orders for the logged-in marketer.
 router.get(
   "/orders",
   verifyToken,

@@ -1,28 +1,29 @@
-// src/routes/dealerProfileRoutes.js
+// src/routes/dealerRoutes.js )
 const express = require('express');
 const router = express.Router();
-const multer = require('multer');
 const { verifyToken } = require('../middlewares/authMiddleware');
-const { verifyRole } = require('../middlewares/roleMiddleware');
-const { updateProfile } = require('../controllers/dealerController');
+const { pool } = require('../config/database');
 
-// Configure Multer to handle multiple file uploads
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, 'uploads/'),
-  filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname)
+router.get('/', verifyToken, async (req, res) => {
+  try {
+    // Get the marketer's location from the authenticated user.
+    const marketerLocation = req.user.location;
+    if (!marketerLocation) {
+      return res.status(400).json({ message: "Marketer location not available." });
+    }
+    // Query dealers with role 'Dealer' who are in the same location.
+    const query = `
+      SELECT unique_id, business_name 
+      FROM users 
+      WHERE role = 'Dealer' AND location = $1
+      ORDER BY business_name ASC
+    `;
+    const result = await pool.query(query, [marketerLocation]);
+    res.status(200).json({ dealers: result.rows });
+  } catch (error) {
+    console.error("Error fetching dealers by location:", error);
+    res.status(500).json({ message: "Error fetching dealers" });
+  }
 });
-const upload = multer({ storage });
-
-// Expect two fields: cacCertificate and profileImage
-router.put(
-  '/profile',
-  verifyToken,
-  verifyRole(['Dealer']),
-  upload.fields([
-    { name: 'cacCertificate', maxCount: 1 },
-    { name: 'profileImage', maxCount: 1 }
-  ]),
-  updateProfile
-);
 
 module.exports = router;
