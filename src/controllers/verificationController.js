@@ -376,8 +376,20 @@ const submitCommitment = async (req, res, next) => {
       );
     }
     
-    sendSocketNotification(req.user.unique_id, "Your forms have been approved!", req.app);
-    res.status(201).json({ message: "Commitment form submitted successfully." });
+      
+      // You can also include a flag in the response to tell the frontend to redirect.
+      return res.status(201).json({
+        message: "Commitment form submitted successfully. All forms have been submitted and your submission is under review.",
+        submissionComplete: true,
+        commitment: statusResult.rows[0],
+      });
+    
+      // Return the normal response if not all forms are complete.
+    res.status(201).json({
+      message: "Commitment form submitted successfully.",
+      commitment: result.rows[0],
+    });
+
   } catch (error) {
     next(error);
   }
@@ -685,21 +697,59 @@ const deleteCommitmentSubmission = async (req, res, next) => {
 
 /**
  * getAllSubmissionsForMasterAdmin
- * Retrieves all submissions (biodata, guarantor, and commitment) without filtering by assignment.
+ * Retrieves all submissions (biodata, guarantor, and commitment) along with
+ * the marketer's name and location from the users table.
+ *
+ * This endpoint joins each submission table with the users table using
+ * the marketer's unique ID, ensuring that the returned data includes
+ * marketer_name and marketer_location.
  */
 const getAllSubmissionsForMasterAdmin = async (req, res, next) => {
   try {
-    const biodataResult = await pool.query("SELECT * FROM marketer_biodata ORDER BY created_at DESC");
-    const guarantorResult = await pool.query("SELECT * FROM guarantor_employment_form ORDER BY created_at DESC");
-    const commitmentResult = await pool.query("SELECT * FROM direct_sales_commitment_form ORDER BY created_at DESC");
+    // Fetch biodata submissions with marketer details via a join.
+    const biodataQuery = `
+      SELECT
+        s.*,
+        u.name AS marketer_name,
+        u.location AS marketer_location
+      FROM marketer_biodata s
+      JOIN users u ON s.marketer_unique_id = u.unique_id
+      ORDER BY s.created_at DESC
+    `;
+    const biodataResult = await pool.query(biodataQuery);
 
-    const submissions = {
-      biodata: biodataResult.rows,
-      guarantor: guarantorResult.rows,
-      commitment: commitmentResult.rows,
-    };
+    // Fetch guarantor submissions with marketer details via a join.
+    const guarantorQuery = `
+      SELECT
+        s.*,
+        u.name AS marketer_name,
+        u.location AS marketer_location
+      FROM guarantor_employment_form s
+      JOIN users u ON s.marketer_unique_id = u.unique_id
+      ORDER BY s.created_at DESC
+    `;
+    const guarantorResult = await pool.query(guarantorQuery);
 
-    res.status(200).json({ submissions });
+    // Fetch commitment submissions with marketer details via a join.
+    const commitmentQuery = `
+      SELECT
+        s.*,
+        u.name AS marketer_name,
+        u.location AS marketer_location
+      FROM direct_sales_commitment_form s
+      JOIN users u ON s.marketer_unique_id = u.unique_id
+      ORDER BY s.created_at DESC
+    `;
+    const commitmentResult = await pool.query(commitmentQuery);
+
+    // Return the combined submissions grouped by form type.
+    res.status(200).json({
+      submissions: {
+        biodata: biodataResult.rows,
+        guarantor: guarantorResult.rows,
+        commitment: commitmentResult.rows,
+      },
+    });
   } catch (error) {
     next(error);
   }
