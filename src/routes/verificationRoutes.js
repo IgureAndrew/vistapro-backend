@@ -12,11 +12,11 @@ const { verifyToken } = require("../middlewares/authMiddleware");
 const { verifyRole } = require("../middlewares/roleMiddleware");
 
 // Import controller functions from VerificationController.
+// Removed updateBiodata and getBiodataSubmissionById from the import.
 const {
   submitBiodata,
   submitGuarantor,
   submitCommitment,
-  updateBiodata,
   allowRefillForm,
   adminReview,
   superadminVerify,
@@ -24,7 +24,6 @@ const {
   deleteBiodataSubmission,
   deleteGuarantorSubmission,
   deleteCommitmentSubmission,
-  getBiodataSubmissionById,
   getAllSubmissionsForMasterAdmin,
   getSubmissionsForAdmin,
   getSubmissionsForSuperAdmin,
@@ -81,23 +80,6 @@ router.post(
 );
 
 /**
- * *********************** Update Endpoints *************************
- */
-
-// PUT /api/verification/bio-data
-// Update Biodata: Allows a marketer to update their existing biodata (including re-uploading files).
-router.put(
-  "/bio-data",
-  verifyToken,
-  verifyRole(["Marketer"]),
-  upload.fields([
-    { name: "passport_photo", maxCount: 1 },
-    { name: "id_document", maxCount: 1 },
-  ]),
-  updateBiodata
-);
-
-/**
  * *********************** Admin / Master Admin Endpoints *************************
  */
 
@@ -144,28 +126,22 @@ router.patch(
  * *********************** Deletion Endpoints (Master Admin Only) *************************
  */
 
-// DELETE /api/verification/bio-data/:submissionId
-// Delete a biodata submission by its submissionId.
 router.delete(
-  "/bio-data/:submissionId",
+  "/biodata",
   verifyToken,
   verifyRole(["MasterAdmin"]),
   deleteBiodataSubmission
 );
 
-// DELETE /api/verification/guarantor/:submissionId
-// Delete a guarantor submission by its submissionId.
 router.delete(
-  "/guarantor/:submissionId",
+  "/guarantor",
   verifyToken,
   verifyRole(["MasterAdmin"]),
   deleteGuarantorSubmission
 );
 
-// DELETE /api/verification/commitment/:submissionId
-// Delete a commitment submission by its submissionId.
 router.delete(
-  "/commitment/:submissionId",
+  "/commitment",
   verifyToken,
   verifyRole(["MasterAdmin"]),
   deleteCommitmentSubmission
@@ -174,14 +150,6 @@ router.delete(
 /**
  * *********************** GET Endpoints *************************
  */
-
-// GET /api/verification/bio-data/:id
-// Retrieve a single biodata submission by its submission ID.
-router.get(
-  "/bio-data/:id",
-  verifyToken,
-  getBiodataSubmissionById
-);
 
 // GET /api/verification/submissions/master
 // Returns all submissions (biodata, guarantor, commitment) for Master Admin review.

@@ -42,7 +42,8 @@ const loginUser = async (req, res, next) => {
         first_name: user.first_name,
         last_name: user.last_name,
         email: user.email,
-        role: user.role
+        role: user.role,
+        location: user.location,
       }
     });
   } catch (error) {

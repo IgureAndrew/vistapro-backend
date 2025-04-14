@@ -371,142 +371,14 @@ const submitCommitment = async (req, res, next) => {
     if (bio_submitted && guarantor_submitted && commitment_submitted) {
       await sendSocketNotification(
         marketerUniqueId,
-        "All your forms have been submitted successfully. Your submission is complete. You will be notified once reviewed and approved; your dashboard is now unlocked."
+        "All your forms have been submitted successfully. Your submission is complete. You will be notified once reviewed and approved; your dashboard is now unlocked.",
+        req.app
       );
     }
     
     res.status(201).json({
       message: "Commitment Handbook form submitted successfully.",
       commitment: result.rows[0],
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-/**
- * updateBiodata
- * Allows a marketer to update their biodata record.
- * Accepts updated text fields (and optionally file uploads) in req.body/req.files.
- * Uses the marketer's unique ID from req.user.unique_id.
- */
-const updateBiodata = async (req, res, next) => {
-  try {
-    const {
-      name,
-      address,
-      phone,
-      religion,
-      date_of_birth,
-      marital_status,
-      state_of_origin,
-      state_of_residence,
-      mothers_maiden_name,
-      school_attended,
-      means_of_identification,
-      last_place_of_work,
-      job_description,
-      reason_for_quitting,
-      medical_condition,
-      next_of_kin_name,
-      next_of_kin_phone,
-      next_of_kin_address,
-      next_of_kin_relationship,
-      bank_name,
-      account_name,
-      account_number,
-    } = req.body;
-    
-    let passportPhotoUrl = null;
-    let identificationFileUrl = null;
-    
-    if (req.files && req.files["passport_photo"] && req.files["passport_photo"][0].buffer) {
-      const uploadResult = await uploadToCloudinary(
-        req.files["passport_photo"][0].buffer,
-        { folder: "Vistaprouploads", allowed_formats: ["jpg", "jpeg", "png"] }
-      );
-      passportPhotoUrl = uploadResult.secure_url;
-    }
-    
-    if (req.files && req.files["id_document"] && req.files["id_document"][0].buffer) {
-      const uploadResult = await uploadToCloudinary(
-        req.files["id_document"][0].buffer,
-        { folder: "Vistaprouploads", allowed_formats: ["jpg", "jpeg", "png"] }
-      );
-      identificationFileUrl = uploadResult.secure_url;
-    }
-    
-    const marketerUniqueId = req.user.unique_id;
-    if (!marketerUniqueId) {
-      return res.status(400).json({ message: "Marketer Unique ID is missing from token." });
-    }
-    
-    const dob = date_of_birth === "" ? null : date_of_birth;
-    
-    const query = `
-      UPDATE marketer_biodata
-      SET name = $2,
-          address = $3,
-          phone = $4,
-          religion = $5,
-          date_of_birth = $6,
-          marital_status = $7,
-          state_of_origin = $8,
-          state_of_residence = $9,
-          mothers_maiden_name = $10,
-          school_attended = $11,
-          means_of_identification = $12,
-          id_document_url = $13,
-          last_place_of_work = $14,
-          job_description = $15,
-          reason_for_quitting = $16,
-          medical_condition = $17,
-          next_of_kin_name = $18,
-          next_of_kin_phone = $19,
-          next_of_kin_address = $20,
-          next_of_kin_relationship = $21,
-          bank_name = $22,
-          account_name = $23,
-          account_number = $24,
-          passport_photo_url = $25,
-          updated_at = NOW()
-      WHERE marketer_unique_id = $1
-      RETURNING *
-    `;
-    
-    const values = [
-      marketerUniqueId,
-      name,
-      address,
-      phone,
-      religion,
-      dob,
-      marital_status,
-      state_of_origin,
-      state_of_residence,
-      mothers_maiden_name,
-      school_attended,
-      means_of_identification,
-      identificationFileUrl,
-      last_place_of_work,
-      job_description,
-      reason_for_quitting,
-      medical_condition,
-      next_of_kin_name,
-      next_of_kin_phone,
-      next_of_kin_address,
-      next_of_kin_relationship,
-      bank_name,
-      account_name,
-      account_number,
-      passportPhotoUrl,
-    ];
-    
-    const result = await pool.query(query, values);
-    
-    res.status(200).json({
-      message: "Biodata updated successfully.",
-      biodata: result.rows[0],
     });
   } catch (error) {
     next(error);
@@ -564,7 +436,6 @@ const allowRefillForm = async (req, res, next) => {
     next(error);
   }
 };
-
 
 /**
  * adminReview
@@ -697,8 +568,7 @@ const masterApprove = async (req, res, next) => {
     }
     
     // Send a socket notification to the marketer.
-    // req.app is used to access the Express app. Make sure your server
-    // sets the "socketio" instance on the app (see Step 1 in server.js).
+    // req.app is used to access the Express app. Ensure your server sets the "socketio" instance on the app.
     sendSocketNotification(
       marketerUniqueId,
       "Your account has been approved and your dashboard is now unlocked!",
@@ -713,7 +583,6 @@ const masterApprove = async (req, res, next) => {
     next(error);
   }
 };
-
 
 /**
  * deleteBiodataSubmission
@@ -806,62 +675,11 @@ const deleteCommitmentSubmission = async (req, res, next) => {
 };
 
 /**
- * getBiodataSubmissionById
- * Retrieves a single biodata submission by its submission ID.
- * Joins marketer_biodata and users to provide additional marketer details.
+ * getAllSubmissionsForMasterAdmin
+ * Retrieves all submissions (biodata, guarantor, and commitment) without filtering by assignment.
  */
-const getBiodataSubmissionById = async (req, res, next) => {
-  try {
-    const submissionId = req.params.id;
-    const query = `
-      SELECT 
-        b.id AS biodata_submission_id,
-        b.marketer_unique_id,
-        b.name,
-        b.address,
-        b.phone,
-        b.religion,
-        b.date_of_birth,
-        b.marital_status,
-        b.state_of_origin,
-        b.state_of_residence,
-        b.mothers_maiden_name,
-        b.school_attended,
-        b.means_of_identification,
-        b.id_document_url,
-        b.last_place_of_work,
-        b.job_description,
-        b.reason_for_quitting,
-        b.medical_condition,
-        b.next_of_kin_name,
-        b.next_of_kin_phone,
-        b.next_of_kin_address,
-        b.next_of_kin_relationship,
-        b.bank_name,
-        b.account_name,
-        b.account_number,
-        b.passport_photo_url,
-        u.unique_id AS user_unique_id,
-        u.first_name || ' ' || u.last_name AS marketer_full_name,
-        u.location AS marketer_location
-      FROM marketer_biodata b
-      JOIN users u ON b.marketer_unique_id = u.unique_id
-      WHERE b.id = $1;
-    `;
-    const values = [submissionId];
-    const result = await pool.query(query, values);
-    if (result.rowCount === 0) {
-      return res.status(404).json({ message: "Submission not found." });
-    }
-    res.status(200).json({ submission: result.rows[0] });
-  } catch (error) {
-    next(error);
-  }
-};
-
 const getAllSubmissionsForMasterAdmin = async (req, res, next) => {
   try {
-    // Fetch submissions from all three forms without filtering by assignment.
     const biodataResult = await pool.query("SELECT * FROM marketer_biodata ORDER BY created_at DESC");
     const guarantorResult = await pool.query("SELECT * FROM guarantor_employment_form ORDER BY created_at DESC");
     const commitmentResult = await pool.query("SELECT * FROM direct_sales_commitment_form ORDER BY created_at DESC");
@@ -886,7 +704,6 @@ const getAllSubmissionsForMasterAdmin = async (req, res, next) => {
 const getSubmissionsForAdmin = async (req, res, next) => {
   try {
     const adminId = req.user.id; // Logged-in Admin's internal id
-    // For simplicity, we fetch all submissions (biodata, guarantor, commitment) based on the marketer's "admin_id".
     // Biodata submissions.
     const biodataQuery = `
       SELECT mb.*
@@ -984,7 +801,6 @@ module.exports = {
   submitBiodata,
   submitGuarantor,
   submitCommitment,
-  updateBiodata,
   allowRefillForm,
   // Review and approval endpoints.
   adminReview,
@@ -995,7 +811,6 @@ module.exports = {
   deleteGuarantorSubmission,
   deleteCommitmentSubmission,
   // GET endpoints.
-  getBiodataSubmissionById,
   getAllSubmissionsForMasterAdmin,
   getSubmissionsForAdmin,
   getSubmissionsForSuperAdmin,
