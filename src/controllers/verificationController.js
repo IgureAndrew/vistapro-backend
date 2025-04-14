@@ -671,51 +671,71 @@ const superadminVerify = async (req, res, next) => {
  * Sets overall_verification_status to "approved", account_status to "active", and triggers (optional) notifications.
  */
 
-// Optionally, you can trigger a notification to the marketer here.
-    // For example:
-    // await sendSocketNotification(marketerUniqueId, "Your account has been verified and approved. Your dashboard is now unlocked!");
-    const masterApprove = async (req, res, next) => {
-      try {
-        const { marketerUniqueId } = req.body;
-        if (!marketerUniqueId) {
-          return res.status(400).json({ message: "Marketer Unique ID is required." });
-        }
+
+    /**
+ * masterApprove
+ * Allows the Master Admin to give final approval to a marketer.
+ * Expects { marketerUniqueId } in req.body.
+ * Updates overall_verification_status to "approved" and account_status to "active".
+ * Upon successful update, the marketer's dashboard is unlocked instantly.
+ */
+const masterApprove = async (req, res, next) => {
+  try {
+    // Ensure only a Master Admin can perform this final approval.
+    if (req.user.role !== "MasterAdmin") {
+      return res.status(403).json({ message: "Only a Master Admin can approve submissions." });
+    }
+
+    const { marketerUniqueId } = req.body;
+    if (!marketerUniqueId) {
+      return res.status(400).json({ message: "Marketer Unique ID is required." });
+    }
     
-        const query = `
-          UPDATE users
-          SET overall_verification_status = 'approved',
-              updated_at = NOW()
-          WHERE unique_id = $1
-          RETURNING *
-        `;
-        const result = await pool.query(query, [marketerUniqueId]);
-        if (result.rowCount === 0) {
-          return res.status(404).json({ message: "Marketer not found." });
-        }
-        
-        // Optionally, trigger a notification here.
-        res.status(200).json({
-          message: "Marketer final verification approved and dashboard unlocked.",
-          user: result.rows[0],
-        });
-      } catch (error) {
-        next(error);
-      }
-    };
+    // Update both overall verification status and account status in one query.
+    const query = `
+      UPDATE users
+      SET overall_verification_status = 'approved',
+          account_status = 'active',
+          updated_at = NOW()
+      WHERE unique_id = $1
+      RETURNING *
+    `;
+    const result = await pool.query(query, [marketerUniqueId]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: "Marketer not found." });
+    }
     
+    // Optional: send a real-time notification that the dashboard is now unlocked.
+    // await sendSocketNotification(marketerUniqueId, "Your account has been approved and your dashboard is now unlocked!");
+    
+    res.status(200).json({
+      message: "Marketer final verification approved and dashboard unlocked.",
+      user: result.rows[0],
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 
 /**
  * deleteBiodataSubmission
- * Allows a Master Admin to delete a biodata submission.
+ * Deletes a biodata record from the marketer_biodata table based on the marketer's unique ID.
+ * Only a Master Admin can delete the submission.
  */
 const deleteBiodataSubmission = async (req, res, next) => {
   try {
+    // Ensure only a Master Admin can perform this deletion.
     if (req.user.role !== "MasterAdmin") {
       return res.status(403).json({ message: "Only a Master Admin can delete submissions." });
     }
-    const { submissionId } = req.params;
-    const query = "DELETE FROM marketer_biodata WHERE id = $1 RETURNING *";
-    const result = await pool.query(query, [submissionId]);
+    
+    const { marketerUniqueId } = req.body;
+    if (!marketerUniqueId) {
+      return res.status(400).json({ message: "Marketer Unique ID is required." });
+    }
+    const query = "DELETE FROM marketer_biodata WHERE marketer_unique_id = $1 RETURNING *";
+    const result = await pool.query(query, [marketerUniqueId]);
     if (result.rowCount === 0) {
       return res.status(404).json({ message: "Biodata submission not found." });
     }
@@ -730,16 +750,22 @@ const deleteBiodataSubmission = async (req, res, next) => {
 
 /**
  * deleteGuarantorSubmission
- * Allows a Master Admin to delete a guarantor submission.
+ * Deletes a guarantor submission from the guarantor_employment_form table based on the marketer's unique ID.
+ * Only a Master Admin can delete the submission.
  */
 const deleteGuarantorSubmission = async (req, res, next) => {
   try {
+    // Ensure only a Master Admin can perform this deletion.
     if (req.user.role !== "MasterAdmin") {
       return res.status(403).json({ message: "Only a Master Admin can delete submissions." });
     }
-    const { submissionId } = req.params;
-    const query = "DELETE FROM guarantor_employment_form WHERE id = $1 RETURNING *";
-    const result = await pool.query(query, [submissionId]);
+    
+    const { marketerUniqueId } = req.body;
+    if (!marketerUniqueId) {
+      return res.status(400).json({ message: "Marketer Unique ID is required." });
+    }
+    const query = "DELETE FROM guarantor_employment_form WHERE marketer_unique_id = $1 RETURNING *";
+    const result = await pool.query(query, [marketerUniqueId]);
     if (result.rowCount === 0) {
       return res.status(404).json({ message: "Guarantor submission not found." });
     }
@@ -754,16 +780,22 @@ const deleteGuarantorSubmission = async (req, res, next) => {
 
 /**
  * deleteCommitmentSubmission
- * Allows a Master Admin to delete a commitment submission.
+ * Deletes a commitment submission from the direct_sales_commitment_form table based on the marketer's unique ID.
+ * Only a Master Admin can delete the submission.
  */
 const deleteCommitmentSubmission = async (req, res, next) => {
   try {
+    // Ensure only a Master Admin can perform this deletion.
     if (req.user.role !== "MasterAdmin") {
       return res.status(403).json({ message: "Only a Master Admin can delete submissions." });
     }
-    const { submissionId } = req.params;
-    const query = "DELETE FROM direct_sales_commitment_form WHERE id = $1 RETURNING *";
-    const result = await pool.query(query, [submissionId]);
+    
+    const { marketerUniqueId } = req.body;
+    if (!marketerUniqueId) {
+      return res.status(400).json({ message: "Marketer Unique ID is required." });
+    }
+    const query = "DELETE FROM direct_sales_commitment_form WHERE marketer_unique_id = $1 RETURNING *";
+    const result = await pool.query(query, [marketerUniqueId]);
     if (result.rowCount === 0) {
       return res.status(404).json({ message: "Commitment submission not found." });
     }
