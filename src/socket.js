@@ -6,9 +6,10 @@ let io;
 const initSocket = (server) => {
   io = socketIo(server, {
     cors: {
-      origin: process.env.NODE_ENV === 'production'
-        ? process.env.SOCKET_ORIGIN   // Your production frontend URL, e.g., "https://your-frontend-domain.com"
-        : "*",
+      origin: [
+        "https://www.vistapro.ng",      // your production frontend
+        "http://localhost:5173",       // your local dev (if needed)
+      ],
       methods: ["GET", "POST"]
     }
   });
