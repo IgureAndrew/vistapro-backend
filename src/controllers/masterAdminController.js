@@ -275,32 +275,108 @@ const addUser = async (req, res, next) => {
  */
 const updateUser = async (req, res, next) => {
   try {
-    const userId = req.params.id;
-    const { first_name, last_name, email, bank_name, account_number, role, location } = req.body;
+    // Use the user's unique ID provided as a route parameter.
+    const userUniqueId = req.params.uniqueId;
+    
+    // Destructure the fields that can be updated from the request body.
+    // You can add more fields as necessary.
+    const {
+      first_name,
+      last_name,
+      email,
+      bank_name,
+      account_number,
+      role,
+      location,
+      phone,
+      profile_image
+    } = req.body;
+    
+    // Create arrays to hold the dynamic parts of the SQL query.
+    let updateClauses = [];
+    let values = [];
+    let index = 1;
+    
+    // Dynamically push each provided field into the update query.
+    if (first_name) {
+      updateClauses.push(`first_name = $${index}`);
+      values.push(first_name);
+      index++;
+    }
+    if (last_name) {
+      updateClauses.push(`last_name = $${index}`);
+      values.push(last_name);
+      index++;
+    }
+    if (email) {
+      updateClauses.push(`email = $${index}`);
+      values.push(email);
+      index++;
+    }
+    if (bank_name) {
+      updateClauses.push(`bank_name = $${index}`);
+      values.push(bank_name);
+      index++;
+    }
+    if (account_number) {
+      updateClauses.push(`account_number = $${index}`);
+      values.push(account_number);
+      index++;
+    }
+    if (role) {
+      updateClauses.push(`role = $${index}`);
+      values.push(role);
+      index++;
+    }
+    if (location) {
+      updateClauses.push(`location = $${index}`);
+      values.push(location);
+      index++;
+    }
+    if (phone) {
+      updateClauses.push(`phone = $${index}`);
+      values.push(phone);
+      index++;
+    }
+    if (profile_image) {
+      updateClauses.push(`profile_image = $${index}`);
+      values.push(profile_image);
+      index++;
+    }
+    
+    // If no fields are provided, return an error.
+    if (updateClauses.length === 0) {
+      return res.status(400).json({ message: "No fields provided for update." });
+    }
+    
+    // Always update the updated_at field.
+    updateClauses.push(`updated_at = NOW()`);
+    
+    // Use the user's unique ID as the final parameter.
     const query = `
       UPDATE users
-      SET
-        first_name = COALESCE($1, first_name),
-        last_name = COALESCE($2, last_name),
-        email = COALESCE($3, email),
-        bank_name = COALESCE($4, bank_name),
-        account_number = COALESCE($5, account_number),
-        role = COALESCE($6, role),
-        location = COALESCE($7, location),
-        updated_at = NOW()
-      WHERE id = $8
+      SET ${updateClauses.join(", ")}
+      WHERE unique_id = $${index}
       RETURNING *
     `;
-    const values = [first_name, last_name, email, bank_name, account_number, role, location, userId];
+    values.push(userUniqueId);
+    
+    // Execute the query.
     const result = await pool.query(query, values);
+    
+    if (!result.rowCount) {
+      return res.status(404).json({ message: "User not found." });
+    }
+    
     return res.status(200).json({
-      message: "User updated successfully",
+      message: "User updated successfully.",
       user: result.rows[0],
     });
   } catch (error) {
     next(error);
   }
 };
+
 
 /**
  * deleteUser - Deletes a user specified by :id.

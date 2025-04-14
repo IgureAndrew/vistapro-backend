@@ -149,6 +149,15 @@ router.get(
   getAllAssignments
 );
 
+// PATCH /api/admin/users/:uniqueId
+// Allows a Master Admin to update any user's details using the user's unique ID.
+router.patch(
+  '/users/:uniqueId',
+  verifyToken,
+  verifyRole(['MasterAdmin']),
+  updateUser
+);
+
 // Error handling middleware.
 router.use((err, req, res, next) => {
   console.error(err);
