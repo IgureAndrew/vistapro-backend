@@ -2,7 +2,7 @@
 
 const { pool } = require("../config/database");
 const uploadToCloudinary = require("../utils/uploadToCloudinary"); // Helper to upload file buffers to Cloudinary
-const { sendSocketNotification } = require("../utils/notifications");
+const { sendSocketNotification } = require("../utils/sendSocketNotification");
 
 /**
  * submitBiodata
@@ -668,16 +668,7 @@ const superadminVerify = async (req, res, next) => {
  * masterApprove
  * Allows the Master Admin to give final approval to a marketer.
  * Expects { marketerUniqueId } in req.body.
- * Sets overall_verification_status to "approved", account_status to "active", and triggers (optional) notifications.
- */
-
-
-    /**
- * masterApprove
- * Allows the Master Admin to give final approval to a marketer.
- * Expects { marketerUniqueId } in req.body.
  * Updates overall_verification_status to "approved" and account_status to "active".
- * Upon successful update, the marketer's dashboard is unlocked instantly.
  */
 const masterApprove = async (req, res, next) => {
   try {
@@ -691,7 +682,7 @@ const masterApprove = async (req, res, next) => {
       return res.status(400).json({ message: "Marketer Unique ID is required." });
     }
     
-    // Update both overall verification status and account status in one query.
+    // Update the user's status in the database.
     const query = `
       UPDATE users
       SET overall_verification_status = 'approved',
@@ -705,8 +696,14 @@ const masterApprove = async (req, res, next) => {
       return res.status(404).json({ message: "Marketer not found." });
     }
     
-    // Optional: send a real-time notification that the dashboard is now unlocked.
-    // await sendSocketNotification(marketerUniqueId, "Your account has been approved and your dashboard is now unlocked!");
+    // Send a socket notification to the marketer.
+    // req.app is used to access the Express app. Make sure your server
+    // sets the "socketio" instance on the app (see Step 1 in server.js).
+    sendSocketNotification(
+      marketerUniqueId,
+      "Your account has been approved and your dashboard is now unlocked!",
+      req.app
+    );
     
     res.status(200).json({
       message: "Marketer final verification approved and dashboard unlocked.",

@@ -19,6 +19,11 @@ io.on("connection", (socket) => {
   });
 });
 
+// Make the Socket.IO instance available in your Express app.
+app.set("socketio", io);
+
+
+
 const PORT = process.env.PORT || 5000;
 
 // Connect to the database and then start the server.
