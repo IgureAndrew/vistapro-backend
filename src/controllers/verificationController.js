@@ -697,12 +697,9 @@ const deleteCommitmentSubmission = async (req, res, next) => {
 
 /**
  * getAllSubmissionsForMasterAdmin
- * Retrieves all submissions (biodata, guarantor, and commitment) along with
- * the marketer's name and location from the users table.
- *
- * This endpoint joins each submission table with the users table using
- * the marketer's unique ID, ensuring that the returned data includes
- * marketer_name and marketer_location.
+ * Retrieves all submissions (biodata, guarantor, and commitment) with
+ * marketer's name and location included, by joining the submissions table
+ * with the users table using the marketer's unique ID.
  */
 const getAllSubmissionsForMasterAdmin = async (req, res, next) => {
   try {
@@ -710,7 +707,7 @@ const getAllSubmissionsForMasterAdmin = async (req, res, next) => {
     const biodataQuery = `
       SELECT
         s.*,
-        u.name AS marketer_name,
+        (u.first_name || ' ' || u.last_name) AS marketer_name,
         u.location AS marketer_location
       FROM marketer_biodata s
       JOIN users u ON s.marketer_unique_id = u.unique_id
@@ -722,7 +719,7 @@ const getAllSubmissionsForMasterAdmin = async (req, res, next) => {
     const guarantorQuery = `
       SELECT
         s.*,
-        u.name AS marketer_name,
+        (u.first_name || ' ' || u.last_name) AS marketer_name,
         u.location AS marketer_location
       FROM guarantor_employment_form s
       JOIN users u ON s.marketer_unique_id = u.unique_id
@@ -734,7 +731,7 @@ const getAllSubmissionsForMasterAdmin = async (req, res, next) => {
     const commitmentQuery = `
       SELECT
         s.*,
-        u.name AS marketer_name,
+        (u.first_name || ' ' || u.last_name) AS marketer_name,
         u.location AS marketer_location
       FROM direct_sales_commitment_form s
       JOIN users u ON s.marketer_unique_id = u.unique_id
@@ -742,7 +739,6 @@ const getAllSubmissionsForMasterAdmin = async (req, res, next) => {
     `;
     const commitmentResult = await pool.query(commitmentQuery);
 
-    // Return the combined submissions grouped by form type.
     res.status(200).json({
       submissions: {
         biodata: biodataResult.rows,
@@ -754,6 +750,7 @@ const getAllSubmissionsForMasterAdmin = async (req, res, next) => {
     next(error);
   }
 };
+
 
 /**
  * getSubmissionsForAdmin
