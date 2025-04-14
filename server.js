@@ -10,23 +10,28 @@ const server = http.createServer(app);
 // Initialize Socket.IO using your custom function.
 const io = initSocket(server);
 
-// Optionally, you can add extra event listeners here if needed,
-// but avoid duplicating events already handled in socket.js.
-// For example, if "send-message" is a unique event:
+// Optional: Add additional event listeners if needed.
+// For example, handling a "send-message" event and broadcasting it.
 io.on("connection", (socket) => {
+  console.log(`New client connected: ${socket.id}`);
+  
   socket.on("send-message", (messageData) => {
     io.emit("receive-message", messageData);
   });
+  
+  // If needed, add more custom event listeners here.
+  
+  socket.on("disconnect", () => {
+    console.log(`Client disconnected: ${socket.id}`);
+  });
 });
 
-// Make the Socket.IO instance available in your Express app.
+// Make the Socket.IO instance available throughout your Express app.
 app.set("socketio", io);
-
-
 
 const PORT = process.env.PORT || 5000;
 
-// Connect to the database and then start the server.
+// Connect to the database and then start the HTTP server.
 connectDB()
   .then(() => {
     server.listen(PORT, () => {

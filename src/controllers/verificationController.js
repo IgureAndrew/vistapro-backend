@@ -2,7 +2,7 @@
 
 const { pool } = require("../config/database");
 const uploadToCloudinary = require("../utils/uploadToCloudinary"); // Helper to upload file buffers to Cloudinary
-const { sendSocketNotification } = require("../utils/sendSocketNotification");
+const  sendSocketNotification  = require("../utils/sendSocketNotification");
 
 /**
  * submitBiodata
@@ -376,10 +376,8 @@ const submitCommitment = async (req, res, next) => {
       );
     }
     
-    res.status(201).json({
-      message: "Commitment Handbook form submitted successfully.",
-      commitment: result.rows[0],
-    });
+    sendSocketNotification(req.user.unique_id, "Your forms have been approved!", req.app);
+    res.status(201).json({ message: "Commitment form submitted successfully." });
   } catch (error) {
     next(error);
   }
@@ -825,4 +823,5 @@ module.exports = {
   getAllSubmissionsForMasterAdmin,
   getSubmissionsForAdmin,
   getSubmissionsForSuperAdmin,
+
 };
