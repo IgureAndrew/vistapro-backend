@@ -6,7 +6,7 @@ let io;
 const initSocket = (server) => {
   io = socketIo(server, {
     cors: {
-      origin: "*", // In production, adjust this to match your front-end URL for security
+      origin: "*", // Adjust this in production
       methods: ["GET", "POST"]
     }
   });
@@ -16,10 +16,12 @@ const initSocket = (server) => {
 
     // Listen for a "register" event where the client provides their unique ID.
     socket.on("register", (uniqueId) => {
-      // Join the socket to a room named by the uniqueId.
+      // Join a room named by the uniqueId.
       socket.join(uniqueId);
       console.log(`Socket ${socket.id} registered to room ${uniqueId}`);
     });
+
+    // Add additional event listeners here as needed.
 
     socket.on("disconnect", () => {
       console.log(`Client disconnected: ${socket.id}`);
