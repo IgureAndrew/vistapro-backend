@@ -552,7 +552,7 @@ const superadminVerify = async (req, res, next) => {
  * masterApprove
  * Allows the Master Admin to give final approval to a marketer.
  * Expects { marketerUniqueId } in req.body.
- * Updates overall_verification_status to "approved" and account_status to "active".
+ * Updates overall_verification_status to "approved" and status to "active".
  */
 const masterApprove = async (req, res, next) => {
   try {
@@ -566,11 +566,11 @@ const masterApprove = async (req, res, next) => {
       return res.status(400).json({ message: "Marketer Unique ID is required." });
     }
     
-    // Update the user's status in the database.
+    // Update the user's status in the database using the correct column name if needed.
     const query = `
       UPDATE users
       SET overall_verification_status = 'approved',
-          account_status = 'active',
+          status = 'active',
           updated_at = NOW()
       WHERE unique_id = $1
       RETURNING *
@@ -581,7 +581,6 @@ const masterApprove = async (req, res, next) => {
     }
     
     // Send a socket notification to the marketer.
-    // req.app is used to access the Express app. Ensure your server sets the "socketio" instance on the app.
     sendSocketNotification(
       marketerUniqueId,
       "Your account has been approved and your dashboard is now unlocked!",
@@ -596,7 +595,6 @@ const masterApprove = async (req, res, next) => {
     next(error);
   }
 };
-
 /**
  * deleteBiodataSubmission
  * Deletes a biodata record from the marketer_biodata table based on the marketer's unique ID.

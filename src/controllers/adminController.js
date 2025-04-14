@@ -4,51 +4,82 @@ const { pool } = require('../config/database');
 const { createUser } = require('../models/userModel');
 const { logAudit } = require('../utils/auditLogger');
 
-/**
- * updateProfile - Allows an Admin to update their profile details.
- * Expects the Admin's ID from req.user (populated by verifyToken middleware)
- * and fields like email, phone, gender, address, newPassword, and an optional facial profile image via req.file.
- */
-const updateProfile = async (req, res, next) => {
+const updateAdminAccountSettings = async (req, res, next) => {
   try {
-    // Extract the Admin's ID from the JWT payload
-    const userId = req.user.id;
-    const { email, phone, gender, address, newPassword } = req.body;
-
-    // If a new password is provided, hash it; otherwise, leave it unchanged.
-    let hashedPassword = null;
+    const adminId = req.user.id;
+    const { displayName, email, phone, oldPassword, newPassword } = req.body;
+    let updateClauses = [];
+    let values = [];
+    let paramIndex = 1;
+    
     if (newPassword) {
-      const saltRounds = 10;
-      hashedPassword = await bcrypt.hash(newPassword, saltRounds);
+      if (!oldPassword) {
+        return res.status(400).json({ message: "Old password is required to change password." });
+      }
+      const currentRes = await pool.query("SELECT password FROM users WHERE id = $1", [adminId]);
+      if (!currentRes.rowCount) {
+        return res.status(404).json({ message: "User not found." });
+      }
+      const isMatch = await bcrypt.compare(oldPassword, currentRes.rows[0].password);
+      if (!isMatch) {
+        return res.status(400).json({ message: "Old password is incorrect." });
+      }
+      const hashedNew = await bcrypt.hash(newPassword, 10);
+      updateClauses.push(`password = $${paramIndex}`);
+      values.push(hashedNew);
+      paramIndex++;
     }
-
-    // Check if a facial profile image was uploaded (using Multer)
-    const profileImage = req.file ? req.file.path : null;
-
-    // Update the Admin's profile
+    
+    if (displayName) {
+      updateClauses.push(`first_name = $${paramIndex}`);
+      values.push(displayName);
+      paramIndex++;
+    }
+    if (email) {
+      updateClauses.push(`email = $${paramIndex}`);
+      values.push(email);
+      paramIndex++;
+    }
+    if (phone) {
+      updateClauses.push(`phone = $${paramIndex}`);
+      values.push(phone);
+      paramIndex++;
+    }
+    if (req.file) {
+      updateClauses.push(`profile_image = $${paramIndex}`);
+      values.push(req.file.path);
+      paramIndex++;
+    }
+    
+    if (updateClauses.length === 0) {
+      return res.status(400).json({ message: "No fields provided for update." });
+    }
+    
+    updateClauses.push("updated_at = NOW()");
     const query = `
       UPDATE users
-      SET email = COALESCE($1, email),
-          phone = COALESCE($2, phone),
-          gender = COALESCE($3, gender),
-          address = COALESCE($4, address),
-          profile_image = COALESCE($5, profile_image),
-          password = COALESCE($6, password),
-          updated_at = NOW()
-      WHERE id = $7
-      RETURNING *
+      SET ${updateClauses.join(", ")}
+      WHERE id = $${paramIndex}
+      RETURNING id, unique_id, first_name, email, phone, profile_image, updated_at
     `;
-    const values = [email, phone, gender, address, profileImage, hashedPassword, userId];
+    values.push(adminId);
+    
     const result = await pool.query(query, values);
-
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: "User not found." });
+    }
+    
     return res.status(200).json({
-      message: 'Admin profile updated successfully.',
+      message: "Admin account settings updated successfully.",
       user: result.rows[0],
     });
   } catch (error) {
+    console.error("Error updating Admin account settings:", error);
     next(error);
   }
 };
+
+module.exports = { updateAdminAccountSettings };
 
 /**
  * registerDealer - Allows an Admin to register a new Dealer account.
@@ -140,7 +171,7 @@ const registerMarketer = async (req, res, next) => {
   
 
 module.exports = {
-  updateProfile,
+  updateAdminAccountSettings,
   registerDealer,
   registerMarketer,
 };

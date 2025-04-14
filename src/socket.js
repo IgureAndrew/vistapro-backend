@@ -10,7 +10,7 @@ const initSocket = (server) => {
         "https://www.vistapro.ng",      // your production frontend
         "http://localhost:5173",       // your local dev (if needed)
       ],
-      methods: ["GET", "POST"]
+      methods: ["GET", "POST", "OPTIONS"]
     }
   });
 
