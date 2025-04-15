@@ -36,7 +36,7 @@ const createStockUpdate = async (req, res, next) => {
     const deadline = new Date(pickup_date.getTime() + 4 * 24 * 60 * 60 * 1000);
 
     // Insert the stock update record.
-    // We convert the marketer's and dealer's unique IDs to numeric IDs via subqueries.
+    // Convert the marketer's and dealer's unique IDs to numeric IDs via subqueries.
     const insertQuery = `
       INSERT INTO stock_updates 
         (marketer_id, dealer_id, device_name, device_model, device_category, quantity, pickup_date, deadline, sold)
@@ -51,8 +51,8 @@ const createStockUpdate = async (req, res, next) => {
     const result = await pool.query(insertQuery, values);
     const stockRecord = result.rows[0];
 
-    // Retrieve the assigned admin for the marketer from the users table.
-    // We assume that a marketer record (role = 'Marketer') has an admin_id column.
+    // Retrieve the assigned admin for the marketer.
+    // We now assume that the assigned admin is stored in the "users" table for a user whose role is "Marketer".
     const adminQuery = `
       SELECT admin_id 
       FROM users 
@@ -139,9 +139,9 @@ const getMarketerStockUpdates = async (req, res, next) => {
 
 /**
  * getStockUpdates - Retrieves all stock update records based on the role of the requester.
- * - MasterAdmin sees all records.
+ * - Master Admin sees all records.
  * - Admin sees records for marketers assigned to that admin.
- * - SuperAdmin sees records for marketers whose admins are assigned to them.
+ * - Super Admin sees records for marketers of admin(s) assigned to them.
  * For unsold records, computes a live countdown (time remaining until deadline).
  * Optionally filters by sold status (?sold=true/false).
  */
@@ -153,69 +153,33 @@ const getStockUpdates = async (req, res, next) => {
     let query = "";
     let values = [];
 
-    // Use join queries to get additional dealer and marketer information.
     if (role === "MasterAdmin") {
-      query = `
-        SELECT 
-          su.*,
-          (u_dealer.first_name || ' ' || u_dealer.last_name) AS dealer_name,
-          u_dealer.unique_id AS dealer_unique_id,
-          (u_marketer.first_name || ' ' || u_marketer.last_name) AS marketer_name,
-          u_marketer.unique_id AS marketer_unique_id
-        FROM stock_updates su
-        JOIN users u_marketer ON su.marketer_id = u_marketer.id
-        JOIN users u_dealer ON su.dealer_id = u_dealer.id
-      `;
+      query = "SELECT * FROM stock_updates";
       if (sold !== undefined) {
-        query += " WHERE su.sold = $1";
+        query += " WHERE sold = $1";
         values.push(sold === "true");
       }
     } else if (role === "Admin") {
-      query = `
-        SELECT 
-          su.*,
-          (u_dealer.first_name || ' ' || u_dealer.last_name) AS dealer_name,
-          u_dealer.unique_id AS dealer_unique_id,
-          (u_marketer.first_name || ' ' || u_marketer.last_name) AS marketer_name,
-          u_marketer.unique_id AS marketer_unique_id
-        FROM stock_updates su
-        JOIN users u_marketer ON su.marketer_id = u_marketer.id
-        JOIN users u_dealer ON su.dealer_id = u_dealer.id
-        WHERE u_marketer.admin_id = (SELECT id FROM users WHERE unique_id = $1)
-      `;
+      query = "SELECT * FROM stock_updates WHERE marketer_id IN (SELECT id FROM users WHERE admin_id = (SELECT id FROM users WHERE unique_id = $1))";
       values.push(uniqueId);
       if (sold !== undefined) {
-        query += " AND su.sold = $" + (values.length + 1);
+        query += " AND sold = $" + (values.length + 1);
         values.push(sold === "true");
       }
     } else if (role === "SuperAdmin") {
-      query = `
-        SELECT 
-          su.*,
-          (u_dealer.first_name || ' ' || u_dealer.last_name) AS dealer_name,
-          u_dealer.unique_id AS dealer_unique_id,
-          (u_marketer.first_name || ' ' || u_marketer.last_name) AS marketer_name,
-          u_marketer.unique_id AS marketer_unique_id
-        FROM stock_updates su
-        JOIN users u_marketer ON su.marketer_id = u_marketer.id
-        JOIN users u_dealer ON su.dealer_id = u_dealer.id
-        WHERE u_marketer.admin_id IN (
-          SELECT id FROM users WHERE super_admin_id = (SELECT id FROM users WHERE unique_id = $1)
-        )
-      `;
+      query = "SELECT * FROM stock_updates WHERE marketer_id IN (SELECT id FROM users WHERE admin_id IN (SELECT id FROM users WHERE super_admin_id = (SELECT id FROM users WHERE unique_id = $1)))";
       values.push(uniqueId);
       if (sold !== undefined) {
-        query += " AND su.sold = $" + (values.length + 1);
+        query += " AND sold = $" + (values.length + 1);
         values.push(sold === "true");
       }
     } else {
       return res.status(403).json({ message: "Not authorized to view stock updates" });
     }
 
-    query += " ORDER BY su.pickup_date DESC";
+    query += " ORDER BY pickup_date DESC";
     const result = await pool.query(query, values);
-
-    // Compute live countdown for unsold stock records.
+    
     const stockUpdates = result.rows.map(record => {
       let countdown = null;
       if (!record.sold) {
@@ -234,7 +198,7 @@ const getStockUpdates = async (req, res, next) => {
       }
       return { ...record, countdown };
     });
-
+    
     return res.status(200).json({
       message: "Stock updates retrieved successfully.",
       data: stockUpdates
@@ -269,7 +233,6 @@ const getStaleStockUpdates = async (req, res, next) => {
     query += " ORDER BY pickup_date DESC";
     const result = await pool.query(query, values);
 
-    // For each stale record, insert a notification for the marketer.
     result.rows.forEach(async (record) => {
       const notifQuery = `
         INSERT INTO notifications (user_id, message, created_at)
@@ -278,7 +241,7 @@ const getStaleStockUpdates = async (req, res, next) => {
       const message = `Stock update ID ${record.id} ("${record.device_name}" ${record.device_model}, quantity ${record.quantity}) picked up on ${new Date(record.pickup_date).toLocaleString()} is stale. Please report back to your assigned admin.`;
       await pool.query(notifQuery, [record.marketer_id, message]);
     });
-
+    
     return res.status(200).json({
       message: "Stale stock updates retrieved successfully.",
       data: result.rows
@@ -305,7 +268,7 @@ const getStockUpdateHistory = async (req, res, next) => {
     if (!period || !validPeriods.includes(period)) {
       return res.status(400).json({ message: "Invalid or missing period parameter. Use 'week', 'month', or 'year'." });
     }
-
+    
     let query = "";
     let values = [];
     if (role === "MasterAdmin") {
@@ -345,7 +308,7 @@ const getStockUpdateHistory = async (req, res, next) => {
     } else {
       return res.status(403).json({ message: "Not authorized to view stock update history" });
     }
-
+    
     const result = await pool.query(query, values);
     res.status(200).json({
       message: "Stock update history retrieved successfully.",
