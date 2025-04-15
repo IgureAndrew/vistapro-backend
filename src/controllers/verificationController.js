@@ -401,25 +401,18 @@ const submitCommitment = async (req, res, next) => {
  * By resetting the flag, the corresponding form is marked as incomplete so that the marketer
  * can re-submit (refill) that form.
  *
- * Input (from req.body):
+ * Expects (in req.body):
  *   - marketerUniqueId: The unique ID of the marketer.
- *   - formType: A string indicating which form to reset. Accepted values are:
- *       "biodata", "guarantor", or "commitment".
- *
- * The endpoint updates the appropriate field (e.g., sets "guarantor_submitted" to false)
- * in the 'users' table and returns the updated user record.
+ *   - formType: A string indicating which form to reset ("biodata", "guarantor", or "commitment").
  */
 const allowRefillForm = async (req, res, next) => {
   try {
-    // Destructure the required values from the request body.
     const { marketerUniqueId, formType } = req.body;
-
-    // Check if both the marketer unique ID and the form type are provided.
     if (!marketerUniqueId || !formType) {
       return res.status(400).json({ message: "Marketer Unique ID and form type are required." });
     }
     
-    // Determine which flag should be reset based on the provided formType.
+    // Determine which field to reset based on formType.
     let updateField;
     if (formType.toLowerCase() === "biodata") {
       updateField = "bio_submitted";
@@ -428,12 +421,10 @@ const allowRefillForm = async (req, res, next) => {
     } else if (formType.toLowerCase() === "commitment") {
       updateField = "commitment_submitted";
     } else {
-      // If formType is not one of the accepted values, return an error.
       return res.status(400).json({ message: "Invalid form type provided." });
     }
     
-    // Execute an UPDATE query to reset the specified flag for the given marketer.
-    // This sets the flag value to false and updates the 'updated_at' timestamp.
+    // Update the respective flag to false.
     const query = `
       UPDATE users
       SET ${updateField} = false,
@@ -443,22 +434,31 @@ const allowRefillForm = async (req, res, next) => {
     `;
     const values = [marketerUniqueId];
     const result = await pool.query(query, values);
-    
-    // If no marketer is found with the given unique ID, return a 404 error.
     if (result.rowCount === 0) {
       return res.status(404).json({ message: "Marketer not found." });
     }
     
-    // Respond with a success message along with the updated user record.
+    // After resetting, send a socket notification to the marketer.
+    // Assumes that the Socket.IO instance is attached to the app: app.set("socketio", io)
+    const io = req.app.get("socketio");
+    if (io) {
+      // Send an event "formReset" to the marketer's room (using their unique ID)
+      io.to(marketerUniqueId).emit("formReset", {
+        formType,
+        message: `Your ${formType} form has been reset. Please refill it.`
+      });
+    }
+    
+    // Respond with success.
     res.status(200).json({
       message: `Refill allowed for ${formType} form.`,
       user: result.rows[0],
     });
   } catch (error) {
-    // Pass any errors to the centralized error handling middleware.
     next(error);
   }
 };
+
 
 /**
  * adminReview
