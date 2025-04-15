@@ -641,19 +641,20 @@ const deleteBiodataSubmission = async (req, res, next) => {
  * Deletes a guarantor submission from the guarantor_employment_form table based on the marketer's unique ID.
  * Only a Master Admin can delete the submission.
  */
+// deleteGuarantorSubmission by submission ID
 const deleteGuarantorSubmission = async (req, res, next) => {
   try {
-    // Ensure only a Master Admin can perform this deletion.
     if (req.user.role !== "MasterAdmin") {
       return res.status(403).json({ message: "Only a Master Admin can delete submissions." });
     }
-    
-    const { marketerUniqueId } = req.body;
-    if (!marketerUniqueId) {
-      return res.status(400).json({ message: "Marketer Unique ID is required." });
+    const { submissionId } = req.params;  // or req.body
+    if (!submissionId) {
+      return res.status(400).json({ message: "Submission ID is required." });
     }
-    const query = "DELETE FROM guarantor_employment_form WHERE marketer_unique_id = $1 RETURNING *";
-    const result = await pool.query(query, [marketerUniqueId]);
+
+    const query = "DELETE FROM guarantor_employment_form WHERE id = $1 RETURNING *";
+    const result = await pool.query(query, [submissionId]);
+
     if (result.rowCount === 0) {
       return res.status(404).json({ message: "Guarantor submission not found." });
     }
@@ -671,21 +672,29 @@ const deleteGuarantorSubmission = async (req, res, next) => {
  * Deletes a commitment submission from the direct_sales_commitment_form table based on the marketer's unique ID.
  * Only a Master Admin can delete the submission.
  */
+/**
+ * deleteCommitmentSubmission
+ * Deletes a commitment submission from the direct_sales_commitment_form table based on the submission ID.
+ * Only a Master Admin can delete the submission.
+ */
 const deleteCommitmentSubmission = async (req, res, next) => {
   try {
     if (req.user.role !== "MasterAdmin") {
       return res.status(403).json({ message: "Only a Master Admin can delete submissions." });
     }
     
+    // Using submissionId from URL parameters
     const { submissionId } = req.params;
     if (!submissionId) {
       return res.status(400).json({ message: "Submission ID is required." });
     }
+    
     const query = "DELETE FROM direct_sales_commitment_form WHERE id = $1 RETURNING *";
     const result = await pool.query(query, [submissionId]);
     if (result.rowCount === 0) {
       return res.status(404).json({ message: "Commitment submission not found." });
     }
+    
     res.status(200).json({
       message: "Commitment submission deleted successfully.",
       submission: result.rows[0],
@@ -694,6 +703,8 @@ const deleteCommitmentSubmission = async (req, res, next) => {
     next(error);
   }
 };
+
+
 /**
  * getAllSubmissionsForMasterAdmin
  * Retrieves all submissions (biodata, guarantor, and commitment) with
