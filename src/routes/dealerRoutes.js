@@ -1,23 +1,19 @@
-// src/routes/dealerRoutes.js
-const express = require("express");
+const express = require('express');
 const router = express.Router();
-const { verifyToken } = require("../middlewares/authMiddleware");
-const { pool } = require("../config/database");
+const { verifyToken } = require('../middlewares/authMiddleware');
 
-router.get("/", verifyToken, async (req, res) => {
+// Assuming you have a PostgreSQL pool instance imported
+const { pool } = require('../config/database');
+
+// GET /api/dealers - Retrieve a list of available dealers.
+router.get('/', verifyToken, async (req, res, next) => {
   try {
-    // Query to fetch all dealers regardless of user location.
-    const query = `
-      SELECT unique_id, business_name 
-      FROM users 
-      WHERE role = 'Dealer'
-      ORDER BY business_name ASC
-    `;
+    // Adjust the query based on your dealers table schema.
+    const query = "SELECT unique_id, business_name, location FROM dealers ORDER BY business_name";
     const result = await pool.query(query);
     res.status(200).json({ dealers: result.rows });
   } catch (error) {
-    console.error("Error fetching dealers:", error);
-    res.status(500).json({ message: "Error fetching dealers" });
+    next(error);
   }
 });
 

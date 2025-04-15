@@ -36,7 +36,7 @@ const createStockUpdate = async (req, res, next) => {
     const deadline = new Date(pickup_date.getTime() + 4 * 24 * 60 * 60 * 1000);
 
     // Insert the stock update record.
-    // We convert the marketer's and dealer's unique IDs to numeric IDs via subqueries.
+    // Convert the marketer's and dealer's unique IDs to numeric IDs via subqueries.
     const insertQuery = `
       INSERT INTO stock_updates 
         (marketer_id, dealer_id, device_name, device_model, device_category, quantity, pickup_date, deadline, sold)
@@ -52,14 +52,14 @@ const createStockUpdate = async (req, res, next) => {
     const stockRecord = result.rows[0];
 
     // Retrieve the assigned admin for the marketer.
-    // Assumes that the "marketers" table holds an admin_id for the marketer.
+    // We now assume that the assigned admin is stored in the "users" table for a user whose role is "Marketer".
     const adminQuery = `
       SELECT admin_id 
-      FROM marketers 
-      WHERE id = (SELECT id FROM users WHERE unique_id = $1)
+      FROM users 
+      WHERE unique_id = $1 AND role = 'Marketer'
     `;
     const adminResult = await pool.query(adminQuery, [marketerUniqueId]);
-    if (adminResult.rows.length > 0) {
+    if (adminResult.rows.length > 0 && adminResult.rows[0].admin_id) {
       const admin_id = adminResult.rows[0].admin_id;
       const notifQuery = `
         INSERT INTO notifications (user_id, message, created_at)
@@ -85,7 +85,6 @@ const createStockUpdate = async (req, res, next) => {
  */
 const markStockAsSold = async (req, res, next) => {
   try {
-    // Enforce that only Master Admin can perform this action.
     if (req.user.role !== "MasterAdmin") {
       return res.status(403).json({ message: "Only Master Admin can mark stock as sold." });
     }
@@ -118,14 +117,10 @@ const markStockAsSold = async (req, res, next) => {
  */
 const getMarketerStockUpdates = async (req, res, next) => {
   try {
-    // Ensure the marketer's unique ID is available.
     const marketerUniqueId = req.user.unique_id;
     if (!marketerUniqueId) {
       return res.status(400).json({ message: "Marketer unique ID not available." });
     }
-
-    // Query stock_updates for records that belong to the logged-in marketer.
-    // The marketer's numeric ID is fetched via a subquery on the users table.
     const query = `
       SELECT *
       FROM stock_updates
@@ -133,7 +128,6 @@ const getMarketerStockUpdates = async (req, res, next) => {
       ORDER BY pickup_date DESC
     `;
     const { rows } = await pool.query(query, [marketerUniqueId]);
-
     return res.status(200).json({
       message: "Stock updates retrieved successfully.",
       data: rows,
@@ -160,14 +154,12 @@ const getStockUpdates = async (req, res, next) => {
     let values = [];
 
     if (role === "MasterAdmin") {
-      // MasterAdmin sees all stock update records.
       query = "SELECT * FROM stock_updates";
       if (sold !== undefined) {
         query += " WHERE sold = $1";
         values.push(sold === "true");
       }
     } else if (role === "Admin") {
-      // Admin sees records for marketers assigned to them.
       query = "SELECT * FROM stock_updates WHERE marketer_id IN (SELECT id FROM users WHERE admin_id = (SELECT id FROM users WHERE unique_id = $1))";
       values.push(uniqueId);
       if (sold !== undefined) {
@@ -175,7 +167,6 @@ const getStockUpdates = async (req, res, next) => {
         values.push(sold === "true");
       }
     } else if (role === "SuperAdmin") {
-      // SuperAdmin sees records for marketers whose admins are assigned to them.
       query = "SELECT * FROM stock_updates WHERE marketer_id IN (SELECT id FROM users WHERE admin_id IN (SELECT id FROM users WHERE super_admin_id = (SELECT id FROM users WHERE unique_id = $1)))";
       values.push(uniqueId);
       if (sold !== undefined) {
@@ -189,7 +180,6 @@ const getStockUpdates = async (req, res, next) => {
     query += " ORDER BY pickup_date DESC";
     const result = await pool.query(query, values);
     
-    // Compute countdown for unsold stock records.
     const stockUpdates = result.rows.map(record => {
       let countdown = null;
       if (!record.sold) {
@@ -243,7 +233,6 @@ const getStaleStockUpdates = async (req, res, next) => {
     query += " ORDER BY pickup_date DESC";
     const result = await pool.query(query, values);
 
-    // For each stale record, send a notification to the marketer.
     result.rows.forEach(async (record) => {
       const notifQuery = `
         INSERT INTO notifications (user_id, message, created_at)
