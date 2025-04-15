@@ -575,12 +575,12 @@ const masterApprove = async (req, res, next) => {
     if (!marketerUniqueId) {
       return res.status(400).json({ message: "Marketer Unique ID is required." });
     }
-    
-    // Update the user's status in the database using the correct column name if needed.
+
+    // Update the user's verification status in the database.
+    // Removed the reference to the 'status' column because only overall_verification_status exists.
     const query = `
       UPDATE users
       SET overall_verification_status = 'approved',
-          status = 'active',
           updated_at = NOW()
       WHERE unique_id = $1
       RETURNING *
@@ -589,14 +589,15 @@ const masterApprove = async (req, res, next) => {
     if (result.rowCount === 0) {
       return res.status(404).json({ message: "Marketer not found." });
     }
-    
+
     // Send a socket notification to the marketer.
+    // Ensure sendSocketNotification is correctly imported at the top of this file.
     sendSocketNotification(
       marketerUniqueId,
       "Your account has been approved and your dashboard is now unlocked!",
       req.app
     );
-    
+
     res.status(200).json({
       message: "Marketer final verification approved and dashboard unlocked.",
       user: result.rows[0],
