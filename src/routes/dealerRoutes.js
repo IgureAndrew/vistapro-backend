@@ -1,19 +1,15 @@
-const express = require('express');
+// src/routes/dealerRoutes.js
+const express = require("express");
 const router = express.Router();
-const { verifyToken } = require('../middlewares/authMiddleware');
+const { verifyToken } = require("../middlewares/authMiddleware");
 
-// Assuming you have a PostgreSQL pool instance imported
-const { pool } = require('../config/database');
-
-// GET /api/dealers - Retrieve a list of available dealers.
-router.get('/', verifyToken, async (req, res, next) => {
+router.get("/", verifyToken, async (req, res) => {
   try {
-    // Adjust the query based on your dealers table schema.
-    const query = "SELECT unique_id, business_name, location FROM dealers ORDER BY business_name";
-    const result = await pool.query(query);
-    res.status(200).json({ dealers: result.rows });
+    // Select dealers from the users table where role = 'Dealer'
+    const result = await pool.query("SELECT * FROM users WHERE role = 'Dealer'");
+    res.json({ dealers: result.rows });
   } catch (error) {
-    next(error);
+    res.status(500).json({ message: error.message });
   }
 });
 
