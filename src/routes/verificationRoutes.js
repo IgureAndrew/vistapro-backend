@@ -127,26 +127,25 @@ router.patch(
  */
 
 router.delete(
-  "/biodata",
+  "/biodata/:submissionId",
   verifyToken,
   verifyRole(["MasterAdmin"]),
   deleteBiodataSubmission
 );
 
 router.delete(
-  "/guarantor",
+  "/guarantor/:submissionId",
   verifyToken,
   verifyRole(["MasterAdmin"]),
   deleteGuarantorSubmission
 );
 
 router.delete(
-  "/commitment",
+  "/commitment/:submissionId",
   verifyToken,
   verifyRole(["MasterAdmin"]),
   deleteCommitmentSubmission
 );
-
 /**
  * *********************** GET Endpoints *************************
  */
