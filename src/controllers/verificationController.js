@@ -398,12 +398,11 @@ const submitCommitment = async (req, res, next) => {
 const allowRefillForm = async (req, res, next) => {
   try {
     const { marketerUniqueId, formType, submissionId } = req.body;
-
     if (!marketerUniqueId || !formType) {
       return res.status(400).json({ message: "Marketer Unique ID and form type are required." });
     }
-
-    // Determine table name and flag name based on formType.
+    
+    // Determine table and flag name.
     let tableName, flagName;
     if (formType.toLowerCase() === "biodata") {
       tableName = "marketer_biodata";
@@ -417,8 +416,8 @@ const allowRefillForm = async (req, res, next) => {
     } else {
       return res.status(400).json({ message: "Invalid form type provided." });
     }
-
-    // If a submissionId is supplied, delete that submission record.
+    
+    // Optionally delete the submission record.
     if (submissionId) {
       const deleteQuery = `DELETE FROM ${tableName} WHERE id = $1 RETURNING *`;
       const deleteResult = await pool.query(deleteQuery, [submissionId]);
@@ -426,8 +425,8 @@ const allowRefillForm = async (req, res, next) => {
         return res.status(404).json({ message: "Submission not found." });
       }
     }
-
-    // Reset the specified flag in the users table, and set the overall status to 'pending'
+    
+    // Reset the flag (and mark overall status as pending).
     const updateQuery = `
       UPDATE users
       SET ${flagName} = false,
@@ -440,9 +439,8 @@ const allowRefillForm = async (req, res, next) => {
     if (result.rowCount === 0) {
       return res.status(404).json({ message: "Marketer not found." });
     }
-
-    // Emit a Socket.IO event ("formReset") to notify the marketer.
-    // It is assumed that your Express app has the Socket.IO instance set on it.
+    
+    // Emit a Socket.IO event to notify the marketer.
     const io = req.app.get("socketio");
     if (io) {
       io.to(marketerUniqueId).emit("formReset", {
