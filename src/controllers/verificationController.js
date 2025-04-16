@@ -383,37 +383,42 @@ const submitCommitment = async (req, res, next) => {
   }
 };
 
+
 /**
  * allowRefillForm
  * This endpoint allows a Master Admin to reset a submission flag for a specific form.
  * Optionally, if a submissionId is provided, the corresponding submission record is deleted.
- * It then resets the appropriate flag in the users table.
+ * Then it resets the appropriate flag in the users table.
  *
  * Input (from req.body):
  *   - marketerUniqueId: The unique ID of the marketer.
- *   - formType: A string indicating which form to reset. Accepted values are: "biodata", "guarantor", or "commitment".
+ *   - formType: A string ("biodata", "guarantor", or "commitment").
  *   - submissionId (optional): The ID of the submission record to delete.
  */
 const allowRefillForm = async (req, res, next) => {
   try {
     const { marketerUniqueId, formType, submissionId } = req.body;
+
     if (!marketerUniqueId || !formType) {
       return res.status(400).json({ message: "Marketer Unique ID and form type are required." });
     }
-    
-    // Determine table name based on formType.
-    let tableName;
+
+    // Determine table name and flag name based on formType.
+    let tableName, flagName;
     if (formType.toLowerCase() === "biodata") {
       tableName = "marketer_biodata";
+      flagName = "bio_submitted";
     } else if (formType.toLowerCase() === "guarantor") {
       tableName = "guarantor_employment_form";
+      flagName = "guarantor_submitted";
     } else if (formType.toLowerCase() === "commitment") {
       tableName = "direct_sales_commitment_form";
+      flagName = "commitment_submitted";
     } else {
       return res.status(400).json({ message: "Invalid form type provided." });
     }
-    
-    // If submissionId is provided, delete that specific submission record.
+
+    // If a submissionId is supplied, delete that submission record.
     if (submissionId) {
       const deleteQuery = `DELETE FROM ${tableName} WHERE id = $1 RETURNING *`;
       const deleteResult = await pool.query(deleteQuery, [submissionId]);
@@ -421,31 +426,23 @@ const allowRefillForm = async (req, res, next) => {
         return res.status(404).json({ message: "Submission not found." });
       }
     }
-    
-    // Determine which flag to reset.
-    let updateField;
-    if (formType.toLowerCase() === "biodata") {
-      updateField = "bio_submitted";
-    } else if (formType.toLowerCase() === "guarantor") {
-      updateField = "guarantor_submitted";
-    } else if (formType.toLowerCase() === "commitment") {
-      updateField = "commitment_submitted";
-    }
-    
+
+    // Reset the specified flag in the users table, and set the overall status to 'pending'
     const updateQuery = `
       UPDATE users
-      SET ${updateField} = false,
+      SET ${flagName} = false,
+          overall_verification_status = 'pending',
           updated_at = NOW()
       WHERE unique_id = $1
       RETURNING *
     `;
-    const values = [marketerUniqueId];
-    const result = await pool.query(updateQuery, values);
+    const result = await pool.query(updateQuery, [marketerUniqueId]);
     if (result.rowCount === 0) {
       return res.status(404).json({ message: "Marketer not found." });
     }
-    
-    // Emit a socket event to notify the marketer.
+
+    // Emit a Socket.IO event ("formReset") to notify the marketer.
+    // It is assumed that your Express app has the Socket.IO instance set on it.
     const io = req.app.get("socketio");
     if (io) {
       io.to(marketerUniqueId).emit("formReset", {
