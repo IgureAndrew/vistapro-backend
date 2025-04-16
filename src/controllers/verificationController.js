@@ -139,15 +139,16 @@ const submitBiodata = async (req, res, next) => {
     
     const result = await pool.query(query, values);
     
-    // Update marketer's submission flag.
-    await pool.query(
-      "UPDATE users SET bio_submitted = true, updated_at = NOW() WHERE unique_id = $1",
+    // Update marketer's submission flag and fetch updated user.
+    const updatedUserResult = await pool.query(
+      "UPDATE users SET bio_submitted = true, updated_at = NOW() WHERE unique_id = $1 RETURNING *",
       [marketerUniqueId]
     );
     
     res.status(201).json({
       message: "Biodata submitted successfully.",
       biodata: result.rows[0],
+      updatedUser: updatedUserResult.rows[0],
     });
   } catch (error) {
     next(error);
@@ -202,6 +203,7 @@ const submitGuarantor = async (req, res, next) => {
       return res.status(400).json({ message: "Marketer Unique ID is missing from token." });
     }
     
+    // Check if the marketer already submitted guarantor.
     const checkQuery = "SELECT guarantor_submitted FROM users WHERE unique_id = $1";
     const checkResult = await pool.query(checkQuery, [marketerUniqueId]);
     if (checkResult.rowCount > 0 && checkResult.rows[0].guarantor_submitted) {
@@ -252,15 +254,16 @@ const submitGuarantor = async (req, res, next) => {
     
     const result = await pool.query(query, values);
     
-    // Update the flag.
-    await pool.query(
-      "UPDATE users SET guarantor_submitted = true, updated_at = NOW() WHERE unique_id = $1",
+    // Update the guarantor flag and fetch updated user record.
+    const updatedUserResult = await pool.query(
+      "UPDATE users SET guarantor_submitted = true, updated_at = NOW() WHERE unique_id = $1 RETURNING *",
       [marketerUniqueId]
     );
     
     res.status(201).json({
       message: "Guarantor form submitted successfully.",
-      guarantor: result.rows[0]
+      guarantor: result.rows[0],
+      updatedUser: updatedUserResult.rows[0],
     });
   } catch (error) {
     next(error);
@@ -355,12 +358,13 @@ const submitCommitment = async (req, res, next) => {
     
     const result = await pool.query(query, values);
     
-    await pool.query(
-      "UPDATE users SET commitment_submitted = true, updated_at = NOW() WHERE unique_id = $1",
+    // Update the commitment flag and fetch updated user record.
+    const updatedUserResult = await pool.query(
+      "UPDATE users SET commitment_submitted = true, updated_at = NOW() WHERE unique_id = $1 RETURNING *",
       [marketerUniqueId]
     );
     
-    // Check if all three forms are submitted and send a final notification.
+    // Check if all three forms have been submitted.
     const statusQuery = "SELECT bio_submitted, guarantor_submitted, commitment_submitted FROM users WHERE unique_id = $1";
     const statusResult = await pool.query(statusQuery, [marketerUniqueId]);
     const { bio_submitted, guarantor_submitted, commitment_submitted } = statusResult.rows[0];
@@ -375,14 +379,13 @@ const submitCommitment = async (req, res, next) => {
     
     return res.status(201).json({
       message: "Commitment form submitted successfully. All forms have been submitted and your submission is under review.",
-      submissionComplete: true,
-      commitment: statusResult.rows[0],
+      commitment: result.rows[0],
+      updatedUser: updatedUserResult.rows[0],
     });
   } catch (error) {
     next(error);
   }
 };
-
 
 /**
  * allowRefillForm
