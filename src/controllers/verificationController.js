@@ -2,7 +2,7 @@
 
 const { pool } = require("../config/database");
 const uploadToCloudinary = require("../utils/uploadToCloudinary"); // Helper to upload file buffers to Cloudinary
-const  sendSocketNotification  = require("../utils/sendSocketNotification");
+const sendSocketNotification = require("../utils/sendSocketNotification");
 
 /**
  * submitBiodata
@@ -39,11 +39,9 @@ const submitBiodata = async (req, res, next) => {
       account_number,
     } = req.body;
     
-    // Initialize file URLs.
     let passportPhotoUrl = null;
     let identificationFileUrl = null;
     
-    // Upload passport photo if provided.
     if (req.files && req.files["passport_photo"] && req.files["passport_photo"][0].buffer) {
       const uploadResult = await uploadToCloudinary(
         req.files["passport_photo"][0].buffer,
@@ -52,7 +50,6 @@ const submitBiodata = async (req, res, next) => {
       passportPhotoUrl = uploadResult.secure_url;
     }
     
-    // Upload identification file if provided.
     if (req.files && req.files["id_document"] && req.files["id_document"][0].buffer) {
       const uploadResult = await uploadToCloudinary(
         req.files["id_document"][0].buffer,
@@ -376,20 +373,11 @@ const submitCommitment = async (req, res, next) => {
       );
     }
     
-      
-      // You can also include a flag in the response to tell the frontend to redirect.
-      return res.status(201).json({
-        message: "Commitment form submitted successfully. All forms have been submitted and your submission is under review.",
-        submissionComplete: true,
-        commitment: statusResult.rows[0],
-      });
-    
-      // Return the normal response if not all forms are complete.
-    res.status(201).json({
-      message: "Commitment form submitted successfully.",
-      commitment: result.rows[0],
+    return res.status(201).json({
+      message: "Commitment form submitted successfully. All forms have been submitted and your submission is under review.",
+      submissionComplete: true,
+      commitment: statusResult.rows[0],
     });
-
   } catch (error) {
     next(error);
   }
@@ -403,18 +391,17 @@ const submitCommitment = async (req, res, next) => {
  *
  * Input (from req.body):
  *   - marketerUniqueId: The unique ID of the marketer.
- *   - formType: A string indicating which form to reset. Accepted values are:
- *       "biodata", "guarantor", or "commitment".
+ *   - formType: A string indicating which form to reset. Accepted values are: "biodata", "guarantor", or "commitment".
  *   - submissionId (optional): The ID of the submission record to delete.
  */
 const allowRefillForm = async (req, res, next) => {
   try {
     const { marketerUniqueId, formType, submissionId } = req.body;
-
     if (!marketerUniqueId || !formType) {
       return res.status(400).json({ message: "Marketer Unique ID and form type are required." });
     }
     
+    // Determine table name based on formType.
     let tableName;
     if (formType.toLowerCase() === "biodata") {
       tableName = "marketer_biodata";
@@ -426,6 +413,7 @@ const allowRefillForm = async (req, res, next) => {
       return res.status(400).json({ message: "Invalid form type provided." });
     }
     
+    // If submissionId is provided, delete that specific submission record.
     if (submissionId) {
       const deleteQuery = `DELETE FROM ${tableName} WHERE id = $1 RETURNING *`;
       const deleteResult = await pool.query(deleteQuery, [submissionId]);
@@ -434,6 +422,7 @@ const allowRefillForm = async (req, res, next) => {
       }
     }
     
+    // Determine which flag to reset.
     let updateField;
     if (formType.toLowerCase() === "biodata") {
       updateField = "bio_submitted";
@@ -457,7 +446,6 @@ const allowRefillForm = async (req, res, next) => {
     }
     
     // Emit a socket event to notify the marketer.
-    // The Socket.IO instance should be stored on the Express app.
     const io = req.app.get("socketio");
     if (io) {
       io.to(marketerUniqueId).emit("formReset", {
@@ -474,7 +462,6 @@ const allowRefillForm = async (req, res, next) => {
     next(error);
   }
 };
-
 
 /**
  * adminReview
@@ -553,7 +540,6 @@ const superadminVerify = async (req, res, next) => {
     }
     
     const overallStatus = (verified && verified.toLowerCase() === "yes") ? "superadmin verified" : "superadmin rejected";
-    
     const queryUpdate = `
       UPDATE users
       SET overall_verification_status = $1,
@@ -578,22 +564,17 @@ const superadminVerify = async (req, res, next) => {
  * masterApprove
  * Allows the Master Admin to give final approval to a marketer.
  * Expects { marketerUniqueId } in req.body.
- * Updates overall_verification_status to "approved" and status to "active".
+ * Updates overall_verification_status to "approved".
  */
 const masterApprove = async (req, res, next) => {
   try {
-    // Ensure only a Master Admin can perform this final approval.
     if (req.user.role !== "MasterAdmin") {
       return res.status(403).json({ message: "Only a Master Admin can approve submissions." });
     }
-
     const { marketerUniqueId } = req.body;
     if (!marketerUniqueId) {
       return res.status(400).json({ message: "Marketer Unique ID is required." });
     }
-
-    // Update the user's verification status in the database.
-    // Removed the reference to the 'status' column because only overall_verification_status exists.
     const query = `
       UPDATE users
       SET overall_verification_status = 'approved',
@@ -605,15 +586,11 @@ const masterApprove = async (req, res, next) => {
     if (result.rowCount === 0) {
       return res.status(404).json({ message: "Marketer not found." });
     }
-
-    // Send a socket notification to the marketer.
-    // Ensure sendSocketNotification is correctly imported at the top of this file.
     sendSocketNotification(
       marketerUniqueId,
       "Your account has been approved and your dashboard is now unlocked!",
       req.app
     );
-
     res.status(200).json({
       message: "Marketer final verification approved and dashboard unlocked.",
       user: result.rows[0],
@@ -622,9 +599,10 @@ const masterApprove = async (req, res, next) => {
     next(error);
   }
 };
+
 /**
  * deleteBiodataSubmission
- * Deletes a biodata record from the marketer_biodata table based on the marketer's unique ID.
+ * Deletes a biodata record from the marketer_biodata table based on the submission ID.
  * Only a Master Admin can delete the submission.
  */
 const deleteBiodataSubmission = async (req, res, next) => {
@@ -632,8 +610,6 @@ const deleteBiodataSubmission = async (req, res, next) => {
     if (req.user.role !== "MasterAdmin") {
       return res.status(403).json({ message: "Only a Master Admin can delete submissions." });
     }
-    
-    // We now expect submissionId (the primary key of the row) to be passed as a URL parameter.
     const { submissionId } = req.params;
     if (!submissionId) {
       return res.status(400).json({ message: "Submission ID is required." });
@@ -654,23 +630,20 @@ const deleteBiodataSubmission = async (req, res, next) => {
 
 /**
  * deleteGuarantorSubmission
- * Deletes a guarantor submission from the guarantor_employment_form table based on the marketer's unique ID.
+ * Deletes a guarantor submission from the guarantor_employment_form table based on the submission ID.
  * Only a Master Admin can delete the submission.
  */
-// deleteGuarantorSubmission by submission ID
 const deleteGuarantorSubmission = async (req, res, next) => {
   try {
     if (req.user.role !== "MasterAdmin") {
       return res.status(403).json({ message: "Only a Master Admin can delete submissions." });
     }
-    const { submissionId } = req.params;  // or req.body
+    const { submissionId } = req.params;
     if (!submissionId) {
       return res.status(400).json({ message: "Submission ID is required." });
     }
-
     const query = "DELETE FROM guarantor_employment_form WHERE id = $1 RETURNING *";
     const result = await pool.query(query, [submissionId]);
-
     if (result.rowCount === 0) {
       return res.status(404).json({ message: "Guarantor submission not found." });
     }
@@ -685,11 +658,6 @@ const deleteGuarantorSubmission = async (req, res, next) => {
 
 /**
  * deleteCommitmentSubmission
- * Deletes a commitment submission from the direct_sales_commitment_form table based on the marketer's unique ID.
- * Only a Master Admin can delete the submission.
- */
-/**
- * deleteCommitmentSubmission
  * Deletes a commitment submission from the direct_sales_commitment_form table based on the submission ID.
  * Only a Master Admin can delete the submission.
  */
@@ -698,19 +666,15 @@ const deleteCommitmentSubmission = async (req, res, next) => {
     if (req.user.role !== "MasterAdmin") {
       return res.status(403).json({ message: "Only a Master Admin can delete submissions." });
     }
-    
-    // Using submissionId from URL parameters
     const { submissionId } = req.params;
     if (!submissionId) {
       return res.status(400).json({ message: "Submission ID is required." });
     }
-    
     const query = "DELETE FROM direct_sales_commitment_form WHERE id = $1 RETURNING *";
     const result = await pool.query(query, [submissionId]);
     if (result.rowCount === 0) {
       return res.status(404).json({ message: "Commitment submission not found." });
     }
-    
     res.status(200).json({
       message: "Commitment submission deleted successfully.",
       submission: result.rows[0],
@@ -720,16 +684,13 @@ const deleteCommitmentSubmission = async (req, res, next) => {
   }
 };
 
-
 /**
  * getAllSubmissionsForMasterAdmin
- * Retrieves all submissions (biodata, guarantor, and commitment) with
- * marketer's name and location included, by joining the submissions table
- * with the users table using the marketer's unique ID.
+ * Retrieves all submissions (biodata, guarantor, and commitment) with marketer's name and location
+ * included, by joining with the users table using the marketer's unique ID.
  */
 const getAllSubmissionsForMasterAdmin = async (req, res, next) => {
   try {
-    // Fetch biodata submissions with marketer details via a join.
     const biodataQuery = `
       SELECT
         s.*,
@@ -741,7 +702,6 @@ const getAllSubmissionsForMasterAdmin = async (req, res, next) => {
     `;
     const biodataResult = await pool.query(biodataQuery);
 
-    // Fetch guarantor submissions with marketer details via a join.
     const guarantorQuery = `
       SELECT
         s.*,
@@ -753,7 +713,6 @@ const getAllSubmissionsForMasterAdmin = async (req, res, next) => {
     `;
     const guarantorResult = await pool.query(guarantorQuery);
 
-    // Fetch commitment submissions with marketer details via a join.
     const commitmentQuery = `
       SELECT
         s.*,
@@ -777,16 +736,13 @@ const getAllSubmissionsForMasterAdmin = async (req, res, next) => {
   }
 };
 
-
 /**
  * getSubmissionsForAdmin
- * Retrieves all submissions (biodata, guarantor, and commitment) for marketers assigned to the logged-in Admin.
- * Assumes that the marketers' records in the "users" table have an "admin_id" field that matches the logged-in Admin's id.
+ * Retrieves all submissions for marketers assigned to the logged-in Admin.
  */
 const getSubmissionsForAdmin = async (req, res, next) => {
   try {
-    const adminId = req.user.id; // Logged-in Admin's internal id
-    // Biodata submissions.
+    const adminId = req.user.id; // Logged-in Admin's numeric ID
     const biodataQuery = `
       SELECT mb.*
       FROM marketer_biodata mb
@@ -796,7 +752,6 @@ const getSubmissionsForAdmin = async (req, res, next) => {
     `;
     const biodataResult = await pool.query(biodataQuery, [adminId]);
 
-    // Guarantor submissions.
     const guarantorQuery = `
       SELECT ge.*
       FROM guarantor_employment_form ge
@@ -806,7 +761,6 @@ const getSubmissionsForAdmin = async (req, res, next) => {
     `;
     const guarantorResult = await pool.query(guarantorQuery, [adminId]);
 
-    // Commitment submissions.
     const commitmentQuery = `
       SELECT dc.*
       FROM direct_sales_commitment_form dc
@@ -828,14 +782,12 @@ const getSubmissionsForAdmin = async (req, res, next) => {
 
 /**
  * getSubmissionsForSuperAdmin
- * Retrieves all submissions (biodata, guarantor, and commitment) for marketers whose assigned admin is under the logged-in SuperAdmin.
- * Assumes that in the "users" table, an admin's record contains "super_admin_id" and that the marketer's "admin_id" links to that admin.
+ * Retrieves all submissions for marketers whose assigned admin is under the logged-in SuperAdmin.
  */
 const getSubmissionsForSuperAdmin = async (req, res, next) => {
   try {
-    const superadminId = req.user.id; // Logged-in SuperAdmin's internal id
+    const superadminId = req.user.id; // Logged-in SuperAdmin's numeric ID
 
-    // Biodata submissions.
     const biodataQuery = `
       SELECT mb.*
       FROM marketer_biodata mb
@@ -846,7 +798,6 @@ const getSubmissionsForSuperAdmin = async (req, res, next) => {
     `;
     const biodataResult = await pool.query(biodataQuery, [superadminId]);
 
-    // Guarantor submissions.
     const guarantorQuery = `
       SELECT ge.*
       FROM guarantor_employment_form ge
@@ -857,7 +808,6 @@ const getSubmissionsForSuperAdmin = async (req, res, next) => {
     `;
     const guarantorResult = await pool.query(guarantorQuery, [superadminId]);
 
-    // Commitment submissions.
     const commitmentQuery = `
       SELECT dc.*
       FROM direct_sales_commitment_form dc
@@ -896,5 +846,4 @@ module.exports = {
   getAllSubmissionsForMasterAdmin,
   getSubmissionsForAdmin,
   getSubmissionsForSuperAdmin,
-
 };

@@ -12,7 +12,7 @@ const { verifyToken } = require("../middlewares/authMiddleware");
 const { verifyRole } = require("../middlewares/roleMiddleware");
 
 // Import controller functions from VerificationController.
-// Removed updateBiodata and getBiodataSubmissionById from the import.
+// (Note: update your controller functions to use submissionId for deletion where needed.)
 const {
   submitBiodata,
   submitGuarantor,
@@ -84,8 +84,8 @@ router.post(
  */
 
 // PATCH /api/verification/allow-refill
-// Allow Refill: Allows a Master Admin to reset a submission flag (biodata, guarantor, or commitment)
-// so that a marketer can re-submit a form.
+// Allow Refill: Resets a specific submission flag (and optionally deletes a submission record)
+// so that a marketer can re-submit the specific form.
 router.patch(
   "/allow-refill",
   verifyToken,
@@ -113,8 +113,7 @@ router.patch(
 );
 
 // PATCH /api/verification/master-approve
-// Master Admin Final Approval: Allows the Master Admin to give final approval (activating the marketer's account)
-// and unlock their dashboard.
+// Master Admin Final Approval: Gives final approval to a marketer (unlocking their dashboard).
 router.patch(
   "/master-approve",
   verifyToken,
@@ -126,6 +125,8 @@ router.patch(
  * *********************** Deletion Endpoints (Master Admin Only) *************************
  */
 
+// DELETE /api/verification/biodata/:submissionId
+// Deletes a specific biodata submission record using its submissionId.
 router.delete(
   "/biodata/:submissionId",
   verifyToken,
@@ -133,6 +134,8 @@ router.delete(
   deleteBiodataSubmission
 );
 
+// DELETE /api/verification/guarantor/:submissionId
+// Deletes a specific guarantor submission record using its submissionId.
 router.delete(
   "/guarantor/:submissionId",
   verifyToken,
@@ -140,12 +143,15 @@ router.delete(
   deleteGuarantorSubmission
 );
 
+// DELETE /api/verification/commitment/:submissionId
+// Deletes a specific commitment submission record using its submissionId.
 router.delete(
   "/commitment/:submissionId",
   verifyToken,
   verifyRole(["MasterAdmin"]),
   deleteCommitmentSubmission
 );
+
 /**
  * *********************** GET Endpoints *************************
  */
@@ -160,7 +166,7 @@ router.get(
 );
 
 // GET /api/verification/submissions/admin
-// Returns submissions (biodata, guarantor, commitment) for marketers assigned to the logged-in Admin.
+// Returns submissions for marketers assigned to the logged-in Admin.
 router.get(
   "/submissions/admin",
   verifyToken,
@@ -169,7 +175,7 @@ router.get(
 );
 
 // GET /api/verification/submissions/superadmin
-// Returns submissions (biodata, guarantor, commitment) for marketers whose assigned admin is under the logged-in SuperAdmin.
+// Returns submissions for marketers whose assigned admin is under the logged-in SuperAdmin.
 router.get(
   "/submissions/superadmin",
   verifyToken,
