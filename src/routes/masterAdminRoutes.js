@@ -28,7 +28,8 @@ const {
   unassignAdminsFromSuperadmin,
   listMarketersByAdmin,
   getAllAssignments,
-  listAdminsBySuperAdmin
+  listAdminsBySuperAdmin,
+  getAllDealers
 } = require('../controllers/masterAdminController');
 
 // Define the uploads directory and ensure it exists.
@@ -156,6 +157,13 @@ router.patch(
   verifyToken,
   verifyRole(['MasterAdmin']),
   updateUser
+);
+
+router.get(
+  '/dealers',
+  verifyToken,
+  verifyRole(['Marketer', 'Admin', 'MasterAdmin']),
+  getAllDealers
 );
 
 // Error handling middleware.

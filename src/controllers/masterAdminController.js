@@ -812,7 +812,30 @@ const getAllAssignments = async (req, res, next) => {
   }
 };
 
+/**
+ * getAllDealers
+ * Returns a list of all dealers from the users table (role = 'Dealer').
+ */
+const getAllDealers = async (req, res, next) => {
+  try {
+    // Optionally, you can require MasterAdmin or Admin or Marketer to be allowed.
+    // Typically, to get the dealers for a marketer, you just need to confirm that
+    // the request is authenticated (a valid token).
+    // So you might do just "verifyToken" or "verifyRole(['Marketer','Admin','MasterAdmin'])"
+    // depending on your access requirements.
 
+    const query = `
+      SELECT unique_id, first_name, last_name, business_name, location, email
+      FROM users
+      WHERE role = 'Dealer'
+      ORDER BY first_name, last_name
+    `;
+    const result = await pool.query(query);
+    res.status(200).json({ dealers: result.rows });
+  } catch (error) {
+    next(error);
+  }
+};
 
 /**
  * getDashboardSummary - Provides a summary of the activities on the dashboard overview.
@@ -864,5 +887,6 @@ module.exports = {
   unassignAdminsFromSuperadmin,
   listMarketersByAdmin,
   getAllAssignments,
-  listAdminsBySuperAdmin
+  listAdminsBySuperAdmin,
+  getAllDealers,
 };
