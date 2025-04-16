@@ -813,6 +813,7 @@ const getAllAssignments = async (req, res, next) => {
 };
 
 
+
 /**
  * getDashboardSummary - Provides a summary of the activities on the dashboard overview.
  */

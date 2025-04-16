@@ -129,7 +129,7 @@ router.post('/unassign-admins-from-superadmin', verifyToken, verifyRole(['Master
 router.get(
   "/marketers/:adminUniqueId",
   verifyToken,
-  verifyRole(["MasterAdmin"]),
+  verifyRole(["Admin", "MasterAdmin"]),
   listMarketersByAdmin
 );
 
