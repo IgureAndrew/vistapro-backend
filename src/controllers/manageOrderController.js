@@ -42,94 +42,90 @@ const getOrders = async (req, res, next) => {
  * updates wallet balances, and records wallet transactions.
  */
 const confirmOrder = async (req, res, next) => {
-  const client = await pool.connect();
   try {
     const { orderId } = req.body;
     if (!orderId) {
       return res.status(400).json({ message: "Order ID is required." });
     }
 
-    // 1) Fetch order + marketer info
-    const { rows: [order] } = await client.query(
-      `SELECT o.*, u.unique_id AS marketer_unique_id
-         FROM orders o
-         JOIN users u ON o.marketer_id = u.id
-        WHERE o.id = $1`,
-      [orderId]
-    );
-    if (!order) {
+    // 1) Fetch the order
+    const orderRes = await pool.query("SELECT * FROM orders WHERE id = $1", [orderId]);
+    if (orderRes.rowCount === 0) {
       return res.status(404).json({ message: "Order not found." });
     }
+    const order = orderRes.rows[0];
+
+    // 2) Prevent double‑confirmation
     if (order.status === "confirmed") {
       return res.status(400).json({ message: "Order is already confirmed." });
     }
 
-    // 2) Determine per‑device commission
-    let commission;
-    const dt = order.device_type.toLowerCase();
-    if (dt === "android") commission = 10000;
-    else if (dt === "iphone") commission = 15000;
-    else return res.status(400).json({ message: "Invalid device type." });
+    // 3) Determine per‑device rate
+    const deviceType = order.device_type.toLowerCase();
+    let rate;
+    if (deviceType === "android") {
+      rate = 10000;
+    } else if (deviceType === "iphone") {
+      rate = 15000;
+    } else {
+      return res.status(400).json({ message: "Invalid device type." });
+    }
 
-    // 3) Split 40% / 60%
-    const withdrawable = Math.round(commission * 0.4);
-    const withheld    = commission - withdrawable; // ensures sum = commission
+    // 4) Compute total commission and split
+    const qty            = Number(order.number_of_devices) || 1;
+    const totalCommission= rate * qty;
+    const withdrawable   = Math.floor(totalCommission * 0.4);
+    // withhold = totalCommission - withdrawable
 
-    // Begin transaction
-    await client.query("BEGIN");
+    // 5) Update the order record
+    const updatedOrderRes = await pool.query(`
+      UPDATE orders
+      SET status             = 'confirmed',
+          earnings_per_device= $1,
+          confirmed_at       = NOW(),
+          updated_at         = NOW()
+      WHERE id = $2
+      RETURNING *
+    `, [rate, orderId]);
 
-    // 4) Mark order confirmed + store per‑device commission
-    const { rows: [updatedOrder] } = await client.query(
-      `UPDATE orders
-          SET status               = 'confirmed',
-              earnings_per_device  = $1,
-              confirmed_at         = NOW(),
-              updated_at           = NOW()
-        WHERE id = $2
-        RETURNING *`,
-      [commission, orderId]
-    );
+    // 6) Credit the marketer’s wallet
+    await pool.query(`
+      UPDATE wallets
+      SET balance      = balance + $1,
+          withdrawable = withdrawable + $2,
+          updated_at   = NOW()
+      WHERE user_unique_id = $3
+    `, [totalCommission, withdrawable, order.marketer_unique_id]);
 
-    // 5) Update marketer's wallet balances
-    await client.query(
-      `UPDATE wallets
-          SET available_balance = available_balance + $1,
-              withheld_balance  = withheld_balance  + $2,
-              updated_at        = NOW()
-        WHERE user_unique_id = $3`,
-      [withdrawable, withheld, order.marketer_unique_id]
-    );
-
-    // 6) Record two wallet_transactions entries
+    // 7) Record two wallet transactions
     const meta = JSON.stringify({
       order_unique_id: order.unique_id,
-      device_type: order.device_type
+      device_type: order.device_type,
+      quantity: qty
     });
-    await client.query(
-      `INSERT INTO wallet_transactions
-         (user_unique_id, amount, transaction_type, meta)
-       VALUES
-         ($1, $2, 'commission', $3),
-         ($1, $4, 'withheld',   $3)`,
-      [
-        order.marketer_unique_id,
-        withdrawable,
-        meta,
-        withheld
-      ]
-    );
 
-    await client.query("COMMIT");
+    await pool.query(`
+      INSERT INTO wallet_transactions
+        (user_unique_id, amount, transaction_type, meta)
+      VALUES
+        ($1, $2, 'commission', $3::jsonb),
+        ($1, $4, 'withheld',   $3::jsonb)
+    `, [
+      order.marketer_unique_id,
+      totalCommission,
+      meta,
+      // note: for "withheld" we insert the negative of the withdrawable or positive?
+      // if you want 'withheld' to show positively in history, insert (totalCommission - withdrawable)
+      totalCommission - withdrawable
+    ]);
 
     return res.status(200).json({
-      message: "Order confirmed and wallet updated successfully.",
-      order: updatedOrder
+      message: "Order confirmed and wallet credited.",
+      order: updatedOrderRes.rows[0],
     });
+
   } catch (err) {
-    await client.query("ROLLBACK");
     next(err);
-  } finally {
-    client.release();
   }
 };
 
