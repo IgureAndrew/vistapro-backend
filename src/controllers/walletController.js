@@ -36,36 +36,39 @@ async function creditCommission(req, res, next) {
 }
 
 /**
- * Marketer requests a withdrawal (up to their withdrawable balance).
+ * Marketer requests a withdrawal (up to available_balance).
  */
 async function requestWithdrawal(req, res, next) {
   try {
     const userUniqueId = req.user.unique_id;
     const { amount } = req.body;
 
-    // 1) Check withdrawable balance
+    // 1️⃣ Check available_balance
     const { rows } = await pool.query(`
-      SELECT withdrawable
-      FROM wallets
-      WHERE user_unique_id = $1
+      SELECT available_balance
+        FROM wallets
+       WHERE user_unique_id = $1
     `, [userUniqueId]);
 
-    if (!rows.length || rows[0].withdrawable < amount) {
-      return res.status(400).json({ message: 'Insufficient withdrawable balance.' });
+    if (!rows.length || rows[0].available_balance < amount) {
+      return res.status(400).json({ message: 'Insufficient available balance.' });
     }
 
-    // 2) Deduct from withdrawable
+    // 2️⃣ Deduct from available_balance & total_balance
     await pool.query(`
       UPDATE wallets
-      SET withdrawable = withdrawable - $1,
-          updated_at   = NOW()
-      WHERE user_unique_id = $2
+         SET available_balance = available_balance - $1,
+             total_balance     = total_balance     - $1,
+             updated_at        = NOW()
+       WHERE user_unique_id = $2
     `, [amount, userUniqueId]);
 
-    // 3) Create withdrawal request
+    // 3️⃣ Create the withdrawal request
     const result = await pool.query(`
-      INSERT INTO withdrawal_requests (user_unique_id, amount)
-      VALUES ($1, $2)
+      INSERT INTO withdrawal_requests
+        (user_unique_id, amount)
+      VALUES
+        ($1, $2)
       RETURNING *
     `, [userUniqueId, amount]);
 
@@ -94,7 +97,7 @@ async function listWithdrawalRequests(req, res, next) {
 }
 
 /**
- * MasterAdmin: approve or reject a withdrawal request.
+ * MasterAdmin: approve or reject a withdrawal.
  */
 async function reviewWithdrawalRequest(req, res, next) {
   try {
@@ -102,54 +105,49 @@ async function reviewWithdrawalRequest(req, res, next) {
     const { action } = req.body; // 'approve' or 'reject'
     const adminId = req.user.unique_id;
 
-    // Fetch the pending request
+    // fetch the pending request
     const { rows } = await pool.query(`
       SELECT * FROM withdrawal_requests
-      WHERE id = $1 AND status = 'pending'
+       WHERE id = $1 AND status = 'pending'
     `, [reqId]);
     if (!rows.length) return res.status(404).json({ message: 'Not found or already reviewed.' });
-
-    const reqRow = rows[0];
+    const wr = rows[0];
 
     if (action === 'approve') {
-      // a) Debit wallet balance
+      // a) wallet already debited from available_balance, leave total_balance alone
+      // b) log wallet_transaction of type 'withdraw_approved'
       await pool.query(`
-        UPDATE wallets
-        SET balance    = balance - $1,
-            updated_at = NOW()
-        WHERE user_unique_id = $2
-      `, [reqRow.amount, reqRow.user_unique_id]);
+        INSERT INTO wallet_transactions
+          (user_unique_id, amount, transaction_type)
+        VALUES
+          ($1, -$2, 'withdraw_approved')
+      `, [wr.user_unique_id, wr.amount]);
 
-      // b) Log transaction
-      await pool.query(`
-        INSERT INTO wallet_transactions (user_unique_id, amount, type)
-        VALUES ($1, -$2, 'withdraw_approved')
-      `, [reqRow.user_unique_id, reqRow.amount]);
-
-      // c) Mark request approved
+      // c) mark request approved
       await pool.query(`
         UPDATE withdrawal_requests
-        SET status      = 'approved',
-            reviewed_at = NOW(),
-            reviewed_by = $1
-        WHERE id = $2
+           SET status      = 'approved',
+               reviewed_by = $1,
+               reviewed_at = NOW()
+         WHERE id = $2
       `, [adminId, reqId]);
 
     } else {
-      // Rejected: refund withdrawable
+      // Rejected: refund available_balance & total_balance
       await pool.query(`
         UPDATE wallets
-        SET withdrawable = withdrawable + $1,
-            updated_at   = NOW()
-        WHERE user_unique_id = $2
-      `, [reqRow.amount, reqRow.user_unique_id]);
+           SET available_balance = available_balance + $1,
+               total_balance     = total_balance     + $1,
+               updated_at        = NOW()
+         WHERE user_unique_id = $2
+      `, [wr.amount, wr.user_unique_id]);
 
       await pool.query(`
         UPDATE withdrawal_requests
-        SET status      = 'rejected',
-            reviewed_at = NOW(),
-            reviewed_by = $1
-        WHERE id = $2
+           SET status      = 'rejected',
+               reviewed_by = $1,
+               reviewed_at = NOW()
+         WHERE id = $2
       `, [adminId, reqId]);
     }
 
@@ -160,35 +158,25 @@ async function reviewWithdrawalRequest(req, res, next) {
 }
 
 /**
- * Marketer: get their wallet summary + recent transactions.
+ * Marketer: get wallet summary + recent txs.
  */
 async function getMyWallet(req, res, next) {
   try {
-    const userUniqueId = req.user.unique_id;
-
-    // fetch wallet
-    const { rows: walletRows } = await pool.query(`
-      SELECT *
-      FROM wallets
-      WHERE user_unique_id = $1
-    `, [userUniqueId]);
-    const wallet = walletRows[0] || null;
-
-    // fetch recent txns
+    const uid = req.user.unique_id;
+    const { rows: [wallet] } = await pool.query(`
+      SELECT * FROM wallets WHERE user_unique_id = $1
+    `, [uid]);
     const { rows: txs } = await pool.query(`
-      SELECT *
-      FROM wallet_transactions
-      WHERE user_unique_id = $1
-      ORDER BY created_at DESC
-      LIMIT 50
-    `, [userUniqueId]);
-
+      SELECT * FROM wallet_transactions
+       WHERE user_unique_id = $1
+       ORDER BY created_at DESC
+       LIMIT 50
+    `, [uid]);
     res.json({ wallet, transactions: txs });
   } catch (err) {
     next(err);
   }
 }
-
 module.exports = {
   creditCommission,
   requestWithdrawal,

@@ -1,54 +1,43 @@
-// src/routes/walletRoutes.js
 const express = require('express');
-const router = express.Router();
-
-// split your middlewares
-const { verifyToken } = require('../middlewares/authMiddleware');
-const { verifyRole }  = require('../middlewares/roleMiddleware');
-
+const router  = express.Router();
+const { verifyToken, verifyRole } = require('../middlewares/authMiddleware');
 const {
-  creditCommission,
   requestWithdrawal,
   listWithdrawalRequests,
   reviewWithdrawalRequest,
-  getMyWallet
+  getMyWallet,
+  creditCommission
 } = require('../controllers/walletController');
 
-// Marketer: view your wallet & recent txns
+// Marketer
 router.get(
-  '/wallet',                       // GET /wallet
+  '/wallets',
   verifyToken,
   verifyRole(['Marketer']),
   getMyWallet
 );
-
-// Marketer: request a withdrawal
 router.post(
-  '/wallet/withdrawals',           // POST /wallet/withdrawals
+  '/wallets/withdraw',
   verifyToken,
   verifyRole(['Marketer']),
   requestWithdrawal
 );
 
-// MasterAdmin: list all pending withdrawal requests
+// MasterAdmin
 router.get(
-  '/wallet/withdrawals',           // GET /wallet/withdrawals
+  '/master-admin/wallets/withdrawals',
   verifyToken,
   verifyRole(['MasterAdmin']),
   listWithdrawalRequests
 );
-
-// MasterAdmin: approve or reject a withdrawal request
 router.patch(
-  '/wallet/withdrawals/:reqId',    // PATCH /wallet/withdrawals/:reqId
+  '/master-admin/wallets/withdrawals/:reqId',
   verifyToken,
   verifyRole(['MasterAdmin']),
   reviewWithdrawalRequest
 );
-
-// MasterAdmin: credit a marketer’s commission
 router.post(
-  '/wallet/commission',            // POST /wallet/commission
+  '/master-admin/wallets/credit',
   verifyToken,
   verifyRole(['MasterAdmin']),
   creditCommission
