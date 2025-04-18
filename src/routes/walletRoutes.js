@@ -1,3 +1,4 @@
+// src/routes/walletRoutes.js
 const express = require('express');
 const router  = express.Router();
 const { verifyToken, verifyRole } = require('../middlewares/authMiddleware');
@@ -6,42 +7,34 @@ const {
   listWithdrawalRequests,
   reviewWithdrawalRequest,
   getMyWallet,
-  creditCommission,
-  
 } = require('../controllers/walletController');
 
-// Marketer
+// Marketer endpoints (now at /api/wallets/)
 router.get(
-  '/wallets',
+  '/',                              // GET  /api/wallets
   verifyToken,
   verifyRole(['Marketer']),
   getMyWallet
 );
 router.post(
-  '/wallets/withdraw',
+  '/withdraw',                      // POST /api/wallets/withdraw
   verifyToken,
   verifyRole(['Marketer']),
   requestWithdrawal
 );
 
-// MasterAdmin
+// MasterAdmin endpoints (now at /api/wallets/withdrawals)
 router.get(
-  '/master-admin/wallets/withdrawals',
+  '/withdrawals',                   // GET  /api/wallets/withdrawals
   verifyToken,
   verifyRole(['MasterAdmin']),
   listWithdrawalRequests
 );
 router.patch(
-  '/master-admin/wallets/withdrawals/:reqId',
+  '/withdrawals/:reqId',            // PATCH /api/wallets/withdrawals/:reqId
   verifyToken,
   verifyRole(['MasterAdmin']),
   reviewWithdrawalRequest
-);
-router.post(
-  '/master-admin/wallets/credit',
-  verifyToken,
-  verifyRole(['MasterAdmin']),
-  creditCommission
 );
 
 module.exports = router;

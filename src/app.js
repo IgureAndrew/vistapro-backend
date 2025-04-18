@@ -96,7 +96,7 @@ app.use('/api/stock', stockupdateRoutes);
 app.use("/api/banks", bankRoutes);
 app.use("/api/verification", verificationRoutes);
 app.use('/api/notifications', require('./routes/notificationRoutes'));
-app.use('/api', walletRoutes);
+app.use('/api/wallets', walletRoutes);
 
 // Error handling middleware
 const errorHandler = require('./middlewares/errorHandler');
