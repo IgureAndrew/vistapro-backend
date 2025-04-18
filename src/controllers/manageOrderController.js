@@ -6,34 +6,25 @@ const { pool } = require("../config/database");
  * If you want to show *all* orders (not just pending) in your marketer dashboard,
  * remove the `o.status = 'pending'` clause here.
  */
-const getOrders = async (req, res, next) => {
+async function getOrders(req, res, next) {
   try {
-    const values = [];
-    let query = `
-      SELECT
+    // req.user.id should be the internal PK of the marketer
+    const userId = req.user.id;
+    const { rows } = await pool.query(`
+      SELECT 
         o.*,
-        u.unique_id AS marketer_unique_id,
-        (u.first_name || ' ' || u.last_name) AS marketer_name,
-        u.location AS marketer_location
+        u.unique_id AS marketer_unique_id
       FROM orders o
       JOIN users u ON o.marketer_id = u.id
-      WHERE o.status = 'pending'  -- drop this line to show all statuses
-        AND u.role = 'Marketer'
-    `;
+      WHERE o.marketer_id = $1
+      ORDER BY o.created_at DESC
+    `, [userId]);
 
-    if (req.query.orderId) {
-      query += " AND o.id = $1";
-      values.push(req.query.orderId);
-    }
-
-    query += " ORDER BY o.created_at DESC";
-    const { rows } = await pool.query(query, values);
-    res.status(200).json({ orders: rows });
+    return res.json({ orders: rows });
   } catch (err) {
     next(err);
   }
-};
-
+}
 /**
  * confirmOrder - Confirms a pending order, splits the commission 40/60,
  * updates the marketer’s wallet, and logs two wallet transactions.

@@ -6,7 +6,8 @@ const {
   listWithdrawalRequests,
   reviewWithdrawalRequest,
   getMyWallet,
-  creditCommission
+  creditCommission,
+  
 } = require('../controllers/walletController');
 
 // Marketer
