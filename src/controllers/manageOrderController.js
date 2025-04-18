@@ -3,26 +3,23 @@ const { pool } = require("../config/database");
 
 /**
  * getOrders - Retrieves pending orders created by marketers.
- * 
- * By default, it returns all orders with status "pending" for users with the role "Marketer",
- * including the marketer's unique id, full name, and location.
- * If an "orderId" query parameter is provided, it will further filter results to that specific order.
- */
-/**
- * getOrders - Retrieves pending orders created by marketers.
+ * If you want to show *all* orders (not just pending) in your marketer dashboard,
+ * remove the `o.status = 'pending'` clause here.
  */
 const getOrders = async (req, res, next) => {
   try {
+    const values = [];
     let query = `
-      SELECT o.*,
-             u.unique_id AS marketer_unique_id,
-             (u.first_name || ' ' || u.last_name) AS marketer_name,
-             u.location AS marketer_location
+      SELECT
+        o.*,
+        u.unique_id AS marketer_unique_id,
+        (u.first_name || ' ' || u.last_name) AS marketer_name,
+        u.location AS marketer_location
       FROM orders o
       JOIN users u ON o.marketer_id = u.id
-      WHERE o.status = 'pending' AND u.role = 'Marketer'
+      WHERE o.status = 'pending'  -- drop this line to show all statuses
+        AND u.role = 'Marketer'
     `;
-    const values = [];
 
     if (req.query.orderId) {
       query += " AND o.id = $1";
@@ -30,74 +27,104 @@ const getOrders = async (req, res, next) => {
     }
 
     query += " ORDER BY o.created_at DESC";
-    const result = await pool.query(query, values);
-    res.status(200).json({ orders: result.rows });
-  } catch (error) {
-    next(error);
+    const { rows } = await pool.query(query, values);
+    res.status(200).json({ orders: rows });
+  } catch (err) {
+    next(err);
   }
 };
 
 /**
- * confirmOrder - Confirms a pending order, awards commission,
- * updates wallet balances, and records wallet transactions.
+ * confirmOrder - Confirms a pending order, splits the commission 40/60,
+ * updates the marketer’s wallet, and logs two wallet transactions.
  */
 const confirmOrder = async (req, res, next) => {
+  const { orderId } = req.body;
+  if (!orderId) {
+    return res.status(400).json({ message: "Order ID is required." });
+  }
+
   try {
-    const { orderId } = req.body;
-    // …fetch & validate order…
+    // 0️⃣ Fetch & validate the order
+    const orderRes = await pool.query(
+      "SELECT * FROM orders WHERE id = $1",
+      [orderId]
+    );
+    if (orderRes.rowCount === 0) {
+      return res.status(404).json({ message: "Order not found." });
+    }
+    const order = orderRes.rows[0];
+    if (order.status === "confirmed") {
+      return res.status(400).json({ message: "Order is already confirmed." });
+    }
 
-    // 1️⃣ Determine per‐device commission
+    // 1️⃣ Determine per‑device commission
     const type = order.device_type.toLowerCase();
-    const perDevice = type === "android" ? 10000 : type === "iphone" ? 15000
-                      : (() => { throw new Error("Invalid device type"); })();
-    // split 40/60
-    const withdrawable = Math.floor(perDevice * 0.4);
-    const withheld    = perDevice - withdrawable;
+    const perDevice = type === "android"
+      ? 10000
+      : type === "iphone"
+        ? 15000
+        : null;
+    if (perDevice === null) {
+      return res.status(400).json({ message: "Invalid device type." });
+    }
 
-    // 2️⃣ Update order status & record per‑device commission
-    const updatedRes = await pool.query(
-      `UPDATE orders
+    // split 40% withdrawable / 60% withheld
+    const withdrawable = Math.floor(perDevice * 0.4);
+    const withheld     = perDevice - withdrawable;
+
+    // 2️⃣ Update the order: mark confirmed & store per‑device rate
+    const updateOrderRes = await pool.query(
+      `
+      UPDATE orders
          SET status              = 'confirmed',
              earnings_per_device = $1,
              confirmed_at        = NOW(),
              updated_at          = NOW()
        WHERE id = $2
-       RETURNING *`,
+       RETURNING *
+      `,
       [perDevice, orderId]
     );
+    const updatedOrder = updateOrderRes.rows[0];
 
     // 3️⃣ Credit the marketer’s wallet
     await pool.query(
-      `UPDATE wallets
-          SET total_balance     = total_balance     + $1,
-              available_balance = available_balance + $2,
-              withheld_balance  = withheld_balance  + $3,
-              updated_at        = NOW()
-        WHERE user_unique_id = $4`,
-      [ perDevice, withdrawable, withheld,         order.marketer_unique_id ]
+      `
+      UPDATE wallets
+         SET total_balance     = total_balance     + $1,
+             available_balance = available_balance + $2,
+             withheld_balance  = withheld_balance  + $3,
+             updated_at        = NOW()
+       WHERE user_unique_id = $4
+      `,
+      [ perDevice, withdrawable, withheld, order.marketer_unique_id ]
     );
 
-    // 4️⃣ Log two wallet transactions
+    // 4️⃣ Log two wallet transactions: one for withdrawable, one for withheld
+    const meta = JSON.stringify({
+      order_unique_id: order.unique_id,
+      device_type:     order.device_type,
+    });
     await pool.query(
-      `INSERT INTO wallet_transactions
-         (user_unique_id, amount, transaction_type, meta)
-       VALUES
-         ($1, $2, 'commission', $3::jsonb),
-         ($1, $4, 'withheld',   $3::jsonb)`,
+      `
+      INSERT INTO wallet_transactions
+        (user_unique_id, amount, transaction_type, meta)
+      VALUES
+        ($1, $2, 'commission', $3::jsonb),
+        ($1, $4, 'withheld',   $3::jsonb)
+      `,
       [
         order.marketer_unique_id,
         withdrawable,
-        JSON.stringify({
-          order_unique_id: order.unique_id,
-          device_type:     order.device_type,
-        }),
+        meta,
         withheld,
       ]
     );
 
     res.status(200).json({
       message: "Order confirmed and wallet credited.",
-      order: updatedRes.rows[0],
+      order:   updatedOrder,
     });
   } catch (err) {
     next(err);
@@ -105,18 +132,20 @@ const confirmOrder = async (req, res, next) => {
 };
 
 /**
- * confirmOrderToDealer - Allows Master Admin to confirm an order for dealers.
+ * confirmOrderToDealer - Confirms an order on the dealer side.
  */
 const confirmOrderToDealer = async (req, res, next) => {
   try {
     const orderId = req.params.id;
     const { rows } = await pool.query(
-      `UPDATE orders
-          SET status       = 'confirmed_to_dealer',
-              confirmed_at = NOW(),
-              updated_at   = NOW()
-        WHERE id = $1
-        RETURNING *`,
+      `
+      UPDATE orders
+         SET status       = 'confirmed_to_dealer',
+             confirmed_at = NOW(),
+             updated_at   = NOW()
+       WHERE id = $1
+       RETURNING *
+      `,
       [orderId]
     );
     if (rows.length === 0) {
@@ -124,77 +153,63 @@ const confirmOrderToDealer = async (req, res, next) => {
     }
     res.status(200).json({
       message: "Order confirmed to dealer successfully.",
-      order: rows[0]
+      order:   rows[0],
     });
-  } catch (error) {
-    next(error);
+  } catch (err) {
+    next(err);
   }
 };
+
 /**
- * getOrderHistory - Retrieves the order history based on the logged-in user's role.
- * For:
- *  - Master Admin: Returns all orders from marketers.
- *  - SuperAdmin: Returns orders for marketers whose assigned admin's super_admin_id matches the logged-in superadmin.
- *  - Admin: Returns orders for only those marketers assigned to the logged-in admin.
- * The filtering uses the logged in user's unique ID.
+ * getOrderHistory - Returns all orders visible to MasterAdmin, SuperAdmin or Admin.
  */
 const getOrderHistory = async (req, res, next) => {
   try {
-    const userUniqueId = req.user.unique_id;
-    const role = req.user.role; // "MasterAdmin", "SuperAdmin", or "Admin"
-    let query = "";
-    let values = [];
+    const { unique_id: userUniqueId, role } = req.user;
+    let query, values = [];
 
     if (role === "MasterAdmin") {
-      // Master Admin sees all orders from marketers.
       query = `
         SELECT o.*, u.unique_id AS marketer_unique_id
-        FROM orders o
-        JOIN users u ON o.marketer_id = u.id
-        WHERE u.role = 'Marketer'
-        ORDER BY o.created_at DESC
+          FROM orders o
+          JOIN users u ON o.marketer_id = u.id
+         WHERE u.role = 'Marketer'
       `;
     } else if (role === "SuperAdmin") {
-      // SuperAdmin: See orders for marketers whose assigned admin's super_admin_id equals the superadmin's internal id.
       query = `
         SELECT o.*, u.unique_id AS marketer_unique_id, a.unique_id AS admin_unique_id
-        FROM orders o
-        JOIN users u ON o.marketer_id = u.id
-        JOIN users a ON u.admin_id = a.id
-        WHERE a.super_admin_id = (
-          SELECT id FROM users WHERE unique_id = $1
-        )
-        ORDER BY o.created_at DESC
+          FROM orders o
+          JOIN users u ON o.marketer_id = u.id
+          JOIN users a ON u.admin_id = a.id
+         WHERE a.super_admin_id = (
+           SELECT id FROM users WHERE unique_id = $1
+         )
       `;
       values = [userUniqueId];
     } else if (role === "Admin") {
-      // Admin: See only orders for marketers assigned to this admin.
       query = `
         SELECT o.*, u.unique_id AS marketer_unique_id
-        FROM orders o
-        JOIN users u ON o.marketer_id = u.id
-        WHERE u.admin_id = (
-          SELECT id FROM users WHERE unique_id = $1
-        )
-        ORDER BY o.created_at DESC
+          FROM orders o
+          JOIN users u ON o.marketer_id = u.id
+         WHERE u.admin_id = (
+           SELECT id FROM users WHERE unique_id = $1
+         )
       `;
       values = [userUniqueId];
     } else {
-      return res.status(403).json({ message: "You do not have permission to view order history." });
+      return res.status(403).json({ message: "Permission denied." });
     }
 
-    const result = await pool.query(query, values);
-    res.status(200).json({ orders: result.rows });
-  } catch (error) {
-    next(error);
+    query += " ORDER BY o.created_at DESC";
+    const { rows } = await pool.query(query, values);
+    res.status(200).json({ orders: rows });
+  } catch (err) {
+    next(err);
   }
 };
 
 /**
- * updateOrder - Allows only a Master Admin to update any marketer's order details.
- * Expects in req.body:
- *   - orderId: the order ID to update.
- *   - updatedData: an object containing the fields and new values.
+ * updateOrder – MasterAdmin only
  */
 const updateOrder = async (req, res, next) => {
   try {
@@ -203,39 +218,40 @@ const updateOrder = async (req, res, next) => {
     }
     const { orderId, updatedData } = req.body;
     if (!orderId || !updatedData) {
-      return res.status(400).json({ message: "Order ID and updated data are required." });
+      return res.status(400).json({ message: "orderId and updatedData are required." });
     }
 
-    const setClause = [];
-    const values = [];
-    let i = 1;
+    const setClauses = [];
+    const values     = [];
+    let   i          = 1;
+
     for (const key in updatedData) {
-      setClause.push(`${key} = $${i}`);
+      setClauses.push(`${key} = $${i}`);
       values.push(updatedData[key]);
       i++;
     }
-    values.push(orderId); // Append orderId as the final value.
-    const query = `
+    values.push(orderId);
+
+    const { rows } = await pool.query(
+      `
       UPDATE orders
-      SET ${setClause.join(", ")}, updated_at = NOW()
-      WHERE id = $${i}
-      RETURNING *
-    `;
-    const result = await pool.query(query, values);
-    if (result.rowCount === 0) {
+         SET ${setClauses.join(", ")}, updated_at = NOW()
+       WHERE id = $${i}
+       RETURNING *
+      `,
+      values
+    );
+    if (rows.length === 0) {
       return res.status(404).json({ message: "Order not found." });
     }
-    res.status(200).json({
-      message: "Order updated successfully.",
-      order: result.rows[0],
-    });
-  } catch (error) {
-    next(error);
+    res.status(200).json({ message: "Order updated.", order: rows[0] });
+  } catch (err) {
+    next(err);
   }
 };
 
 /**
- * deleteOrder - Allows only a Master Admin to delete a marketer's order.
+ * deleteOrder – MasterAdmin only
  */
 const deleteOrder = async (req, res, next) => {
   try {
@@ -243,20 +259,16 @@ const deleteOrder = async (req, res, next) => {
       return res.status(403).json({ message: "Only Master Admin can delete orders." });
     }
     const orderId = req.params.id;
-    if (!orderId) {
-      return res.status(400).json({ message: "Order ID is required." });
-    }
-    const query = "DELETE FROM orders WHERE id = $1 RETURNING *";
-    const result = await pool.query(query, [orderId]);
-    if (result.rowCount === 0) {
+    const { rows } = await pool.query(
+      "DELETE FROM orders WHERE id = $1 RETURNING *",
+      [orderId]
+    );
+    if (rows.length === 0) {
       return res.status(404).json({ message: "Order not found." });
     }
-    res.status(200).json({
-      message: "Order deleted successfully.",
-      order: result.rows[0],
-    });
-  } catch (error) {
-    next(error);
+    res.status(200).json({ message: "Order deleted.", order: rows[0] });
+  } catch (err) {
+    next(err);
   }
 };
 
