@@ -31,18 +31,26 @@ const confirmOrder = async (req, res, next) => {
 
   try {
     // 0️⃣ Fetch & validate the order
-    const orderRes = await pool.query(
-      "SELECT * FROM orders WHERE id = $1",
-      [orderId]
-    );
+    const orderRes = await pool.query(`
+      SELECT
+        o.*,
+        u.unique_id AS marketer_unique_id
+      FROM orders o
+      JOIN users u
+        ON o.marketer_id = u.id
+      WHERE o.id = $1
+    `, [orderId]);
+    
     if (orderRes.rowCount === 0) {
       return res.status(404).json({ message: "Order not found." });
     }
+    
     const order = orderRes.rows[0];
+    
+    // make sure you still check if it was already confirmed…
     if (order.status === "confirmed") {
       return res.status(400).json({ message: "Order is already confirmed." });
     }
-
     // 1️⃣ Determine per‑device commission
     const type = order.device_type.toLowerCase();
     const perDevice = type === "android"
