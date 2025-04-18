@@ -234,28 +234,32 @@ const placeOrder = async (req, res, next) => {
 };
 
 /**
- * getPendingOrdersForMarketer - Retrieves pending orders for the marketer.
- * Uses a JOIN between orders and users to filter orders by marketer's unique_id.
+ * getOrders - Retrieves every order (pending or confirmed) for the authenticated marketer.
  */
-const getPendingOrdersForMarketer = async (req, res) => {
+async function getOrders(req, res, next) {
   try {
-    // Get the unique ID from the authenticated user.
-    const userUniqueId = req.user.unique_id;
-    const query = `
-      SELECT o.*
-      FROM orders o
-      JOIN users u ON o.marketer_id = u.id
-      WHERE u.unique_id = $1
-        AND o.status = 'pending'
-    `;
-    const { rows } = await pool.query(query, [userUniqueId]);
-    res.status(200).json({ orders: rows });
-  } catch (error) {
-    console.error("Error fetching marketer orders:", error);
-    res.status(500).json({ message: "Error fetching orders" });
-  }
-};
+    // req.user.id should be set by your auth middleware
+    const marketerId = req.user.id;
 
+    const { rows } = await pool.query(
+      `
+        SELECT
+          o.*,
+          u.unique_id AS marketer_unique_id
+        FROM orders o
+        JOIN users u
+          ON o.marketer_id = u.id
+        WHERE o.marketer_id = $1
+        ORDER BY o.created_at DESC
+      `,
+      [marketerId]
+    );
+
+    res.status(200).json({ orders: rows });
+  } catch (err) {
+    next(err);
+  }
+}
 /**
  * submitBioData - Submits the marketer's bio data form.
  */
@@ -517,7 +521,7 @@ module.exports = {
   getAccountSettings,
   updateAccountSettings,
   placeOrder,
-  getPendingOrdersForMarketer, 
+  getOrders,  
   submitBioData,
   submitGuarantorForm,
   submitCommitmentForm,

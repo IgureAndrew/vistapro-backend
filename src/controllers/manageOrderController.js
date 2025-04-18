@@ -8,22 +8,16 @@ const { pool } = require("../config/database");
  */
 async function getOrders(req, res, next) {
   try {
-    // req.user.id should be the internal PK of the marketer
     const userId = req.user.id;
-    const { rows } = await pool.query(`
-      SELECT 
-        o.*,
-        u.unique_id AS marketer_unique_id
-      FROM orders o
-      JOIN users u ON o.marketer_id = u.id
-      WHERE o.marketer_id = $1
-      ORDER BY o.created_at DESC
-    `, [userId]);
-
-    return res.json({ orders: rows });
-  } catch (err) {
-    next(err);
-  }
+  const { rows } = await pool.query(`
+    SELECT o.*, u.unique_id AS marketer_unique_id
+     FROM orders o
+     JOIN users u ON o.marketer_id = u.id
+     WHERE o.status = 'pending' AND u.role = 'Marketer'
+  ORDER BY o.created_at DESC`, );
+  
+    res.json({ orders: rows });
+  } catch (err) { next(err) }
 }
 /**
  * confirmOrder - Confirms a pending order, splits the commission 40/60,
@@ -112,6 +106,9 @@ const confirmOrder = async (req, res, next) => {
         withheld,
       ]
     );
+    const io = req.app.get("io");
+    io.to(`marketer:${order.marketer_unique_id}`)
+    .emit("order-updated", updatedOrder);
 
     res.status(200).json({
       message: "Order confirmed and wallet credited.",

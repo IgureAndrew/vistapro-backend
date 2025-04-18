@@ -29,6 +29,14 @@ io.on("connection", (socket) => {
 // Make the Socket.IO instance available throughout your Express app.
 app.set("socketio", io);
 
+// ❷ On socket connect, have each marketer join their room
+io.on("connection", socket => {
+  const { userUniqueId } = socket.handshake.query;
+  if (userUniqueId) {
+    socket.join(`marketer:${userUniqueId}`);
+  }
+});
+
 const PORT = process.env.PORT || 5000;
 
 // Connect to the database and then start the HTTP server.

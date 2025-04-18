@@ -28,7 +28,11 @@ async function creditCommission(req, res, next) {
       commission,
       JSON.stringify({ order_unique_id: orderUniqueId, device_type: deviceType })
     ]);
-
+      const io = req.app.get("io");
+      io
+      .to(`marketer:${order.marketer_unique_id}`)
+      .emit("order-updated", updatedOrder);
+      
     res.json({ message: 'Commission credited.' });
   } catch (err) {
     next(err);

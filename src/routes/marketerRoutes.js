@@ -12,7 +12,7 @@ const {
   getAccountSettings,
   updateAccountSettings,
   placeOrder,
-  getPendingOrdersForMarketer,
+  getOrders,
   submitBioData,
   submitGuarantorForm,
   submitCommitmentForm,
@@ -115,7 +115,7 @@ router.post(
 router.get(
   "/orders",
   verifyToken,
-  getPendingOrdersForMarketer
+  getOrders
 );
 
 module.exports = router;
