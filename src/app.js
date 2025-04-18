@@ -72,11 +72,10 @@ const productRoutes = require('./routes/productRoutes');
 const manageOrderRoutes = require('./routes/manageOrderRoutes');
 const reportRoutes = require('./routes/reportRoutes');
 const profitReportRoutes = require('./routes/profitReportRoutes');
-const cashoutRoutes = require('./routes/cashoutRoutes');
 const performanceRoutes = require('./routes/performanceRoutes');
 const stockupdateRoutes = require('./routes/stockupdateRoutes');
 const bankRoutes = require("./routes/bankRoutes");
-
+const walletRoutes = require('./routes/walletRoutes');
 
 
 // Mount routes
@@ -92,12 +91,12 @@ app.use('/api/product', productRoutes);
 app.use('/api/manage-order', manageOrderRoutes);
 app.use('/api/report', reportRoutes);
 app.use('/api/profit-report', profitReportRoutes);
-app.use('/api/cashout', cashoutRoutes);
 app.use('/api/performance', performanceRoutes);
 app.use('/api/stock', stockupdateRoutes);
 app.use("/api/banks", bankRoutes);
 app.use("/api/verification", verificationRoutes);
-
+app.use('/api/notifications', require('./routes/notificationRoutes'));
+app.use('/api/wallets', walletRoutes);
 
 // Error handling middleware
 const errorHandler = require('./middlewares/errorHandler');

@@ -8,10 +8,13 @@ const { pool } = require("../config/database");
  * including the marketer's unique id, full name, and location.
  * If an "orderId" query parameter is provided, it will further filter results to that specific order.
  */
+/**
+ * getOrders - Retrieves pending orders created by marketers.
+ */
 const getOrders = async (req, res, next) => {
   try {
     let query = `
-      SELECT o.*, 
+      SELECT o.*,
              u.unique_id AS marketer_unique_id,
              (u.first_name || ' ' || u.last_name) AS marketer_name,
              u.location AS marketer_location
@@ -20,13 +23,12 @@ const getOrders = async (req, res, next) => {
       WHERE o.status = 'pending' AND u.role = 'Marketer'
     `;
     const values = [];
-    
-    // If an orderId is provided in the query string, add a filter.
+
     if (req.query.orderId) {
       query += " AND o.id = $1";
       values.push(req.query.orderId);
     }
-    
+
     query += " ORDER BY o.created_at DESC";
     const result = await pool.query(query, values);
     res.status(200).json({ orders: result.rows });
@@ -36,64 +38,98 @@ const getOrders = async (req, res, next) => {
 };
 
 /**
- * confirmOrder - Allows the Master Admin to confirm a pending order.
- * Upon confirmation, the order's status is updated to "confirmed", and earnings are calculated:
- *   - For Android devices: N10,000 per device.
- *   - For iPhone devices: N15,000 per device.
- * Total earnings = rate * number_of_devices.
+ * confirmOrder - Confirms a pending order, awards commission,
+ * updates wallet balances, and records wallet transactions.
  */
 const confirmOrder = async (req, res, next) => {
+  const client = await pool.connect();
   try {
-    // Get the order ID from the request body.
     const { orderId } = req.body;
     if (!orderId) {
       return res.status(400).json({ message: "Order ID is required." });
     }
 
-    // Retrieve the order record.
-    const orderResult = await pool.query("SELECT * FROM orders WHERE id = $1", [orderId]);
-    if (orderResult.rowCount === 0) {
+    // 1) Fetch order + marketer info
+    const { rows: [order] } = await client.query(
+      `SELECT o.*, u.unique_id AS marketer_unique_id
+         FROM orders o
+         JOIN users u ON o.marketer_id = u.id
+        WHERE o.id = $1`,
+      [orderId]
+    );
+    if (!order) {
       return res.status(404).json({ message: "Order not found." });
     }
-    const order = orderResult.rows[0];
-
-    // Prevent confirming an already confirmed order.
-    if (order.status && order.status.toLowerCase() === "confirmed") {
+    if (order.status === "confirmed") {
       return res.status(400).json({ message: "Order is already confirmed." });
     }
 
-    // Determine the per-device earning based on device_type.
-    let perDeviceEarning;
-    if (order.device_type.toLowerCase() === "android") {
-      perDeviceEarning = 10000;
-    } else if (order.device_type.toLowerCase() === "iphone") {
-      perDeviceEarning = 15000;
-    } else {
-      return res.status(400).json({ message: "Invalid device type." });
-    }
+    // 2) Determine per‑device commission
+    let commission;
+    const dt = order.device_type.toLowerCase();
+    if (dt === "android") commission = 10000;
+    else if (dt === "iphone") commission = 15000;
+    else return res.status(400).json({ message: "Invalid device type." });
 
-    // Calculate total earnings.
-    const totalEarnings = perDeviceEarning * Number(order.number_of_devices);
+    // 3) Split 40% / 60%
+    const withdrawable = Math.round(commission * 0.4);
+    const withheld    = commission - withdrawable; // ensures sum = commission
 
-    // Update the order: change status to "confirmed", record earnings and confirmed_at.
-    const updateQuery = `
-      UPDATE orders
-      SET status = 'confirmed',
-          earnings = $1,
-          confirmed_at = NOW(),
-          updated_at = NOW()
-      WHERE id = $2
-      RETURNING *
-    `;
-    const updateValues = [totalEarnings, orderId];
-    const updatedOrderResult = await pool.query(updateQuery, updateValues);
+    // Begin transaction
+    await client.query("BEGIN");
 
-    res.status(200).json({
-      message: "Order confirmed successfully.",
-      order: updatedOrderResult.rows[0],
+    // 4) Mark order confirmed + store per‑device commission
+    const { rows: [updatedOrder] } = await client.query(
+      `UPDATE orders
+          SET status               = 'confirmed',
+              earnings_per_device  = $1,
+              confirmed_at         = NOW(),
+              updated_at           = NOW()
+        WHERE id = $2
+        RETURNING *`,
+      [commission, orderId]
+    );
+
+    // 5) Update marketer's wallet balances
+    await client.query(
+      `UPDATE wallets
+          SET available_balance = available_balance + $1,
+              withheld_balance  = withheld_balance  + $2,
+              updated_at        = NOW()
+        WHERE user_unique_id = $3`,
+      [withdrawable, withheld, order.marketer_unique_id]
+    );
+
+    // 6) Record two wallet_transactions entries
+    const meta = JSON.stringify({
+      order_unique_id: order.unique_id,
+      device_type: order.device_type
     });
-  } catch (error) {
-    next(error);
+    await client.query(
+      `INSERT INTO wallet_transactions
+         (user_unique_id, amount, transaction_type, meta)
+       VALUES
+         ($1, $2, 'commission', $3),
+         ($1, $4, 'withheld',   $3)`,
+      [
+        order.marketer_unique_id,
+        withdrawable,
+        meta,
+        withheld
+      ]
+    );
+
+    await client.query("COMMIT");
+
+    return res.status(200).json({
+      message: "Order confirmed and wallet updated successfully.",
+      order: updatedOrder
+    });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    next(err);
+  } finally {
+    client.release();
   }
 };
 
@@ -103,27 +139,26 @@ const confirmOrder = async (req, res, next) => {
 const confirmOrderToDealer = async (req, res, next) => {
   try {
     const orderId = req.params.id;
-    const query = `
-      UPDATE orders
-      SET status = 'confirmed_to_dealer',
-          confirmed_at = NOW(),
-          updated_at = NOW()
-      WHERE id = $1
-      RETURNING *
-    `;
-    const result = await pool.query(query, [orderId]);
-    if (result.rows.length === 0) {
+    const { rows } = await pool.query(
+      `UPDATE orders
+          SET status       = 'confirmed_to_dealer',
+              confirmed_at = NOW(),
+              updated_at   = NOW()
+        WHERE id = $1
+        RETURNING *`,
+      [orderId]
+    );
+    if (rows.length === 0) {
       return res.status(404).json({ message: "Order not found." });
     }
     res.status(200).json({
       message: "Order confirmed to dealer successfully.",
-      order: result.rows[0],
+      order: rows[0]
     });
   } catch (error) {
     next(error);
   }
 };
-
 /**
  * getOrderHistory - Retrieves the order history based on the logged-in user's role.
  * For:

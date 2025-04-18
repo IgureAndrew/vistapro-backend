@@ -260,7 +260,17 @@ const addUser = async (req, res, next) => {
         registration_certificate_url: null,
       };
     }
+    // Create the new user
     const newUser = await createUser(userData);
+
+    // --- NEW: initialize wallet for every marketer ---
+    if (newUser.role === 'Marketer') {
+      await pool.query(
+        `INSERT INTO wallets (user_unique_id) VALUES ($1)`,
+        [newUser.unique_id]
+      );
+    }
+
     return res.status(201).json({
       message: "User created successfully",
       user: newUser,
@@ -269,6 +279,7 @@ const addUser = async (req, res, next) => {
     next(error);
   }
 };
+
 
 /**
  * updateUser - Updates a user specified by :id.
