@@ -24,6 +24,7 @@ async function getOrders(req, res, next) {
  * updates the marketer’s wallet, and logs two wallet transactions.
  */
 const confirmOrder = async (req, res, next) => {
+  console.log("🔥 confirmOrder called with:", req.body);
   const { orderId } = req.body;
   if (!orderId) {
     return res.status(400).json({ message: "Order ID is required." });
