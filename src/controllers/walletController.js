@@ -1,177 +1,79 @@
 // src/controllers/walletController.js
-const { pool } = require('../config/database');
+const walletService = require('../services/walletService');
 
-/**
- * Marketer requests a withdrawal (up to their available_balance).
- */
-async function requestWithdrawal(req, res, next) {
-  try {
-    const userUniqueId = req.user.unique_id;
-    const { amount } = req.body;
-
-    // 1) Check available balance
-    const { rows } = await pool.query(
-      `SELECT available_balance FROM wallets WHERE user_unique_id = $1`,
-      [userUniqueId]
-    );
-    if (!rows.length || rows[0].available_balance < amount) {
-      return res.status(400).json({ message: 'Insufficient funds.' });
-    }
-
-    // 2) Deduct from available_balance
-    await pool.query(
-      `UPDATE wallets
-         SET available_balance = available_balance - $1,
-             updated_at        = NOW()
-       WHERE user_unique_id = $2`,
-      [amount, userUniqueId]
-    );
-
-    // 3) Create the withdrawal request
-    const result = await pool.query(
-      `INSERT INTO withdrawal_requests (user_unique_id, amount)
-       VALUES ($1, $2)
-       RETURNING *`,
-      [userUniqueId, amount]
-    );
-
-    res.status(201).json({ request: result.rows[0] });
-  } catch (err) {
-    next(err);
-  }
-}
-
-/**
- * MasterAdmin: list all pending withdrawal requests.
- */
-async function listWithdrawalRequests(req, res, next) {
-  try {
-    const { rows } = await pool.query(`
-      SELECT wr.*, u.first_name, u.last_name
-        FROM withdrawal_requests wr
-        JOIN users u ON u.unique_id = wr.user_unique_id
-       WHERE wr.status = 'pending'
-       ORDER BY wr.created_at DESC
-    `);
-    res.json({ requests: rows });
-  } catch (err) {
-    next(err);
-  }
-}
-
-/**
- * MasterAdmin: approve or reject a withdrawal request.
- */
-async function reviewWithdrawalRequest(req, res, next) {
-  try {
-    const { reqId } = req.params;
-    const { action } = req.body; // 'approve' or 'reject'
-
-    // 1) Fetch the pending request
-    const { rows } = await pool.query(
-      `SELECT * FROM withdrawal_requests WHERE id = $1 AND status = 'pending'`,
-      [reqId]
-    );
-    if (!rows.length) {
-      return res.status(404).json({ message: 'Not found or already reviewed.' });
-    }
-    const reqRow = rows[0];
-    const adminId = req.user.unique_id;
-
-    if (action === 'approve') {
-      // a) Debit total_balance
-      await pool.query(
-        `UPDATE wallets
-            SET total_balance = total_balance - $1,
-                updated_at    = NOW()
-          WHERE user_unique_id = $2`,
-        [reqRow.amount, reqRow.user_unique_id]
-      );
-
-      // b) Log transaction
-      await pool.query(
-        `INSERT INTO wallet_transactions (user_unique_id, amount, transaction_type)
-         VALUES ($1, -$2, 'withdraw_approved')`,
-        [reqRow.user_unique_id, reqRow.amount]
-      );
-
-      // c) Mark request approved
-      await pool.query(
-        `UPDATE withdrawal_requests
-            SET status      = 'approved',
-                reviewed_by = $1,
-                reviewed_at = NOW()
-          WHERE id = $2`,
-        [adminId, reqId]
-      );
-    } else {
-      // Rejected: refund available_balance
-      await pool.query(
-        `UPDATE wallets
-            SET available_balance = available_balance + $1,
-                updated_at        = NOW()
-          WHERE user_unique_id = $2`,
-        [reqRow.amount, reqRow.user_unique_id]
-      );
-
-      // Mark request rejected
-      await pool.query(
-        `UPDATE withdrawal_requests
-            SET status      = 'rejected',
-                reviewed_by = $1,
-                reviewed_at = NOW()
-          WHERE id = $2`,
-        [adminId, reqId]
-      );
-    }
-
-    res.json({ message: `Withdrawal ${action}d.` });
-  } catch (err) {
-    next(err);
-  }
-}
-
-/**
- * Marketer: get their wallet summary + recent transactions.
- */
 async function getMyWallet(req, res, next) {
   try {
-    const userUniqueId = req.user.unique_id;
+    const data = await walletService.getMyWallet(req.user.unique_id);
+    res.json(data);
+  } catch (err) { next(err) }
+}
 
-    const { rows: walletRows } = await pool.query(
-      `SELECT
-         total_balance,
-         available_balance,
-         withheld_balance,
-         created_at,
-         updated_at
-       FROM wallets
-      WHERE user_unique_id = $1`,
-      [userUniqueId]
+async function createOrUpdateBankDetails(req, res, next) {
+  try {
+    await walletService.upsertBankDetails(req.user.unique_id, req.body);
+    res.json({ message: 'Bank details saved.' });
+  } catch (err) { next(err) }
+}
+
+async function getBankDetails(req, res, next) {
+  try {
+    const bank = await walletService.getBankDetails(req.user.unique_id);
+    res.json({ bank });
+  } catch (err) { next(err) }
+}
+
+async function requestWithdrawal(req, res, next) {
+  try {
+    await walletService.requestWithdrawal(req.user.unique_id, Number(req.body.amount));
+    // emit notification to admins via Socket.IO if you have io instance
+    res.status(201).json({ message: 'Withdrawal requested.' });
+  } catch (err) { next(err) }
+}
+
+async function listWithdrawalRequests(req, res, next) {
+  try {
+    const list = await walletService.listWithdrawalRequests();
+    res.json({ requests: list });
+  } catch (err) { next(err) }
+}
+
+async function reviewWithdrawalRequest(req, res, next) {
+  try {
+    await walletService.reviewWithdrawalRequest(
+      Number(req.params.reqId),
+      req.body.action,
+      req.user.unique_id
     );
-    if (!walletRows.length) {
-      return res.status(404).json({ message: 'Wallet not found.' });
-    }
-    const wallet = walletRows[0];
+    res.json({ message: `Withdrawal ${req.body.action}d.` });
+  } catch (err) { next(err) }
+}
 
-    const { rows: txs } = await pool.query(
-      `SELECT *
-         FROM wallet_transactions
-        WHERE user_unique_id = $1
-        ORDER BY created_at DESC
-        LIMIT 50`,
-      [userUniqueId]
+async function releaseWithheld(req, res, next) {
+  try {
+    await walletService.releaseWithheld();
+    res.json({ message: 'Withheld balances released.' });
+  } catch (err) { next(err) }
+}
+
+async function getStats(req, res, next) {
+  try {
+    const { from, to } = req.query;
+    const rows = await walletService.getStats(
+      req.user.unique_id,
+      new Date(from),
+      new Date(to)
     );
-
-    res.json({ wallet, transactions: txs });
-  } catch (err) {
-    next(err);
-  }
+    res.json({ stats: rows });
+  } catch (err) { next(err) }
 }
 
 module.exports = {
+  getMyWallet,
+  createOrUpdateBankDetails,
+  getBankDetails,
   requestWithdrawal,
   listWithdrawalRequests,
   reviewWithdrawalRequest,
-  getMyWallet,
+  releaseWithheld,
+  getStats,
 };

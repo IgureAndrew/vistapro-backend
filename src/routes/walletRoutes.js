@@ -2,39 +2,20 @@
 const express = require('express');
 const router  = express.Router();
 const { verifyToken, verifyRole } = require('../middlewares/authMiddleware');
-const {
-  requestWithdrawal,
-  listWithdrawalRequests,
-  reviewWithdrawalRequest,
-  getMyWallet,
-} = require('../controllers/walletController');
+const wc = require('../controllers/walletController');
 
-// Marketer endpoints (now at /api/wallets/)
-router.get(
-  '/',                              // GET  /api/wallets
-  verifyToken,
-  verifyRole(['Marketer']),
-  getMyWallet
-);
-router.post(
-  '/withdraw',                      // POST /api/wallets/withdraw
-  verifyToken,
-  verifyRole(['Marketer']),
-  requestWithdrawal
-);
+// Marketer
+router.get('/',                      verifyToken, verifyRole(['Marketer']), wc.getMyWallet);
+router.post('/bank-details',        verifyToken, verifyRole(['Marketer']), wc.createOrUpdateBankDetails);
+router.get('/bank-details',         verifyToken, verifyRole(['Marketer']), wc.getBankDetails);
+router.post('/withdraw',            verifyToken, verifyRole(['Marketer']), wc.requestWithdrawal);
+router.get('/stats',                verifyToken, verifyRole(['Marketer']), wc.getStats);
 
-// MasterAdmin endpoints (now at /api/wallets/withdrawals)
-router.get(
-  '/withdrawals',                   // GET  /api/wallets/withdrawals
-  verifyToken,
-  verifyRole(['MasterAdmin']),
-  listWithdrawalRequests
-);
-router.patch(
-  '/withdrawals/:reqId',            // PATCH /api/wallets/withdrawals/:reqId
-  verifyToken,
-  verifyRole(['MasterAdmin']),
-  reviewWithdrawalRequest
-);
+// MasterAdmin
+router.get('/withdrawals',          verifyToken, verifyRole(['MasterAdmin']), wc.listWithdrawalRequests);
+router.patch('/withdrawals/:reqId', verifyToken, verifyRole(['MasterAdmin']), wc.reviewWithdrawalRequest);
+
+// System cron (protect with an API key or internal token)
+router.post('/release',             /* auth if needed */ wc.releaseWithheld);
 
 module.exports = router;

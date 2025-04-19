@@ -58,7 +58,15 @@ app.use(session({
   }
 }));
 
+// (Optional) Socket.IO setup to broadcast events
+const server = require('http').createServer(app);
+const io     = require('socket.io')(server, { /* cors etc */ });
+app.set('io', io);
+
+
 // Import routes
+require('./jobs/releaseWithheld');
+
 const authRoutes = require('./routes/authRoutes');
 const masterAdminRoutes = require('./routes/masterAdminRoutes');
 const superAdminRoutes = require('./routes/superAdminRoutes');
@@ -74,7 +82,6 @@ const reportRoutes = require('./routes/reportRoutes');
 const profitReportRoutes = require('./routes/profitReportRoutes');
 const performanceRoutes = require('./routes/performanceRoutes');
 const stockupdateRoutes = require('./routes/stockupdateRoutes');
-const bankRoutes = require("./routes/bankRoutes");
 const walletRoutes = require('./routes/walletRoutes');
 
 
@@ -93,7 +100,6 @@ app.use('/api/report', reportRoutes);
 app.use('/api/profit-report', profitReportRoutes);
 app.use('/api/performance', performanceRoutes);
 app.use('/api/stock', stockupdateRoutes);
-app.use("/api/banks", bankRoutes);
 app.use("/api/verification", verificationRoutes);
 app.use('/api/notifications', require('./routes/notificationRoutes'));
 app.use('/api/wallets', walletRoutes);
