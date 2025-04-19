@@ -1,5 +1,6 @@
 // src/controllers/manageOrderController.js
 const { pool } = require("../config/database");
+const walletService = require('../services/walletService');
 
 /**
  * getOrders - Retrieves pending orders created by marketers.
@@ -26,32 +27,34 @@ async function getOrders(req, res, next) {
 async function confirmOrder(req, res, next) {
   try {
     const { orderId } = req.params;
-    const adminId     = req.user.unique_id;    // MasterAdmin
-    // 1) Mark the order as confirmed
+    const adminId     = req.user.unique_id;
+
+    // 1) Mark order confirmed
     const { rows } = await pool.query(
       `UPDATE orders
-          SET status        = 'confirmed',
-              confirmed_by  = $2,
-              confirmed_at  = NOW()
+          SET status       = 'confirmed',
+              confirmed_by = $2,
+              confirmed_at = NOW()
         WHERE id = $1
         RETURNING *
-      `, [orderId, adminId]
+      `,
+      [orderId, adminId]
     );
     if (!rows.length) {
       return res.status(404).json({ message: 'Order not found.' });
     }
     const order = rows[0];
 
-    // 2) Credit the marketer’s wallet
-    //    device_type should be 'android' or 'iphone' in your orders table
-    const { commission, available, withheld } = 
+    // 2) Credit commission
+
+      const { commission, available, withheld } =
       await walletService.creditCommission(
-        order.marketer_unique_id,  // or however you reference the marketer
+        order.marketer_unique_id,
         order.id,
-        order.device_type         // 'android' or 'iphone'
+        order.device_type
       );
 
-    // 3) Notify, and return the updated order + commission info
+    // 3) Respond
     res.json({
       message: 'Order confirmed and commission credited.',
       order,
@@ -61,6 +64,7 @@ async function confirmOrder(req, res, next) {
     next(err);
   }
 }
+
 /**
  * confirmOrderToDealer - Confirms an order on the dealer side.
  */
