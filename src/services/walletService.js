@@ -1,6 +1,51 @@
 // src/services/walletService.js
 const { pool } = require('../config/database');
-
+/**
+ * Split a fixed commission amount into available/withheld,
+ * update the wallet, and log three transactions.
+ *
+ * @param {string} userId       the marketer’s unique_id
+ * @param {number} orderId      the order’s PK
+ * @param {number} commission   total commission in Naira
+ */
+async function creditCommissionFromAmount(userId, orderId, commission) {
+    // 40% withdrawable, 60% withheld
+    const available = Math.floor(commission * 0.4);
+    const withheld  = commission - available;
+  
+    // 1) Update wallet balances
+    await pool.query(
+      `UPDATE wallets
+          SET total_balance     = total_balance     + $1,
+              available_balance = available_balance + $2,
+              withheld_balance  = withheld_balance  + $3,
+              updated_at        = NOW()
+        WHERE user_unique_id = $4
+      `,
+      [commission, available, withheld, userId]
+    );
+  
+    // 2) Log transactions
+    await pool.query(
+      `INSERT INTO wallet_transactions
+         (user_unique_id, amount, transaction_type, meta)
+       VALUES
+         ($1, $2, 'commission',            $5),
+         ($1, $3, 'commission_available', '{}'),
+         ($1, $4, 'commission_withheld',  '{}')
+      `,
+      [
+        userId,
+        commission,
+        available,
+        withheld,
+        JSON.stringify({ orderId, reason: 'order_commission' })
+      ]
+    );
+  
+    return { available, withheld };
+  }
+  
 const COMMISSION_RATES = {
   android: 10000,
   iphone:  15000,

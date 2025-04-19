@@ -44,6 +44,12 @@ async function confirmOrder(req, res, next) {
       return res.status(404).json({ message: 'Order not found.' });
     }
     const order = rows[0];
+    // Calculate total commission from the order record
+    const commission = Number(order.earnings_per_device) * order.number_of_devices;
+   if (commission <= 0) {
+     throw new Error('Order earnings_per_device is missing or zero');
+   }
+
        // 1b) Look up the marketer’s unique_id (string) from users table
    const { rows: urows } = await pool.query(
     `SELECT unique_id FROM users WHERE id = $1`,
@@ -56,13 +62,13 @@ async function confirmOrder(req, res, next) {
 
     // 2) Credit commission
 
-    const { commission, available, withheld } =
-         await walletService.creditCommission(
-          marketerUniqueId,
-          order.id,
-           order.device_type
-         );
-
+    // New: pass the calculated commission directly
+     const { available, withheld } = await walletService.creditCommissionFromAmount(
+       marketerUniqueId,
+       order.id,
+       commission
+     );
+  
     // 3) Respond
     res.json({
       message: 'Order confirmed and commission credited.',
