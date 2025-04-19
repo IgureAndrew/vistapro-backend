@@ -23,111 +23,44 @@ async function getOrders(req, res, next) {
  * confirmOrder - Confirms a pending order, splits the commission 40/60,
  * updates the marketer’s wallet, and logs two wallet transactions.
  */
-const confirmOrder = async (req, res, next) => {
-  console.log("🔥 confirmOrder called with:", req.body);
-  const { orderId } = req.body;
-  if (!orderId) {
-    return res.status(400).json({ message: "Order ID is required." });
-  }
-
+async function confirmOrder(req, res, next) {
   try {
-    // 0️⃣ Fetch & validate the order
-    const orderRes = await pool.query(`
-      SELECT
-        o.*,
-        u.unique_id AS marketer_unique_id
-      FROM orders o
-      JOIN users u
-        ON o.marketer_id = u.id
-      WHERE o.id = $1
-    `, [orderId]);
-    
-    if (orderRes.rowCount === 0) {
-      return res.status(404).json({ message: "Order not found." });
-    }
-    
-    const order = orderRes.rows[0];
-    
-    // make sure you still check if it was already confirmed…
-    if (order.status === "confirmed") {
-      return res.status(400).json({ message: "Order is already confirmed." });
-    }
-    // 1️⃣ Determine per‑device commission
-    const type = order.device_type.toLowerCase();
-    const perDevice = type === "android"
-      ? 10000
-      : type === "iphone"
-        ? 15000
-        : null;
-    if (perDevice === null) {
-      return res.status(400).json({ message: "Invalid device type." });
-    }
-
-    // split 40% withdrawable / 60% withheld
-    const withdrawable = Math.floor(perDevice * 0.4);
-    const withheld     = perDevice - withdrawable;
-
-    // 2️⃣ Update the order: mark confirmed & store per‑device rate
-    const updateOrderRes = await pool.query(
-      `
-      UPDATE orders
-         SET status              = 'confirmed',
-             earnings_per_device = $1,
-             confirmed_at        = NOW(),
-             updated_at          = NOW()
-       WHERE id = $2
-       RETURNING *
-      `,
-      [perDevice, orderId]
+    const { orderId } = req.params;
+    const adminId     = req.user.unique_id;    // MasterAdmin
+    // 1) Mark the order as confirmed
+    const { rows } = await pool.query(
+      `UPDATE orders
+          SET status        = 'confirmed',
+              confirmed_by  = $2,
+              confirmed_at  = NOW()
+        WHERE id = $1
+        RETURNING *
+      `, [orderId, adminId]
     );
-    const updatedOrder = updateOrderRes.rows[0];
+    if (!rows.length) {
+      return res.status(404).json({ message: 'Order not found.' });
+    }
+    const order = rows[0];
 
-    // 3️⃣ Credit the marketer’s wallet
-    await pool.query(
-      `
-      UPDATE wallets
-         SET total_balance     = total_balance     + $1,
-             available_balance = available_balance + $2,
-             withheld_balance  = withheld_balance  + $3,
-             updated_at        = NOW()
-       WHERE user_unique_id = $4
-      `,
-      [ perDevice, withdrawable, withheld, order.marketer_unique_id ]
-    );
+    // 2) Credit the marketer’s wallet
+    //    device_type should be 'android' or 'iphone' in your orders table
+    const { commission, available, withheld } = 
+      await walletService.creditCommission(
+        order.marketer_unique_id,  // or however you reference the marketer
+        order.id,
+        order.device_type         // 'android' or 'iphone'
+      );
 
-    // 4️⃣ Log two wallet transactions: one for withdrawable, one for withheld
-    const meta = JSON.stringify({
-      order_unique_id: order.unique_id,
-      device_type:     order.device_type,
-    });
-    await pool.query(
-      `
-      INSERT INTO wallet_transactions
-        (user_unique_id, amount, transaction_type, meta)
-      VALUES
-        ($1, $2, 'commission', $3::jsonb),
-        ($1, $4, 'withheld',   $3::jsonb)
-      `,
-      [
-        order.marketer_unique_id,
-        withdrawable,
-        meta,
-        withheld,
-      ]
-    );
-    const io = req.app.get("io");
-    io.to(`marketer:${order.marketer_unique_id}`)
-    .emit("order-updated", updatedOrder);
-
-    res.status(200).json({
-      message: "Order confirmed and wallet credited.",
-      order:   updatedOrder,
+    // 3) Notify, and return the updated order + commission info
+    res.json({
+      message: 'Order confirmed and commission credited.',
+      order,
+      commissionBreakdown: { commission, available, withheld }
     });
   } catch (err) {
     next(err);
   }
-};
-
+}
 /**
  * confirmOrderToDealer - Confirms an order on the dealer side.
  */

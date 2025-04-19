@@ -23,7 +23,7 @@ router.get(
 // PATCH /api/manage-orders/confirm -> Confirm a pending order (Master Admin confirms order).
 // Expects { orderId: <id> } in the request body.
 router.patch(
-  "/confirm",
+  '/orders/:orderId/confirm',
   verifyToken,
   verifyRole(["MasterAdmin"]),
   confirmOrder
