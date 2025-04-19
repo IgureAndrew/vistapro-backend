@@ -44,15 +44,24 @@ async function confirmOrder(req, res, next) {
       return res.status(404).json({ message: 'Order not found.' });
     }
     const order = rows[0];
+       // 1b) Look up the marketer’s unique_id (string) from users table
+   const { rows: urows } = await pool.query(
+    `SELECT unique_id FROM users WHERE id = $1`,
+     [order.marketer_id]
+   );
+   if (!urows.length) {
+     return res.status(500).json({ message: 'Marketer not found.' });
+   }
+   const marketerUniqueId = urows[0].unique_id;
 
     // 2) Credit commission
 
-      const { commission, available, withheld } =
-      await walletService.creditCommission(
-        order.marketer_unique_id,
-        order.id,
-        order.device_type
-      );
+    const { commission, available, withheld } =
+         await walletService.creditCommission(
+          marketerUniqueId,
+          order.id,
+           order.device_type
+         );
 
     // 3) Respond
     res.json({
