@@ -73,4 +73,36 @@ const resetPassword = async (req, res, next) => {
   }
 };
 
-module.exports = { loginUser, forgotPassword, resetPassword };
+/**
+ * getCurrentUser - Returns the logged‑in user’s profile & verification flags.
+ */
+const getCurrentUser = async (req, res, next) => {
+  try {
+    const { unique_id } = req.user;  // set by your verifyToken middleware
+    const query = `
+      SELECT
+        id,
+        unique_id,
+        first_name,
+        last_name,
+        email,
+        role,
+        bio_submitted,
+        guarantor_submitted,
+        commitment_submitted,
+        overall_verification_status
+      FROM users
+      WHERE unique_id = $1
+    `;
+    const { rows } = await pool.query(query, [unique_id]);
+    if (!rows.length) {
+      return res.status(404).json({ message: "User not found." });
+    }
+    return res.json({ user: rows[0] });
+  } catch (err) {
+    next(err);
+  }
+};
+
+
+module.exports = { loginUser, forgotPassword, resetPassword, getCurrentUser, };

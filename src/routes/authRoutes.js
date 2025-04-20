@@ -2,7 +2,8 @@
 const express = require('express');
 const router = express.Router();
 const { body, validationResult } = require('express-validator');
-const { loginUser, forgotPassword, resetPassword } = require('../controllers/authController');
+const { loginUser, forgotPassword, resetPassword, getCurrentUser, } = require('../controllers/authController');
+const { verifyToken } = require("../middlewares/authMiddleware");
 
 // POST /api/auth/login with input validation
 router.post(
@@ -31,5 +32,5 @@ router.post(
 // Similarly, add validations for forgot-password and reset-password as needed
 router.post('/forgot-password', forgotPassword);
 router.post('/reset-password', resetPassword);
-
+router.get("/me", verifyToken, getCurrentUser);
 module.exports = router;
