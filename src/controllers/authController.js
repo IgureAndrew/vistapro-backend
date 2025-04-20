@@ -44,6 +44,9 @@ const loginUser = async (req, res, next) => {
         email: user.email,
         role: user.role,
         overall_verification_status: user.overall_verification_status,
+        bio_submitted:          user.bio_submitted,
+        guarantor_submitted:    user.guarantor_submitted,
+        commitment_submitted:   user.commitment_submitted,
       }
     });
   } catch (error) {
@@ -90,7 +93,10 @@ const getCurrentUser = async (req, res, next) => {
         bio_submitted,
         guarantor_submitted,
         commitment_submitted,
-        overall_verification_status
+        overall_verification_status,
+        bio_submitted, 
+        guarantor_submitted, 
+        commitment_submitted
       FROM users
       WHERE unique_id = $1
     `;
