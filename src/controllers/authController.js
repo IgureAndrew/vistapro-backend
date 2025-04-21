@@ -1,38 +1,28 @@
-// src/controllers/authController.js
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 const { pool } = require('../config/database');
 
 /**
- * loginUser - Handles user login.
+ * loginUser - Handles user login, returns token and full user profile including verification flags.
  */
 const loginUser = async (req, res, next) => {
   try {
     const { email, password } = req.body;
-    
-    // Query the user by email
     const query = 'SELECT * FROM users WHERE email = $1';
-    const result = await pool.query(query, [email]);
-    
-    if (result.rows.length === 0) {
+    const { rows } = await pool.query(query, [email]);
+    if (rows.length === 0) {
       return res.status(401).json({ message: 'Invalid email or password.' });
     }
-    
-    const user = result.rows[0];
-    
-    // Compare the provided password with the hashed password
+    const user = rows[0];
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
       return res.status(401).json({ message: 'Invalid email or password.' });
     }
-    
-    // Generate JWT token including unique_id, with expiration set to 30 minutes
     const token = jwt.sign(
       { id: user.id, unique_id: user.unique_id, role: user.role },
       process.env.JWT_SECRET,
       { expiresIn: '1d' }
     );
-    
     return res.status(200).json({
       message: 'Login successful.',
       token,
@@ -43,10 +33,10 @@ const loginUser = async (req, res, next) => {
         last_name: user.last_name,
         email: user.email,
         role: user.role,
-        overall_verification_status: user.overall_verification_status,
-        bio_submitted:          user.bio_submitted,
-        guarantor_submitted:    user.guarantor_submitted,
-        commitment_submitted:   user.commitment_submitted,
+        bio_submitted: user.bio_submitted,
+        guarantor_submitted: user.guarantor_submitted,
+        commitment_submitted: user.commitment_submitted,
+        overall_verification_status: user.overall_verification_status
       }
     });
   } catch (error) {
@@ -55,7 +45,7 @@ const loginUser = async (req, res, next) => {
 };
 
 /**
- * forgotPassword - Sends a reset password link (placeholder).
+ * forgotPassword - Placeholder for sending a reset link.
  */
 const forgotPassword = async (req, res, next) => {
   try {
@@ -66,7 +56,7 @@ const forgotPassword = async (req, res, next) => {
 };
 
 /**
- * resetPassword - Resets the password (placeholder).
+ * resetPassword - Placeholder for handling password resets.
  */
 const resetPassword = async (req, res, next) => {
   try {
@@ -77,32 +67,21 @@ const resetPassword = async (req, res, next) => {
 };
 
 /**
- * getCurrentUser - Returns the logged‑in user’s profile & verification flags.
+ * getCurrentUser - Returns profile and verification flags of the logged‑in user.
  */
 const getCurrentUser = async (req, res, next) => {
   try {
-    const { unique_id } = req.user;  // set by your verifyToken middleware
+    const { unique_id } = req.user; // injected by your auth middleware
     const query = `
-      SELECT
-        id,
-        unique_id,
-        first_name,
-        last_name,
-        email,
-        role,
-        bio_submitted,
-        guarantor_submitted,
-        commitment_submitted,
-        overall_verification_status,
-        bio_submitted, 
-        guarantor_submitted, 
-        commitment_submitted
+      SELECT id, unique_id, first_name, last_name, email, role,
+             bio_submitted, guarantor_submitted, commitment_submitted,
+             overall_verification_status
       FROM users
       WHERE unique_id = $1
     `;
     const { rows } = await pool.query(query, [unique_id]);
     if (!rows.length) {
-      return res.status(404).json({ message: "User not found." });
+      return res.status(404).json({ message: 'User not found.' });
     }
     return res.json({ user: rows[0] });
   } catch (err) {
@@ -110,5 +89,9 @@ const getCurrentUser = async (req, res, next) => {
   }
 };
 
-
-module.exports = { loginUser, forgotPassword, resetPassword, getCurrentUser, };
+module.exports = {
+  loginUser,
+  forgotPassword,
+  resetPassword,
+  getCurrentUser
+};
