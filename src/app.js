@@ -61,8 +61,16 @@ app.use(session({
 // (Optional) Socket.IO setup to broadcast events
 const server = require('http').createServer(app);
 const io     = require('socket.io')(server, { /* cors etc */ });
-app.set('io', io);
+app.set('socketio', io);
 
+io.on('connection', socket => {
+  socket.on('register', uniqueId => {
+    if (uniqueId) {
+      socket.join(uniqueId);
+      console.log(`Socket ${socket.id} joined room ${uniqueId}`);
+    }
+  });
+});
 
 // Import routes
 require('./jobs/releaseWithheld');

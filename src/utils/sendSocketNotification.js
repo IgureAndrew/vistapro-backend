@@ -2,22 +2,23 @@
 const { pool } = require("../config/database");
 
 async function sendSocketNotification(marketerUniqueId, message, app) {
+  // 1) Grab your io instance (make sure in app.js you did app.set('socketio', io))
   const io = app.get("socketio");
   if (!io) {
-    console.warn("Socket.IO instance not found on app");
+    console.warn("⚠️  Socket.IO instance not found on app");
     return;
   }
 
-  // 1) Persist notification in the database
+  // 2) Persist the notification
   const insertRes = await pool.query(
     `INSERT INTO notifications (user_unique_id, message, created_at)
      VALUES ($1, $2, NOW())
      RETURNING id, created_at`,
     [marketerUniqueId, message]
   );
-  const notif = insertRes.rows[0];
+  const { id, created_at } = insertRes.rows[0];
 
-  // 2) Re‑compute unread count
+  // 3) Recompute unread count
   const countRes = await pool.query(
     `SELECT COUNT(*) AS unread
      FROM notifications
@@ -26,28 +27,27 @@ async function sendSocketNotification(marketerUniqueId, message, app) {
   );
   const unreadCount = Number(countRes.rows[0].unread);
 
-  // 3) Emit the “newNotification” payload (for your bell dropdown)
+  // 4) Emit the new notification for the dropdown
   io.to(marketerUniqueId).emit("newNotification", {
-    id: notif.id,
+    id,
     message,
-    created_at: notif.created_at,
+    created_at,
     is_read: false
   });
 
-  // 4) Emit the updated badge count
+  // 5) Emit the updated badge count
   io.to(marketerUniqueId).emit("notificationCount", { count: unreadCount });
 
-  // 5) If this is a “verificationApproved” flow, still fire that too
-  //    (so your dashboard‑locked → unlocked alert still works)
+  // 6) If it’s an approval flow, also emit verificationApproved
   if (message.toLowerCase().includes("approved")) {
     io.to(marketerUniqueId).emit("verificationApproved", {
-      message,
       marketerUniqueId,
+      message
     });
   }
 
   console.log(
-    `🔔 Sent notification to ${marketerUniqueId}: "${message}" (unread=${unreadCount})`
+    `🔔 [${marketerUniqueId}] Sent notification: "${message}" (unread=${unreadCount})`
   );
 }
 

@@ -13,6 +13,8 @@ const sendSocketNotification = require("../utils/sendSocketNotification");
  * Uses the marketer's unique ID (req.user.unique_id) for all records.
  */
 const submitBiodata = async (req, res, next) => { 
+  console.log("👀 submitBiodata req.body:", req.body);
+  console.log("👀 submitBiodata req.files:", Object.keys(req.files || {}))
   try {
     const {
       name,
