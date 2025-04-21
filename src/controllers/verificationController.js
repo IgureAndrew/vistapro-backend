@@ -826,22 +826,86 @@ const getSubmissionsForSuperAdmin = async (req, res, next) => {
   }
 };
 
+
+/** 
+ * === NEW SUCCESS-ONLY PATCH HANDLERS ===
+ * These allow your frontend to simply do PATCH /verification/{form}-success
+ * to flip the flag on the user record without re‑submitting the entire form.
+ */
+
+const biodataSuccess = async (req, res, next) => {
+  try {
+    const uniqueId = req.user.unique_id;
+    await pool.query(
+      `UPDATE users
+         SET bio_submitted = TRUE,
+             updated_at = NOW()
+       WHERE unique_id = $1`,
+      [uniqueId]
+    );
+    return res.sendStatus(204);
+  } catch (err) {
+    next(err);
+  }
+};
+
+const guarantorSuccess = async (req, res, next) => {
+  try {
+    const uniqueId = req.user.unique_id;
+    await pool.query(
+      `UPDATE users
+         SET guarantor_submitted = TRUE,
+             updated_at = NOW()
+       WHERE unique_id = $1`,
+      [uniqueId]
+    );
+    return res.sendStatus(204);
+  } catch (err) {
+    next(err);
+  }
+};
+
+const commitmentSuccess = async (req, res, next) => {
+  try {
+    const uniqueId = req.user.unique_id;
+    await pool.query(
+      `UPDATE users
+         SET commitment_submitted = TRUE,
+             updated_at = NOW()
+       WHERE unique_id = $1`,
+      [uniqueId]
+    );
+    return res.sendStatus(204);
+  } catch (err) {
+    next(err);
+  }
+};
+
+
 module.exports = {
-  // Submission endpoints.
+  // form‐submission endpoints
   submitBiodata,
   submitGuarantor,
   submitCommitment,
   allowRefillForm,
-  // Review and approval endpoints.
+
+  // review & approval
   adminReview,
   superadminVerify,
   masterApprove,
-  // Deletion endpoints.
+
+  // deletion
   deleteBiodataSubmission,
   deleteGuarantorSubmission,
   deleteCommitmentSubmission,
-  // GET endpoints.
+
+  // fetching
   getAllSubmissionsForMasterAdmin,
   getSubmissionsForAdmin,
   getSubmissionsForSuperAdmin,
+
+  // **new** one‐line success flips
+  biodataSuccess,
+  guarantorSuccess,
+  commitmentSuccess,
 };

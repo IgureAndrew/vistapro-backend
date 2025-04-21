@@ -11,8 +11,7 @@ const upload = multer({ storage: memoryStorage });
 const { verifyToken } = require("../middlewares/authMiddleware");
 const { verifyRole } = require("../middlewares/roleMiddleware");
 
-// Import controller functions from VerificationController.
-// (Note: update your controller functions to use submissionId for deletion where needed.)
+// Import all your controller functions from VerificationController
 const {
   submitBiodata,
   submitGuarantor,
@@ -27,6 +26,9 @@ const {
   getAllSubmissionsForMasterAdmin,
   getSubmissionsForAdmin,
   getSubmissionsForSuperAdmin,
+  biodataSuccess,
+  guarantorSuccess,
+  commitmentSuccess
 } = require("../controllers/verificationController");
 
 /**
@@ -34,11 +36,6 @@ const {
  */
 
 // POST /api/verification/bio-data
-// Biodata Submission Route:
-// - Expects two file uploads (FormData):
-//    - "passport_photo": for the passport photo.
-//    - "id_document": for the means of identification file.
-// Only authenticated Marketers can submit this form.
 router.post(
   "/bio-data",
   verifyToken,
@@ -51,11 +48,6 @@ router.post(
 );
 
 // POST /api/verification/guarantor
-// Guarantor Submission Route:
-// - Expects two file uploads:
-//    - "identification_file": image of the selected identification document.
-//    - "signature": the guarantor's signature image.
-// Only authenticated Marketers can submit this form.
 router.post(
   "/guarantor",
   verifyToken,
@@ -68,9 +60,6 @@ router.post(
 );
 
 // POST /api/verification/commitment-handbook
-// Commitment Handbook Submission Route:
-// - Expects a single file upload (the Direct Sales Rep's signature) under the field "signature".
-// Only authenticated Marketers can submit this form.
 router.post(
   "/commitment-handbook",
   verifyToken,
@@ -84,8 +73,6 @@ router.post(
  */
 
 // PATCH /api/verification/allow-refill
-// Allow Refill: Resets a specific submission flag (and optionally deletes a submission record)
-// so that a marketer can re-submit the specific form.
 router.patch(
   "/allow-refill",
   verifyToken,
@@ -94,7 +81,6 @@ router.patch(
 );
 
 // PATCH /api/verification/admin-review
-// Admin Review: Allows an Admin to review the submitted forms and set review flags plus a report.
 router.patch(
   "/admin-review",
   verifyToken,
@@ -103,8 +89,6 @@ router.patch(
 );
 
 // PATCH /api/verification/superadmin-verify
-// SuperAdmin Verification: Allows a SuperAdmin to verify or reject a marketer's submission,
-// only if the marketer is assigned to an admin under the SuperAdmin.
 router.patch(
   "/superadmin-verify",
   verifyToken,
@@ -113,7 +97,6 @@ router.patch(
 );
 
 // PATCH /api/verification/master-approve
-// Master Admin Final Approval: Gives final approval to a marketer (unlocking their dashboard).
 router.patch(
   "/master-approve",
   verifyToken,
@@ -125,8 +108,6 @@ router.patch(
  * *********************** Deletion Endpoints (Master Admin Only) *************************
  */
 
-// DELETE /api/verification/biodata/:submissionId
-// Deletes a specific biodata submission record using its submissionId.
 router.delete(
   "/biodata/:submissionId",
   verifyToken,
@@ -134,8 +115,6 @@ router.delete(
   deleteBiodataSubmission
 );
 
-// DELETE /api/verification/guarantor/:submissionId
-// Deletes a specific guarantor submission record using its submissionId.
 router.delete(
   "/guarantor/:submissionId",
   verifyToken,
@@ -143,8 +122,6 @@ router.delete(
   deleteGuarantorSubmission
 );
 
-// DELETE /api/verification/commitment/:submissionId
-// Deletes a specific commitment submission record using its submissionId.
 router.delete(
   "/commitment/:submissionId",
   verifyToken,
@@ -156,8 +133,6 @@ router.delete(
  * *********************** GET Endpoints *************************
  */
 
-// GET /api/verification/submissions/master
-// Returns all submissions (biodata, guarantor, commitment) for Master Admin review.
 router.get(
   "/submissions/master",
   verifyToken,
@@ -165,8 +140,6 @@ router.get(
   getAllSubmissionsForMasterAdmin
 );
 
-// GET /api/verification/submissions/admin
-// Returns submissions for marketers assigned to the logged-in Admin.
 router.get(
   "/submissions/admin",
   verifyToken,
@@ -174,13 +147,19 @@ router.get(
   getSubmissionsForAdmin
 );
 
-// GET /api/verification/submissions/superadmin
-// Returns submissions for marketers whose assigned admin is under the logged-in SuperAdmin.
 router.get(
   "/submissions/superadmin",
   verifyToken,
   verifyRole(["SuperAdmin"]),
   getSubmissionsForSuperAdmin
 );
+
+/**
+ * *********************** “Success” Endpoints (to avoid 404s) *************************
+ */
+
+router.patch("/biodata-success",    verifyToken, biodataSuccess);
+router.patch("/guarantor-success",  verifyToken, guarantorSuccess);
+router.patch("/commitment-success", verifyToken, commitmentSuccess);
 
 module.exports = router;
