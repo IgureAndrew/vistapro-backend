@@ -243,14 +243,19 @@ async function getOrders(req, res, next) {
 
     const { rows } = await pool.query(
       `
-        SELECT
-          o.*,
-          u.unique_id AS marketer_unique_id
-        FROM orders o
-        JOIN users u
-          ON o.marketer_id = u.id
-        WHERE o.marketer_id = $1
-        ORDER BY o.created_at DESC
+       SELECT
+       o.id,
+       o.device_name,
+       o.device_model,
+       o.price,
+       o.bnpl_platform     AS bnpl,      -- <— alias it here
+       o.status,
+       u.unique_id         AS marketer_unique_id
+     FROM orders o
+     JOIN users u ON o.marketer_id = u.id
+     WHERE o.marketer_id = $1
+     ORDER BY o.created_at DESC
+    
       `,
       [marketerId]
     );

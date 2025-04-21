@@ -445,7 +445,7 @@ const allowRefillForm = async (req, res, next) => {
     
     // Emit a Socket.IO event to notify the marketer.
     const io = req.app.get('socketio');
-    if (io) {
+    if (io) { marketerUniqueId,   
       io.to(marketerUniqueId).emit('formReset', {
         formType: formType.toLowerCase(),
         message: `Your ${formType} form has been reset. Please refill it.`
