@@ -238,31 +238,23 @@ const placeOrder = async (req, res, next) => {
  */
 async function getOrders(req, res, next) {
   try {
+    // req.user.id should be set by your auth middleware
     const marketerId = req.user.id;
 
-    const query = `
-      SELECT
-        o.id,
-        o.device_name,
-        o.device_model,
-        o.device_type,
-        o.imei,
-        o.number_of_devices,
-        o.sold_amount,
-        o.customer_name,
-        o.customer_phone,
-        o.customer_address,
-        o.bnpl_platform,                     -- this is your EASYBUY / WATFU / etc
-        o.status,
-        u.unique_id AS marketer_unique_id
-      FROM orders o
-      JOIN users u ON o.marketer_id = u.id
-      WHERE o.marketer_id = $1
-      ORDER BY o.created_at DESC
-    `;
-    const { rows } = await pool.query(query, [marketerId]);
+    const { rows } = await pool.query(
+      `
+        SELECT
+          o.*,
+          u.unique_id AS marketer_unique_id
+        FROM orders o
+        JOIN users u
+          ON o.marketer_id = u.id
+        WHERE o.marketer_id = $1
+        ORDER BY o.created_at DESC
+      `,
+      [marketerId]
+    );
 
-    // return exactly what you want
     res.status(200).json({ orders: rows });
   } catch (err) {
     next(err);
