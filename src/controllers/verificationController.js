@@ -13,8 +13,6 @@ const sendSocketNotification = require("../utils/sendSocketNotification");
  * Uses the marketer's unique ID (req.user.unique_id) for all records.
  */
 const submitBiodata = async (req, res, next) => { 
-  console.log("👀 submitBiodata req.body:", req.body);
-  console.log("👀 submitBiodata req.files:", Object.keys(req.files || {}))
   try {
     const {
       name,
@@ -446,9 +444,9 @@ const allowRefillForm = async (req, res, next) => {
     }
     
     // Emit a Socket.IO event to notify the marketer.
-    const io = req.app.get("socketio");
+    const io = req.app.get('socketio');
     if (io) {
-      io.to(marketerUniqueId).emit("formReset", {
+      io.to(marketerUniqueId).emit('formReset', {
         formType: formType.toLowerCase(),
         message: `Your ${formType} form has been reset. Please refill it.`
       });

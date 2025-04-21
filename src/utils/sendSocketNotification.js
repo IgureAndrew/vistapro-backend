@@ -29,9 +29,9 @@ async function sendSocketNotification(marketerUniqueId, message, app) {
 
   // 4) Emit the new notification for the dropdown
   io.to(marketerUniqueId).emit("newNotification", {
-    id,
+    id: notif.id,
     message,
-    created_at,
+    created_at: notif.created_at,
     is_read: false
   });
 
