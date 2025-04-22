@@ -36,11 +36,17 @@ const addProduct = async (req, res, next) => {
 
     const query = `
       INSERT INTO products
-      ( dealer_id, dealer_business_name,
-        device_type, device_name, device_model,
-        product_quantity, cost_price,
-        selling_price, profit, created_at
-      )
+        ( dealer_id,
+          dealer_business_name,
+          device_type,
+          device_name,
+          device_model,
+          product_quantity,
+          cost_price,
+          selling_price,
+          profit,
+          created_at
+        )
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
       RETURNING *
     `;
@@ -55,6 +61,7 @@ const addProduct = async (req, res, next) => {
       selling_price,
       profit,
     ];
+
     const { rows } = await pool.query(query, values);
     res.status(201).json({ message: "Product added.", product: rows[0] });
   } catch (err) {
@@ -64,7 +71,7 @@ const addProduct = async (req, res, next) => {
 
 /**
  * getProducts
- * Any authenticated user can list.
+ * Any authenticated user may list all products.
  */
 const getProducts = async (req, res, next) => {
   try {
@@ -80,6 +87,7 @@ const getProducts = async (req, res, next) => {
 /**
  * updateProduct
  * Only MasterAdmin may update any product fields.
+ * Recomputes profit if both cost_price & selling_price are provided.
  */
 const updateProduct = async (req, res, next) => {
   try {
@@ -95,7 +103,7 @@ const updateProduct = async (req, res, next) => {
       selling_price,
     } = req.body;
 
-    // If both prices are provided, compute profit
+    // compute profit if both prices present
     let profit = null;
     if (cost_price != null && selling_price != null) {
       profit = parseFloat(selling_price) - parseFloat(cost_price);
@@ -131,7 +139,7 @@ const updateProduct = async (req, res, next) => {
     ];
 
     const { rows } = await pool.query(query, values);
-    if (rows.length === 0) {
+    if (!rows.length) {
       return res.status(404).json({ message: "Product not found." });
     }
 
@@ -146,8 +154,7 @@ const updateProduct = async (req, res, next) => {
 
 /**
  * deleteProduct
- * Any authenticated user may delete? Or restrict to MasterAdmin/Dealer?
- * (Adjust as needed—in this example we allow MasterAdmin only.)
+ * Only MasterAdmin may delete products.
  */
 const deleteProduct = async (req, res, next) => {
   try {
@@ -155,6 +162,7 @@ const deleteProduct = async (req, res, next) => {
     if (role !== 'MasterAdmin') {
       return res.status(403).json({ message: 'Not authorized to delete products.' });
     }
+
     const id = req.params.id;
     const { rows } = await pool.query(
       'DELETE FROM products WHERE id = $1 RETURNING *',
@@ -163,6 +171,7 @@ const deleteProduct = async (req, res, next) => {
     if (!rows.length) {
       return res.status(404).json({ message: 'Product not found.' });
     }
+
     res.status(200).json({
       message: 'Product deleted successfully.',
       product: rows[0],
