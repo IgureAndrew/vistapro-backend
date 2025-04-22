@@ -2,87 +2,84 @@
 const { pool } = require('../config/database');
 
 /**
- * addProduct - Adds a new product purchased from a dealer.
- * Expects the following fields in req.body:
- *   - dealer_id, dealer_business_name, device_name, device_model,
- *     product_quantity, overall_product_quantity, product_base_price, cost_price
+ * addProduct
+ * Only MasterAdmin or Dealer may add.
+ * Inserts a new product with cost, selling price, and computed profit.
  */
 const addProduct = async (req, res, next) => {
   try {
     const {
       dealer_id,
       dealer_business_name,
+      device_type,
       device_name,
       device_model,
       product_quantity,
-      overall_product_quantity,
-      product_base_price,
       cost_price,
+      selling_price,
     } = req.body;
 
-    // Basic validation (adjust as needed)
     if (
       !dealer_id ||
+      !device_type ||
       !device_name ||
       !device_model ||
-      product_quantity === undefined ||
-      overall_product_quantity === undefined ||
-      product_base_price === undefined ||
-      cost_price === undefined
+      product_quantity == null ||
+      cost_price == null ||
+      selling_price == null
     ) {
       return res.status(400).json({ message: "Missing required fields" });
     }
 
+    // calculate profit
+    const profit = parseFloat(selling_price) - parseFloat(cost_price);
+
     const query = `
-      INSERT INTO products 
-        (dealer_id, dealer_business_name, device_name, device_model,
-         product_quantity, overall_product_quantity, product_base_price, cost_price, created_at)
-      VALUES
-        ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+      INSERT INTO products
+      ( dealer_id, dealer_business_name,
+        device_type, device_name, device_model,
+        product_quantity, cost_price,
+        selling_price, profit, created_at
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
       RETURNING *
     `;
     const values = [
       dealer_id,
-      dealer_business_name,
+      dealer_business_name || null,
+      device_type,
       device_name,
       device_model,
       product_quantity,
-      overall_product_quantity,
-      product_base_price,
       cost_price,
+      selling_price,
+      profit,
     ];
-    const result = await pool.query(query, values);
-
-    return res.status(201).json({
-      message: "Product added successfully.",
-      product: result.rows[0],
-    });
-  } catch (error) {
-    next(error);
+    const { rows } = await pool.query(query, values);
+    res.status(201).json({ message: "Product added.", product: rows[0] });
+  } catch (err) {
+    next(err);
   }
 };
 
 /**
- * getProducts - Retrieves all products.
+ * getProducts
+ * Any authenticated user can list.
  */
 const getProducts = async (req, res, next) => {
   try {
-    const query = `SELECT * FROM products ORDER BY created_at DESC`;
-    const result = await pool.query(query);
-    return res.status(200).json({
-      message: "Products retrieved successfully.",
-      products: result.rows,
-    });
-  } catch (error) {
-    next(error);
+    const { rows } = await pool.query(
+      `SELECT * FROM products ORDER BY created_at DESC`
+    );
+    res.status(200).json({ products: rows });
+  } catch (err) {
+    next(err);
   }
 };
 
 /**
- * updateProduct - Updates an existing product by id.
- * Allows updating the following fields:
- *   - dealer_id, dealer_business_name, device_name, device_model,
- *     product_quantity, overall_product_quantity, product_base_price, cost_price
+ * updateProduct
+ * Only MasterAdmin may update any product fields.
  */
 const updateProduct = async (req, res, next) => {
   try {
@@ -90,50 +87,57 @@ const updateProduct = async (req, res, next) => {
     const {
       dealer_id,
       dealer_business_name,
+      device_type,
       device_name,
       device_model,
       product_quantity,
-      overall_product_quantity,
-      product_base_price,
       cost_price,
+      selling_price,
     } = req.body;
-    
-    // Build the update query
+
+    // If both prices are provided, compute profit
+    let profit = null;
+    if (cost_price != null && selling_price != null) {
+      profit = parseFloat(selling_price) - parseFloat(cost_price);
+    }
+
     const query = `
       UPDATE products
-      SET 
-        dealer_id = COALESCE($1, dealer_id),
-        dealer_business_name = COALESCE($2, dealer_business_name),
-        device_name = COALESCE($3, device_name),
-        device_model = COALESCE($4, device_model),
-        product_quantity = COALESCE($5, product_quantity),
-        overall_product_quantity = COALESCE($6, overall_product_quantity),
-        product_base_price = COALESCE($7, product_base_price),
-        cost_price = COALESCE($8, cost_price),
-        updated_at = NOW()
-      WHERE id = $9
+      SET
+        dealer_id               = COALESCE($1, dealer_id),
+        dealer_business_name    = COALESCE($2, dealer_business_name),
+        device_type             = COALESCE($3, device_type),
+        device_name             = COALESCE($4, device_name),
+        device_model            = COALESCE($5, device_model),
+        product_quantity        = COALESCE($6, product_quantity),
+        cost_price              = COALESCE($7, cost_price),
+        selling_price           = COALESCE($8, selling_price),
+        profit                  = COALESCE($9, profit),
+        updated_at              = NOW()
+      WHERE id = $10
       RETURNING *
     `;
     const values = [
       dealer_id,
       dealer_business_name,
+      device_type,
       device_name,
       device_model,
       product_quantity,
-      overall_product_quantity,
-      product_base_price,
       cost_price,
-      productId
+      selling_price,
+      profit,
+      productId,
     ];
-    const result = await pool.query(query, values);
-    
-    if (result.rows.length === 0) {
+
+    const { rows } = await pool.query(query, values);
+    if (rows.length === 0) {
       return res.status(404).json({ message: "Product not found." });
     }
-    
-    return res.status(200).json({
+
+    res.status(200).json({
       message: "Product updated successfully.",
-      product: result.rows[0]
+      product: rows[0],
     });
   } catch (error) {
     next(error);
@@ -141,48 +145,36 @@ const updateProduct = async (req, res, next) => {
 };
 
 /**
- * deleteProduct - Deletes a product by id.
+ * deleteProduct
+ * Any authenticated user may delete? Or restrict to MasterAdmin/Dealer?
+ * (Adjust as needed—in this example we allow MasterAdmin only.)
  */
 const deleteProduct = async (req, res, next) => {
   try {
-    const productId = req.params.id;
-    const query = `DELETE FROM products WHERE id = $1 RETURNING *`;
-    const result = await pool.query(query, [productId]);
-    
-    if (result.rows.length === 0) {
-      return res.status(404).json({ message: "Product not found." });
+    const { role } = req.user;
+    if (role !== 'MasterAdmin') {
+      return res.status(403).json({ message: 'Not authorized to delete products.' });
     }
-    
-    return res.status(200).json({
-      message: "Product deleted successfully.",
-      product: result.rows[0]
+    const id = req.params.id;
+    const { rows } = await pool.query(
+      'DELETE FROM products WHERE id = $1 RETURNING *',
+      [id]
+    );
+    if (!rows.length) {
+      return res.status(404).json({ message: 'Product not found.' });
+    }
+    res.status(200).json({
+      message: 'Product deleted successfully.',
+      product: rows[0],
     });
-  } catch (error) {
-    next(error);
-  }
-};
-
-/**
- * listProducts - Lists all products.
- */
-const listProducts = async (req, res, next) => {
-  try {
-    const query = `SELECT * FROM products ORDER BY created_at DESC`;
-    const result = await pool.query(query);
-    
-    return res.status(200).json({
-      message: "Products retrieved successfully.",
-      products: result.rows
-    });
-  } catch (error) {
-    next(error);
+  } catch (err) {
+    next(err);
   }
 };
 
 module.exports = {
-  addProduct, 
+  addProduct,
   getProducts,
   updateProduct,
   deleteProduct,
-  listProducts
 };

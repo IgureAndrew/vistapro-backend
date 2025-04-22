@@ -7,15 +7,33 @@ const {
   addProduct,
   updateProduct,
   deleteProduct,
-  listProducts,
 } = require('../controllers/productController');
 
-// Only Master Admin can add, update, or delete products.
-router.post('/', verifyToken, verifyRole(["MasterAdmin"]), addProduct);
-router.put('/:id', verifyToken, verifyRole(["MasterAdmin"]), updateProduct);
-router.delete('/:id', verifyToken, verifyRole(["MasterAdmin"]), deleteProduct);
+// → Allow MasterAdmin **or** Dealer to add
+router.post(
+  '/',
+  verifyToken,
+  verifyRole(['MasterAdmin', 'Dealer']),
+  addProduct
+);
 
-// Retrieve products – accessible to any authenticated user.
-router.get('/', verifyToken, listProducts);
+// → Only MasterAdmin can update
+router.put(
+  '/:id',
+  verifyToken,
+  verifyRole(['MasterAdmin']),
+  updateProduct
+);
+
+// → Only MasterAdmin can delete
+router.delete(
+  '/:id',
+  verifyToken,
+  verifyRole(['MasterAdmin']),
+  deleteProduct
+);
+
+
+
 
 module.exports = router;
