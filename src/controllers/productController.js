@@ -4,7 +4,7 @@ const { pool } = require('../config/database');
 /**
  * addProduct
  * Only MasterAdmin or Dealer may add.
- * Inserts a new product with cost, selling price, and computed profit.
+ * Inserts a new product; profit is computed by the database.
  */
 const addProduct = async (req, res, next) => {
   try {
@@ -31,23 +31,18 @@ const addProduct = async (req, res, next) => {
       return res.status(400).json({ message: "Missing required fields" });
     }
 
-    // calculate profit
-    const profit = parseFloat(selling_price) - parseFloat(cost_price);
-
     const query = `
-      INSERT INTO products
-        ( dealer_id,
-          dealer_business_name,
-          device_type,
-          device_name,
-          device_model,
-          product_quantity,
-          cost_price,
-          selling_price,
-          profit,
-          created_at
-        )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
+      INSERT INTO products (
+        dealer_id,
+        dealer_business_name,
+        device_type,
+        device_name,
+        device_model,
+        product_quantity,
+        cost_price,
+        selling_price,
+        created_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW())
       RETURNING *
     `;
     const values = [
@@ -59,7 +54,6 @@ const addProduct = async (req, res, next) => {
       product_quantity,
       cost_price,
       selling_price,
-      profit,
     ];
 
     const { rows } = await pool.query(query, values);
@@ -86,8 +80,8 @@ const getProducts = async (req, res, next) => {
 
 /**
  * updateProduct
- * Only MasterAdmin may update any product fields.
- * Recomputes profit if both cost_price & selling_price are provided.
+ * Only MasterAdmin may update.
+ * Adjusts cost_price and/or selling_price; profit is recomputed by the database.
  */
 const updateProduct = async (req, res, next) => {
   try {
@@ -103,26 +97,19 @@ const updateProduct = async (req, res, next) => {
       selling_price,
     } = req.body;
 
-    // compute profit if both prices present
-    let profit = null;
-    if (cost_price != null && selling_price != null) {
-      profit = parseFloat(selling_price) - parseFloat(cost_price);
-    }
-
     const query = `
       UPDATE products
       SET
-        dealer_id               = COALESCE($1, dealer_id),
-        dealer_business_name    = COALESCE($2, dealer_business_name),
-        device_type             = COALESCE($3, device_type),
-        device_name             = COALESCE($4, device_name),
-        device_model            = COALESCE($5, device_model),
-        product_quantity        = COALESCE($6, product_quantity),
-        cost_price              = COALESCE($7, cost_price),
-        selling_price           = COALESCE($8, selling_price),
-        profit                  = COALESCE($9, profit),
-        updated_at              = NOW()
-      WHERE id = $10
+        dealer_id            = COALESCE($1, dealer_id),
+        dealer_business_name = COALESCE($2, dealer_business_name),
+        device_type          = COALESCE($3, device_type),
+        device_name          = COALESCE($4, device_name),
+        device_model         = COALESCE($5, device_model),
+        product_quantity     = COALESCE($6, product_quantity),
+        cost_price           = COALESCE($7, cost_price),
+        selling_price        = COALESCE($8, selling_price),
+        updated_at           = NOW()
+      WHERE id = $9
       RETURNING *
     `;
     const values = [
@@ -134,7 +121,6 @@ const updateProduct = async (req, res, next) => {
       product_quantity,
       cost_price,
       selling_price,
-      profit,
       productId,
     ];
 
@@ -142,7 +128,6 @@ const updateProduct = async (req, res, next) => {
     if (!rows.length) {
       return res.status(404).json({ message: "Product not found." });
     }
-
     res.status(200).json({
       message: "Product updated successfully.",
       product: rows[0],
@@ -171,7 +156,6 @@ const deleteProduct = async (req, res, next) => {
     if (!rows.length) {
       return res.status(404).json({ message: 'Product not found.' });
     }
-
     res.status(200).json({
       message: 'Product deleted successfully.',
       product: rows[0],
