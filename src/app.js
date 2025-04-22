@@ -102,7 +102,7 @@ app.use('/api/dealer', dealerRoutes);
 app.use('/api/dealer/orders', dealerOrderRoutes);
 app.use('/api/marketer', marketerRoutes);
 app.use('/api/outlet', outletRoutes);
-app.use('/api/product', productRoutes);
+app.use('/api/products', productRoutes);
 app.use('/api/manage-order', manageOrderRoutes);
 app.use('/api/report', reportRoutes);
 app.use('/api/profit-report', profitReportRoutes);

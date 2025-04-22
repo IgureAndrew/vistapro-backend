@@ -1,20 +1,28 @@
 // src/routes/productRoutes.js
 const express = require('express');
 const router = express.Router();
-const { verifyToken } = require('../middlewares/authMiddleware');
-const { verifyRole } = require('../middlewares/roleMiddleware');
+const { verifyToken }    = require('../middlewares/authMiddleware');
+const { verifyRole }     = require('../middlewares/roleMiddleware');
 const {
   addProduct,
+  getProducts,
   updateProduct,
-  deleteProduct,
+  deleteProduct
 } = require('../controllers/productController');
 
 // → Allow MasterAdmin **or** Dealer to add
 router.post(
   '/',
   verifyToken,
-  verifyRole(['MasterAdmin', 'Dealer']),
+  verifyRole(['MasterAdmin','Dealer']),
   addProduct
+);
+
+// → anyone authenticated can list
+router.get(
+  '/',
+  verifyToken,
+  getProducts
 );
 
 // → Only MasterAdmin can update
@@ -32,8 +40,5 @@ router.delete(
   verifyRole(['MasterAdmin']),
   deleteProduct
 );
-
-
-
 
 module.exports = router;
