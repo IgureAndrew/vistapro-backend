@@ -107,7 +107,7 @@ app.use('/api/manage-order', manageOrderRoutes);
 app.use('/api/report', reportRoutes);
 app.use('/api/profit-report', profitReportRoutes);
 app.use('/api/performance', performanceRoutes);
-app.use('/api/stock', stockupdateRoutes);
+app.use('/api/stockupdate', stockupdateRoutes);
 app.use("/api/verification", verificationRoutes);
 app.use('/api/notifications', require('./routes/notificationRoutes'));
 app.use('/api/wallets', walletRoutes);
