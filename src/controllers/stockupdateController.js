@@ -6,7 +6,7 @@ const { pool } = require('../config/database');
  *    Marketer picks up stock → decrements product_quantity, creates a pending record.
  *    Deadline is 48 hrs from pickup.
  */
-async function createStockUpdate(req, res, next) {
+const createStockUpdate = async (req, res, next) => {
   try {
     const { product_id, quantity } = req.body;
     const marketerUID = req.user.unique_id;
@@ -15,19 +15,16 @@ async function createStockUpdate(req, res, next) {
     }
     const qty = parseInt(quantity, 10) || 1;
 
-    // check available
+    // 1) check stock
     const stockQ = await pool.query(
-      `SELECT COALESCE(product_quantity, 0) AS qty
-     FROM products
-    WHERE id = $1`,
-
+      `SELECT product_quantity FROM products WHERE id = $1`,
       [product_id]
     );
     if (!stockQ.rowCount || stockQ.rows[0].product_quantity < qty) {
       return res.status(400).json({ message: "Not enough stock available" });
     }
 
-    // decrement inventory
+    // 2) decrement
     await pool.query(
       `UPDATE products
          SET product_quantity = product_quantity - $1
@@ -35,44 +32,43 @@ async function createStockUpdate(req, res, next) {
       [qty, product_id]
     );
 
-    // insert into stock_updates
-    const { rows } = await pool.query(
-      `INSERT INTO stock_updates
-         ( marketer_id,
-           product_id,
-           quantity,
-           pickup_date,
-           deadline,
-           status,
-           transfer_status
-         )
-       VALUES (
-         (SELECT id FROM users WHERE unique_id = $1),
-         $2,
-         $3,
+    // 3) insert pickup with exactly 48 hours deadline
+    const insertQ = `
+      INSERT INTO stock_updates
+        ( marketer_id, product_id, quantity, pickup_date, deadline, transfer_status )
+      VALUES (
+        (SELECT id FROM users WHERE unique_id = $1),
+         $2, $3,
          NOW(),
          NOW() + INTERVAL '48 hours',
-         'pending',
          'none'
-       )
-       RETURNING *`,
-      [marketerUID, product_id, qty]
-    );
+      )
+      RETURNING *
+    `;
+    const { rows } = await pool.query(insertQ, [
+      marketerUID,
+      product_id,
+      qty
+    ]);
     const stock = rows[0];
 
-    // notify assigned admin
-    const adminQ = await pool.query(
-      `SELECT admin_id FROM users WHERE unique_id = $1`,
+    // 4) notify assigned admin, using unique_id
+    //    get the admin's unique_id instead of internal id
+    const adminUidQ = await pool.query(
+      `SELECT u2.unique_id
+         FROM users u
+         JOIN users u2 ON u.admin_id = u2.id
+        WHERE u.unique_id = $1`,
       [marketerUID]
     );
-    const adminId = adminQ.rows[0]?.admin_id;
-    if (adminId) {
+    const adminUniqueId = adminUidQ.rows[0]?.unique_id;
+    if (adminUniqueId) {
       await pool.query(
-        `INSERT INTO notifications (user_id, message, created_at)
+        `INSERT INTO notifications (user_unique_id, message, created_at)
          VALUES ($1, $2, NOW())`,
         [
-          adminId,
-          `Marketer ${marketerUID} picked up ${qty} unit(s) of product #${product_id}.`
+          adminUniqueId,
+          `Marketer ${marketerUID} picked up ${qty} unit(s).`
         ]
       );
     }
@@ -84,7 +80,8 @@ async function createStockUpdate(req, res, next) {
   } catch (err) {
     next(err);
   }
-}
+};
+
 
 /**
  * 2) placeOrder
