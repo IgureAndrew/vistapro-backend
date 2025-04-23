@@ -1,28 +1,56 @@
-// src/routes/stockRoutes.js
+// src/routes/stockupdateRoutes.js
 const express = require('express');
+const router = express.Router();
 const { verifyToken } = require('../middlewares/authMiddleware');
 const { verifyRole }  = require('../middlewares/roleMiddleware');
-const {
-  createStockUpdate,
-  requestStockTransfer,
-  approveStockTransfer,
-  getMarketerStockUpdates,
-  getStockUpdates,
-  getStaleStockUpdates,
-  getStockUpdateHistory
-} = require('../controllers/stockupdateController');
+const ctrl = require('../controllers/stockupdateController');
 
-const router = express.Router();
+// 1. Marketer picks up stock
+router.post(
+  '/',
+  verifyToken,
+  verifyRole(['Marketer']),
+  ctrl.createStockUpdate
+);
 
-// pickup, list, mark‐sold…
-router.post(   '/',           verifyToken, verifyRole(['Marketer']), createStockUpdate);
-router.get(    '/marketer',   verifyToken, verifyRole(['Marketer']), getMarketerStockUpdates);
-router.get(    '/',           verifyToken, getStockUpdates);
-router.get(    '/stale',      verifyToken, getStaleStockUpdates);
-router.get(    '/history',    verifyToken, getStockUpdateHistory);
+// 2. Marketer places order (uses pending pickup or free-order)
+router.post(
+  '/order',
+  verifyToken,
+  verifyRole(['Marketer']),
+  ctrl.placeOrder
+);
 
-// transfer flow:
-router.post(   '/:id/transfer',          verifyToken, verifyRole(['Marketer']), requestStockTransfer);
-router.patch(  '/:id/transfer',          verifyToken, verifyRole(['MasterAdmin']), approveStockTransfer);
+// 3. Marketer requests to transfer a pending pickup
+router.post(
+  '/:id/transfer',
+  verifyToken,
+  verifyRole(['Marketer']),
+  ctrl.requestStockTransfer
+);
+
+// 4. MasterAdmin approves/rejects transfers
+router.patch(
+  '/:id/transfer',
+  verifyToken,
+  verifyRole(['MasterAdmin']),
+  ctrl.approveStockTransfer
+);
+
+// 5. List my pickups
+router.get(
+  '/marketer',
+  verifyToken,
+  verifyRole(['Marketer']),
+  ctrl.getMarketerStockUpdates
+);
+
+// 6. List all pickups (Master/Admin/SuperAdmin)
+router.get(
+  '/',
+  verifyToken,
+  verifyRole(['MasterAdmin','Admin','SuperAdmin']),
+  ctrl.getStockUpdates
+);
 
 module.exports = router;
