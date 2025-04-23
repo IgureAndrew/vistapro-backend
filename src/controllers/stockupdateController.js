@@ -17,7 +17,10 @@ async function createStockUpdate(req, res, next) {
 
     // check available
     const stockQ = await pool.query(
-      `SELECT product_quantity FROM products WHERE id = $1`,
+      `SELECT COALESCE(product_quantity, 0) AS qty
+     FROM products
+    WHERE id = $1`,
+
       [product_id]
     );
     if (!stockQ.rowCount || stockQ.rows[0].product_quantity < qty) {
