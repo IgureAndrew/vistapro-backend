@@ -291,12 +291,32 @@ async function getMarketerStockUpdates(req, res, next) {
 }
 
 /**
- * 6) getStockUpdates
- *    Master/Admin/SuperAdmin can see all or filtered pickups.
+ * getStockUpdates – Master/Admin/SuperAdmin: list all pickups
+ * now including marketer name & unique_id
  */
 async function getStockUpdates(req, res, next) {
-  // ... implement same role‐based logic as before, but always join products & users ...
-  next(); // placeholder
+  try {
+    // you can still filter by role if desired, but here we show all for MasterAdmin
+    const query = `
+      SELECT 
+        su.id,
+        su.product_id,
+        su.quantity,
+        su.pickup_date,
+        su.deadline,
+        su.status,
+        su.transfer_status,
+        u.first_name || ' ' || u.last_name AS marketer_name,
+        u.unique_id AS marketer_unique_id
+      FROM stock_updates su
+      JOIN users u ON su.marketer_id = u.id
+      ORDER BY su.pickup_date DESC
+    `;
+    const { rows } = await pool.query(query);
+    return res.status(200).json({ data: rows });
+  } catch (err) {
+    next(err);
+  }
 }
 
 module.exports = {
