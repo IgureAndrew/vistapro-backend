@@ -1,36 +1,30 @@
 // src/routes/stockRoutes.js
 const express = require('express');
-const router = express.Router();
 const { verifyToken } = require('../middlewares/authMiddleware');
-const { verifyRole } = require('../middlewares/roleMiddleware');
+const { verifyRole }  = require('../middlewares/roleMiddleware');
 const {
   createStockUpdate,
+  requestStockTransfer,
+  approveStockTransfer,
   markStockAsSold,
+  getMarketerStockUpdates,
   getStockUpdates,
   getStaleStockUpdates,
-  getStockUpdateHistory,
-  getMarketerStockUpdates
+  getStockUpdateHistory
 } = require('../controllers/stockupdateController');
 
-// Route: Create a new stock update (accessible by Marketers)
-router.post('/', verifyToken, verifyRole(["Marketer"]), createStockUpdate);
+const router = express.Router();
 
-// Route: Get all stock updates (accessible by authenticated users)
-// The controller applies role-based filtering.
-router.get('/', verifyToken, getStockUpdates);
+// pickup, list, mark‐sold…
+router.post(   '/',           verifyToken, verifyRole(['Marketer']), createStockUpdate);
+router.get(    '/marketer',   verifyToken, verifyRole(['Marketer']), getMarketerStockUpdates);
+router.patch(  '/:id/sold',    verifyToken, verifyRole(['MasterAdmin']), markStockAsSold);
+router.get(    '/',           verifyToken, getStockUpdates);
+router.get(    '/stale',      verifyToken, getStaleStockUpdates);
+router.get(    '/history',    verifyToken, getStockUpdateHistory);
 
-// New Route: Get stock updates for a marketer (accessible only by Marketers)
-router.get('/marketer', verifyToken, verifyRole(["Marketer"]), getMarketerStockUpdates);
-
-
-// Route: Mark a stock update as sold (accessible only by Master Admin)
-router.patch('/:id/sold', verifyToken, verifyRole(["MasterAdmin"]), markStockAsSold);
-
-// Route: Get stale stock updates (accessible by authenticated users)
-// The controller applies role-based filtering.
-router.get('/stale', verifyToken, getStaleStockUpdates);
-
-// Route: Get stock update history (aggregated by week, month, or year, filtered by role)
-router.get('/history', verifyToken, getStockUpdateHistory);
+// transfer flow:
+router.post(   '/:id/transfer',          verifyToken, verifyRole(['Marketer']), requestStockTransfer);
+router.patch(  '/:id/transfer',          verifyToken, verifyRole(['MasterAdmin']), approveStockTransfer);
 
 module.exports = router;

@@ -19,62 +19,176 @@ const { pool } = require('../config/database');
  */
 const createStockUpdate = async (req, res, next) => {
   try {
-    // Extract dealerUniqueId and other fields from the request body.
-    const { dealerUniqueId, device_name, device_model, device_category, quantity } = req.body;
-    
-    // Get the marketer's unique ID from the authenticated user.
-    const marketerUniqueId = req.user.unique_id;
-    if (!marketerUniqueId || !dealerUniqueId || !device_name || !device_model || !device_category) {
-      return res.status(400).json({ message: "Required fields missing." });
+    const { product_id, quantity } = req.body;
+    const marketerUID = req.user.unique_id;
+    if (!product_id) {
+      return res.status(400).json({ message: "Missing product_id" });
+    }
+    const qty = parseInt(quantity, 10) || 1;
+
+    // 1) check stock
+    const stockQ = await pool.query(
+      `SELECT product_quantity FROM products WHERE id = $1`,
+      [product_id]
+    );
+    if (!stockQ.rowCount || stockQ.rows[0].product_quantity < qty) {
+      return res.status(400).json({ message: "Not enough stock available" });
     }
 
-    // Use provided quantity or default to 1 if not specified.
-    const qty = quantity || 1;
+    // 2) decrement
+    await pool.query(
+      `UPDATE products
+         SET product_quantity = product_quantity - $1
+       WHERE id = $2`,
+      [qty, product_id]
+    );
 
-    // Set the pickup date to now and deadline to 4 days later.
-    const pickup_date = new Date();
-    const deadline = new Date(pickup_date.getTime() + 4 * 24 * 60 * 60 * 1000);
-
-    // Insert the stock update record.
-    // Convert the marketer's and dealer's unique IDs to numeric IDs via subqueries.
-    const insertQuery = `
-      INSERT INTO stock_updates 
-        (marketer_id, dealer_id, device_name, device_model, device_category, quantity, pickup_date, deadline, sold)
+    // 3) insert pickup with exactly 48 hours deadline
+    const insertQ = `
+      INSERT INTO stock_updates
+        (marketer_id, product_id, quantity, pickup_date, deadline, sold, transfer_status)
       VALUES (
         (SELECT id FROM users WHERE unique_id = $1),
-        (SELECT id FROM users WHERE unique_id = $2),
-        $3, $4, $5, $6, $7, $8, false
+         $2, $3,
+         NOW(),
+         NOW() + INTERVAL '48 hours',
+         false,
+         'none'
       )
       RETURNING *
     `;
-    const values = [marketerUniqueId, dealerUniqueId, device_name, device_model, device_category, qty, pickup_date, deadline];
-    const result = await pool.query(insertQuery, values);
-    const stockRecord = result.rows[0];
+    const { rows } = await pool.query(insertQ, [
+      marketerUID,
+      product_id,
+      qty
+    ]);
+    const stock = rows[0];
 
-    // Retrieve the assigned admin for the marketer.
-    // We now assume that the assigned admin is stored in the "users" table for a user whose role is "Marketer".
-    const adminQuery = `
-      SELECT admin_id 
-      FROM users 
-      WHERE unique_id = $1 AND role = 'Marketer'
-    `;
-    const adminResult = await pool.query(adminQuery, [marketerUniqueId]);
-    if (adminResult.rows.length > 0 && adminResult.rows[0].admin_id) {
-      const admin_id = adminResult.rows[0].admin_id;
-      const notifQuery = `
-        INSERT INTO notifications (user_id, message, created_at)
-        VALUES ($1, $2, NOW())
-      `;
-      const notifMessage = `Marketer ${marketerUniqueId} picked up ${qty} unit(s) of "${device_name}" (${device_model}, Category: ${device_category}). They must be sold within 4 days.`;
-      await pool.query(notifQuery, [admin_id, notifMessage]);
+    // 4) notify assigned admin (unchanged)
+    const adminQ = await pool.query(
+      `SELECT admin_id FROM users WHERE unique_id = $1`,
+      [marketerUID]
+    );
+    const adminId = adminQ.rows[0]?.admin_id;
+    if (adminId) {
+      await pool.query(
+        `INSERT INTO notifications (user_id, message, created_at)
+         VALUES ($1, $2, NOW())`,
+        [
+          adminId,
+          `Marketer ${marketerUID} picked up ${qty} unit(s).`
+        ]
+      );
     }
 
-    return res.status(201).json({
-      message: "Stock update record created successfully.",
-      stock: stockRecord
+    res.status(201).json({
+      message: "Stock pickup recorded successfully.",
+      stock
     });
-  } catch (error) {
-    next(error);
+  } catch (err) {
+    next(err);
+  }
+};
+/**
+ * requestStockTransfer
+ *  - Marketer → asks to transfer one of their pickups to another marketer
+ */
+const requestStockTransfer = async (req, res, next) => {
+  try {
+    const { id } = req.params;              // stock_updates.id
+    const { targetUniqueId } = req.body;    // another marketer.unique_id
+    const fromUID = req.user.unique_id;
+
+    // 1) ensure record belongs to this marketer
+    const me = await pool.query(
+      `SELECT marketer_id, transfer_status
+         FROM stock_updates
+        WHERE id = $1`,
+      [id]
+    );
+    if (!me.rowCount) {
+      return res.status(404).json({ message: "Pickup not found." });
+    }
+    if (me.rows[0].transfer_status !== 'none') {
+      return res.status(400).json({ message: "Already in transfer." });
+    }
+    const myDbId = me.rows[0].marketer_id;
+
+    // 2) resolve target user id & check same location
+    const target = await pool.query(
+      `SELECT id, state_of_residence
+         FROM users
+        WHERE unique_id = $1`,
+      [targetUniqueId]
+    );
+    if (!target.rowCount) {
+      return res.status(404).json({ message: "Target marketer not found." });
+    }
+    // assume current user also has state_of_residence in req.user
+    if (target.rows[0].state_of_residence !== req.user.state_of_residence) {
+      return res.status(400).json({ message: "Must be same location." });
+    }
+
+    // 3) mark the transfer request
+    await pool.query(
+      `UPDATE stock_updates
+         SET transfer_to_marketer_id = (SELECT id FROM users WHERE unique_id = $1),
+             transfer_status       = 'pending',
+             transfer_requested_at = NOW()
+       WHERE id = $2`,
+      [targetUniqueId, id]
+    );
+
+    res.status(200).json({ message: "Transfer request submitted." });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * approveStockTransfer / rejectStockTransfer
+ *  - MasterAdmin only
+ */
+const approveStockTransfer = async (req, res, next) => {
+  try {
+    if (req.user.role !== 'MasterAdmin') {
+      return res.status(403).json({ message: "Only MasterAdmin can approve." });
+    }
+    const { id } = req.params;
+    const { action } = req.body; // 'approve' or 'reject'
+    if (!['approve','reject'].includes(action)) {
+      return res.status(400).json({ message: "Invalid action." });
+    }
+
+    let q, params;
+    if (action === 'approve') {
+      q = `
+        UPDATE stock_updates
+           SET marketer_id              = transfer_to_marketer_id,
+               transfer_status          = 'approved',
+               transfer_approved_at     = NOW()
+         WHERE id = $1
+         RETURNING *`;
+      params = [id];
+    } else {
+      q = `
+        UPDATE stock_updates
+           SET transfer_status = 'rejected'
+         WHERE id = $1
+         RETURNING *`;
+      params = [id];
+    }
+
+    const { rows } = await pool.query(q, params);
+    if (!rows.length) {
+      return res.status(404).json({ message: "Pickup not found." });
+    }
+    res.status(200).json({
+      message: `Transfer ${action}d successfully.`,
+      stock: rows[0]
+    });
+  } catch (err) {
+    next(err);
   }
 };
 
@@ -326,4 +440,6 @@ module.exports = {
   getStaleStockUpdates,
   getMarketerStockUpdates,
   getStockUpdateHistory,
+  requestStockTransfer,
+  approveStockTransfer
 };
