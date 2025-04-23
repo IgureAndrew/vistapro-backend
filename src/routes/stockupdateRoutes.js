@@ -6,7 +6,6 @@ const {
   createStockUpdate,
   requestStockTransfer,
   approveStockTransfer,
-  markStockAsSold,
   getMarketerStockUpdates,
   getStockUpdates,
   getStaleStockUpdates,
@@ -18,7 +17,6 @@ const router = express.Router();
 // pickup, list, mark‐sold…
 router.post(   '/',           verifyToken, verifyRole(['Marketer']), createStockUpdate);
 router.get(    '/marketer',   verifyToken, verifyRole(['Marketer']), getMarketerStockUpdates);
-router.patch(  '/:id/sold',    verifyToken, verifyRole(['MasterAdmin']), markStockAsSold);
 router.get(    '/',           verifyToken, getStockUpdates);
 router.get(    '/stale',      verifyToken, getStaleStockUpdates);
 router.get(    '/history',    verifyToken, getStockUpdateHistory);

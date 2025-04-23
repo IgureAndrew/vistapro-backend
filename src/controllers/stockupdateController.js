@@ -46,7 +46,7 @@ const createStockUpdate = async (req, res, next) => {
     // 3) insert pickup with exactly 48 hours deadline
     const insertQ = `
       INSERT INTO stock_updates
-        (marketer_id, product_id, quantity, pickup_date, deadline, sold, transfer_status)
+        (marketer_id, product_id, quantity, pickup_date, deadline, transfer_status)
       VALUES (
         (SELECT id FROM users WHERE unique_id = $1),
          $2, $3,
@@ -189,39 +189,6 @@ const approveStockTransfer = async (req, res, next) => {
     });
   } catch (err) {
     next(err);
-  }
-};
-
-/**
- * markStockAsSold - Marks a stock update record as sold.
- * Expected req.params: { id } (stock update record id)
- * Only Master Admin is authorized to mark a record as sold.
- */
-const markStockAsSold = async (req, res, next) => {
-  try {
-    if (req.user.role !== "MasterAdmin") {
-      return res.status(403).json({ message: "Only Master Admin can mark stock as sold." });
-    }
-    const { id } = req.params;
-    if (!id) {
-      return res.status(400).json({ message: "Stock update id is required." });
-    }
-    const updateQuery = `
-      UPDATE stock_updates
-      SET sold = true, sold_date = NOW()
-      WHERE id = $1
-      RETURNING *
-    `;
-    const result = await pool.query(updateQuery, [id]);
-    if (result.rowCount === 0) {
-      return res.status(404).json({ message: "Stock update record not found." });
-    }
-    return res.status(200).json({
-      message: "Stock marked as sold successfully.",
-      stock: result.rows[0]
-    });
-  } catch (error) {
-    next(error);
   }
 };
 
@@ -435,7 +402,6 @@ const getStockUpdateHistory = async (req, res, next) => {
 
 module.exports = {
   createStockUpdate,
-  markStockAsSold,
   getStockUpdates,
   getStaleStockUpdates,
   getMarketerStockUpdates,
