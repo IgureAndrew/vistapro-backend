@@ -77,26 +77,29 @@ const getProducts = async (req, res, next) => {
       SELECT
         p.id,
         p.dealer_id,
-        p.dealer_business_name,
+        u.business_name    AS dealer_name,       -- pull name from users
         p.device_type,
         p.device_name,
         p.device_model,
         p.cost_price,
         p.selling_price,
 
-        -- count how many units are still available
-        COUNT(i.*) FILTER (WHERE i.status = 'available') AS quantity_available,
-        -- low stock flag when ≤2
+        -- stock flags
+        COUNT(i.*) FILTER (WHERE i.status = 'available')   AS quantity_available,
         (COUNT(i.*) FILTER (WHERE i.status = 'available') <= 2) AS is_low_stock,
-        -- available flag when >0
-        (COUNT(i.*) FILTER (WHERE i.status = 'available') > 0) AS is_available,
+        (COUNT(i.*) FILTER (WHERE i.status = 'available') >  0) AS is_available,
+
+        -- collect all IMEIs into an array
+        ARRAY_AGG(i.imei) FILTER (WHERE i.status = 'available') AS available_imeis,
 
         p.created_at,
         p.updated_at
       FROM products p
+      JOIN users u
+        ON p.dealer_id = u.id
       LEFT JOIN inventory_items i
         ON i.product_id = p.id
-      GROUP BY p.id
+      GROUP BY p.id, u.business_name
       ORDER BY p.created_at DESC
     `);
 
