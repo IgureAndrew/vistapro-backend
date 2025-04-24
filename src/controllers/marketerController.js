@@ -154,7 +154,9 @@ const updateAccountSettings = async (req, res, next) => {
  *   - customer_name, customer_phone, customer_address,
  *   - bnpl_platform (optional)
  */
-const placeOrder = async (req, res, next) => {
+   
+ 
+  const placeOrder = async (req, res, next) => {
   try {
     const marketerId = req.user.id;
     const {
@@ -232,6 +234,7 @@ const placeOrder = async (req, res, next) => {
     next(error);
   }
 };
+
 
 /**
  * getOrders - Retrieves every order (pending or confirmed) for the authenticated marketer.
