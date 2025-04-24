@@ -1,84 +1,83 @@
 // src/routes/marketerRoutes.js
 const express = require('express');
-const router = express.Router();
-const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
+const router  = express.Router();
+const multer  = require('multer');
+const path    = require('path');
+const fs      = require('fs');
 
 const { verifyToken } = require('../middlewares/authMiddleware');
-const { verifyRole }  = require('../middlewares/roleMiddleware');
+const { verifyRole  } = require('../middlewares/roleMiddleware');
 
-// Import controller functions
 const {
   getAccountSettings,
   updateAccountSettings,
-  placeOrder,    // existing POST handler for placing orders
-  getOrders,     // existing GET handler for order history
+  getPlaceOrderData,   // <-- renamed
+  createOrder,         // <-- new
+  getOrderHistory,     // <-- renamed
   submitBioData,
   submitGuarantorForm,
   submitCommitmentForm,
 } = require('../controllers/marketerController');
 
-// Ensure upload directories exist
-["../../uploads/commitment_forms", "../../uploads/guarantor_forms", "../../uploads/marketer_documents"].forEach(dir => {
-  const fullPath = path.join(__dirname, dir);
-  if (!fs.existsSync(fullPath)) fs.mkdirSync(fullPath, { recursive: true });
+// Ensure upload dirs exist
+['commitment_forms','guarantor_forms','marketer_documents'].forEach(dir => {
+  const full = path.join(__dirname, '../../uploads', dir);
+  if (!fs.existsSync(full)) fs.mkdirSync(full, { recursive: true });
 });
 
-// Multer setup for file uploads
+// Multer setup
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, 'uploads/'),
   filename:    (req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`)
 });
 const upload = multer({ storage });
 
-// ------------------------------
+// ────────────────
 // Account Settings
-// ------------------------------
+// ────────────────
 router.get(
   '/account-settings',
-  verifyToken,
-  verifyRole(['Marketer']),
+  verifyToken, verifyRole(['Marketer']),
   getAccountSettings
 );
-
 router.patch(
   '/account-settings',
-  verifyToken,
-  verifyRole(['Marketer']),
+  verifyToken, verifyRole(['Marketer']),
   upload.single('avatar'),
   updateAccountSettings
 );
 
-// ------------------------------
-// Place Order
-// ------------------------------
-// POST /api/marketer/orders/placeorder - consume or free-order stock
-router.post(
-  '/orders/placeorder',
-  verifyToken,
-  verifyRole(['Marketer']),
-  placeOrder
-);
-
-// ------------------------------
-// Order History
-// ------------------------------
-// GET /api/marketer/orders - list this marketer's past orders
+// ────────────────
+// Place-Order Flow
+// ────────────────
+// GET form data (stock vs free)
 router.get(
   '/orders',
-  verifyToken,
-  verifyRole(['Marketer']),
-  getOrders
+  verifyToken, verifyRole(['Marketer']),
+  getPlaceOrderData
+);
+// POST a new order
+router.post(
+  '/orders',
+  verifyToken, verifyRole(['Marketer']),
+  createOrder
 );
 
-// ------------------------------
+// ────────────────
+// Order History
+// ────────────────
+router.get(
+  '/orders/history',
+  verifyToken, verifyRole(['Marketer']),
+  getOrderHistory
+);
+
+// ────────────────
 // Bio Data Form
-// ------------------------------
+// ────────────────
 router.post(
   '/bio-data',
-  verifyToken,
-  verifyRole(['Marketer']),
+  verifyToken, verifyRole(['Marketer']),
   upload.fields([
     { name: 'passport_photo', maxCount: 1 },
     { name: 'id_document',    maxCount: 1 },
@@ -86,13 +85,12 @@ router.post(
   submitBioData
 );
 
-// ------------------------------
+// ────────────────
 // Guarantor Form
-// ------------------------------
+// ────────────────
 router.post(
   '/guarantor-form',
-  verifyToken,
-  verifyRole(['Marketer']),
+  verifyToken, verifyRole(['Marketer']),
   upload.fields([
     { name: 'id_document',    maxCount: 1 },
     { name: 'passport_photo', maxCount: 1 },
@@ -101,13 +99,12 @@ router.post(
   submitGuarantorForm
 );
 
-// ------------------------------
+// ────────────────
 // Commitment Form
-// ------------------------------
+// ────────────────
 router.post(
   '/commitment',
-  verifyToken,
-  verifyRole(['Marketer']),
+  verifyToken, verifyRole(['Marketer']),
   upload.single('signature'),
   submitCommitmentForm
 );
