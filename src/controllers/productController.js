@@ -71,18 +71,28 @@ async function addProduct(req, res, next) {
  * Any authenticated user may list all products.
  * Now includes IMEI, is_low_stock, and is_available flags.
  */
-async function getProducts(req, res, next) {
+const getProducts = async (req, res, next) => {
   try {
     const { rows } = await pool.query(`
       SELECT
-        p.id, p.dealer_id, p.device_type, p.device_name, p.device_model,
-        p.cost_price, p.selling_price, p.created_at, p.updated_at,
+        p.id,
+        p.dealer_id,
+        p.dealer_business_name,
+        p.device_type,
+        p.device_name,
+        p.device_model,
+        p.cost_price,
+        p.selling_price,
 
-        -- count available units
-        COUNT(i.*) FILTER (WHERE i.status = 'available')   AS quantity_available,
-        -- flag low stock
-        (COUNT(i.*) FILTER (WHERE i.status = 'available') <= 2)
-          AS is_low_stock
+        -- count how many units are still available
+        COUNT(i.*) FILTER (WHERE i.status = 'available') AS quantity_available,
+        -- low stock flag when ≤2
+        (COUNT(i.*) FILTER (WHERE i.status = 'available') <= 2) AS is_low_stock,
+        -- available flag when >0
+        (COUNT(i.*) FILTER (WHERE i.status = 'available') > 0) AS is_available,
+
+        p.created_at,
+        p.updated_at
       FROM products p
       LEFT JOIN inventory_items i
         ON i.product_id = p.id
@@ -94,7 +104,7 @@ async function getProducts(req, res, next) {
   } catch (err) {
     next(err);
   }
-}
+};
 
 /**
  * updateProduct
