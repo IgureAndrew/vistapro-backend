@@ -7,6 +7,7 @@ const { pool } = require('../config/database');
  *    Deadline is 48 hrs from pickup.
  */
 const createStockUpdate = async (req, res, next) => {
+  const client = await pool.connect();
   try {
     const { product_id, quantity } = req.body;
     const marketerUID = req.user.unique_id;
@@ -15,24 +16,22 @@ const createStockUpdate = async (req, res, next) => {
     }
     const qty = parseInt(quantity, 10) || 1;
 
-    // 1) check stock
-    const stockQ = await pool.query(
-      `SELECT product_quantity FROM products WHERE id = $1`,
+    await client.query('BEGIN');
+
+    // 1) count available items
+    const { rows: [{ cnt }] } = await client.query(
+      `SELECT COUNT(*)::int AS cnt
+         FROM inventory_items
+        WHERE product_id = $1
+          AND status = 'available'`,
       [product_id]
     );
-    if (!stockQ.rowCount || stockQ.rows[0].product_quantity < qty) {
+    if (cnt < qty) {
+      await client.query('ROLLBACK');
       return res.status(400).json({ message: "Not enough stock available" });
     }
 
-    // 2) decrement
-    await pool.query(
-      `UPDATE products
-         SET product_quantity = product_quantity - $1
-       WHERE id = $2`,
-      [qty, product_id]
-    );
-
-    // 3) insert pickup with exactly 48 hours deadline
+    // 2) insert pickup record
     const insertQ = `
       INSERT INTO stock_updates
         ( marketer_id, product_id, quantity, pickup_date, deadline, transfer_status )
@@ -43,45 +42,66 @@ const createStockUpdate = async (req, res, next) => {
          NOW() + INTERVAL '48 hours',
          'none'
       )
-      RETURNING *
+      RETURNING id, marketer_id, product_id, quantity, pickup_date, deadline, transfer_status
     `;
-    const { rows } = await pool.query(insertQ, [
+    const { rows: suRows } = await client.query(insertQ, [
       marketerUID,
       product_id,
       qty
     ]);
-    const stock = rows[0];
+    const stock = suRows[0];
 
-    // 4) notify assigned admin, using unique_id
-    //    get the admin's unique_id instead of internal id
-    const adminUidQ = await pool.query(
+    // 3) reserve exactly `qty` units and link them
+    const { rows: itemsToReserve } = await client.query(
+      `SELECT id
+         FROM inventory_items
+        WHERE product_id = $1
+          AND status = 'available'
+        LIMIT $2
+        FOR UPDATE SKIP LOCKED`,
+      [product_id, qty]
+    );
+    const itemIds = itemsToReserve.map(r => r.id);
+    await client.query(
+      `UPDATE inventory_items
+          SET status = 'reserved',
+              stock_update_id = $1
+        WHERE id = ANY($2::int[])`,
+      [stock.id, itemIds]
+    );
+
+    // 4) notify admin
+    const { rows: adminQ } = await client.query(
       `SELECT u2.unique_id
          FROM users u
          JOIN users u2 ON u.admin_id = u2.id
         WHERE u.unique_id = $1`,
       [marketerUID]
     );
-    const adminUniqueId = adminUidQ.rows[0]?.unique_id;
+    const adminUniqueId = adminQ[0]?.unique_id;
     if (adminUniqueId) {
-      await pool.query(
+      await client.query(
         `INSERT INTO notifications (user_unique_id, message, created_at)
          VALUES ($1, $2, NOW())`,
         [
           adminUniqueId,
-          `Marketer ${marketerUID} picked up ${qty} unit(s).`
+          `Marketer ${marketerUID} picked up ${qty} unit(s) of product ${product_id}.`
         ]
       );
     }
 
+    await client.query('COMMIT');
     res.status(201).json({
       message: "Stock pickup recorded successfully.",
       stock
     });
   } catch (err) {
+    await client.query('ROLLBACK');
     next(err);
+  } finally {
+    client.release();
   }
 };
-
 
 /**
  * 2) placeOrder
