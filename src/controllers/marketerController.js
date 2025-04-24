@@ -145,128 +145,127 @@ const updateAccountSettings = async (req, res, next) => {
 };
 
 /**
- * placeOrder - Allows a Marketer to record the sale (order) of device(s).
- * Automatically sets the sale date to the current date/time.
- * Expects in req.body:
- *   - device_name, device_model, device_type,
- *   - imei,
- *   - number_of_devices, sold_amount,
- *   - customer_name, customer_phone, customer_address,
- *   - bnpl_platform (optional)
+ * placeOrder (formerly getPlaceOrderData)
+ * GET /marketer/orders/placeorder
+ * • If any live pending stock_updates → mode='stock'
+ * • Else → mode='free'
  */
-   
- 
-  const placeOrder = async (req, res, next) => {
+async function placeOrder(req, res, next) {
+  const marketerId = req.user.id;
   try {
-    const marketerId = req.user.id;
-    const {
-      device_name,
-      device_model,
-      device_type,
-      imei,
-      number_of_devices,
-      sold_amount,
-      customer_name,
-      customer_phone,
-      customer_address,
-      bnpl_platform,
-    } = req.body;
+    // 1) any reserved pickups still live?
+    const { rows: pending } = await pool.query(`
+      SELECT
+        su.id                     AS stock_update_id,
+        p.id                      AS product_id,
+        p.device_name,
+        p.device_model,
+        p.device_type,
+        p.selling_price,
+        su.quantity               AS qty_reserved,
+        ARRAY_AGG(i.imei)         AS imeis_reserved
+      FROM stock_updates su
+      JOIN inventory_items i
+        ON i.stock_update_id = su.id
+       AND i.status            = 'reserved'
+      JOIN products p
+        ON p.id = su.product_id
+      WHERE su.marketer_id = $1
+        AND su.status       = 'pending'
+        AND su.deadline > NOW()
+      GROUP BY
+        su.id, p.id, p.device_name, p.device_model,
+        p.device_type, p.selling_price, su.quantity
+    `, [marketerId]);
 
-    // Validate required fields.
-    if (
-      !device_name ||
-      !device_model ||
-      !device_type ||
-      !imei ||
-      !number_of_devices ||
-      !sold_amount ||
-      !customer_name ||
-      !customer_phone ||
-      !customer_address
-    ) {
-      return res.status(400).json({ message: "All required order fields must be provided." });
+    if (pending.length) {
+      return res.json({ mode: 'stock', pending });
     }
 
-    // Automatically set the sale date.
-    const sale_date = new Date().toISOString();
+    // 2) free‐order: list each product with its qty_available
+    const { rows: products } = await pool.query(`
+      SELECT
+        p.id,
+        p.device_name,
+        p.device_model,
+        p.device_type,
+        p.selling_price,
+        COUNT(i.*) FILTER (WHERE i.status = 'available') AS qty_available
+      FROM products p
+      LEFT JOIN inventory_items i
+        ON i.product_id = p.id
+      GROUP BY
+        p.id, p.device_name, p.device_model,
+        p.device_type, p.selling_price
+      HAVING COUNT(i.*) FILTER (WHERE i.status = 'available') > 0
+      ORDER BY p.device_name
+    `);
 
-    const query = `
-      INSERT INTO orders (
-        marketer_id,
-        device_name,
-        device_model,
-        device_type,
-        imei,
-        number_of_devices,
-        sold_amount,
-        customer_name,
-        customer_phone,
-        customer_address,
-        bnpl_platform,
-        sale_date,
-        created_at
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
-      RETURNING *
-    `;
-    const values = [
-      marketerId,
-      device_name,
-      device_model,
-      device_type,
-      imei,
-      number_of_devices,
-      sold_amount,
-      customer_name,
-      customer_phone,
-      customer_address,
-      bnpl_platform || null,
-      sale_date,
-    ];
-
-    const result = await pool.query(query, values);
-
-    return res.status(201).json({
-      message: "Order placed successfully.",
-      order: result.rows[0],
-    });
-  } catch (error) {
-    next(error);
+    res.json({ mode: 'free', products });
+  } catch (err) {
+    next(err);
   }
-};
-
+}
 
 /**
- * getOrders - Retrieves every order (pending or confirmed) for the authenticated marketer.
+ * getOrders (place-order data)
+ *  • If the marketer has any live ('pending' & before deadline) stock_updates,
+ *    returns mode='stock' and an array of pending pick-ups (with reserved IMEIs).
+ *  • Otherwise returns mode='free' and a list of all products with qty_available.
  */
 async function getOrders(req, res, next) {
+  const marketerId = req.user.id;
+
   try {
-    const marketerId = req.user.id;
-
-    const query = `
+    // 1) Check for any live pending pickups
+    const { rows: pending } = await pool.query(`
       SELECT
-        o.id,
-        o.device_name,
-        o.device_model,
-        o.device_type,
-        o.imei,
-        o.number_of_devices,
-        o.sold_amount,
-        o.customer_name,
-        o.customer_phone,
-        o.customer_address,
-        o.bnpl_platform,                     -- this is your EASYBUY / WATFU / etc
-        o.status,
-        u.unique_id AS marketer_unique_id
-      FROM orders o
-      JOIN users u ON o.marketer_id = u.id
-      WHERE o.marketer_id = $1
-      ORDER BY o.created_at DESC
-    `;
-    const { rows } = await pool.query(query, [marketerId]);
+        su.id                     AS stock_update_id,
+        p.id                      AS product_id,
+        p.device_name,
+        p.device_model,
+        p.device_type,
+        p.selling_price,
+        su.quantity               AS qty_reserved,
+        ARRAY_AGG(i.imei)         AS imeis_reserved
+      FROM stock_updates su
+      JOIN inventory_items i
+        ON i.stock_update_id = su.id
+       AND i.status            = 'reserved'
+      JOIN products p
+        ON p.id = su.product_id
+      WHERE su.marketer_id = $1
+        AND su.status       = 'pending'
+        AND su.deadline > NOW()
+      GROUP BY
+        su.id, p.id, p.device_name, p.device_model,
+        p.device_type, p.selling_price, su.quantity
+    `, [marketerId]);
 
-    // return exactly what you want
-    res.status(200).json({ orders: rows });
+    if (pending.length) {
+      return res.json({ mode: 'stock', pending });
+    }
+
+    // 2) Otherwise: free-order mode → list all products with stock > 0
+    const { rows: products } = await pool.query(`
+      SELECT
+        p.id,
+        p.device_name,
+        p.device_model,
+        p.device_type,
+        p.selling_price,
+        COUNT(i.*) FILTER (WHERE i.status = 'available') AS qty_available
+      FROM products p
+      LEFT JOIN inventory_items i
+        ON i.product_id = p.id
+      GROUP BY
+        p.id, p.device_name, p.device_model,
+        p.device_type, p.selling_price
+      HAVING COUNT(i.*) FILTER (WHERE i.status = 'available') > 0
+      ORDER BY p.device_name
+    `);
+
+    res.json({ mode: 'free', products });
   } catch (err) {
     next(err);
   }
