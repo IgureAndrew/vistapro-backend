@@ -11,30 +11,28 @@ const { verifyRole  } = require('../middlewares/roleMiddleware');
 const {
   getAccountSettings,
   updateAccountSettings,
-  getPlaceOrderData,   // <-- renamed
-  createOrder,         // <-- new
-  getOrderHistory,     // <-- renamed
+  getPlaceOrderData,   // GET form data
+  createOrder,         // POST to create
+  getOrderHistory,     // GET history
   submitBioData,
   submitGuarantorForm,
   submitCommitmentForm,
 } = require('../controllers/marketerController');
 
-// Ensure upload dirs exist
+// ensure upload dirs exist
 ['commitment_forms','guarantor_forms','marketer_documents'].forEach(dir => {
   const full = path.join(__dirname, '../../uploads', dir);
   if (!fs.existsSync(full)) fs.mkdirSync(full, { recursive: true });
 });
 
-// Multer setup
+// multer storage
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, 'uploads/'),
   filename:    (req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`)
 });
 const upload = multer({ storage });
 
-// ────────────────
-// Account Settings
-// ────────────────
+// ─ Account Settings ─────────────────────────────────────────────────────────
 router.get(
   '/account-settings',
   verifyToken, verifyRole(['Marketer']),
@@ -47,34 +45,29 @@ router.patch(
   updateAccountSettings
 );
 
-// ────────────────
-// Place-Order Flow
-// ────────────────
-// GET form data (stock vs free)
+// ─ Place-Order Flow ─────────────────────────────────────────────────────────
+// GET  /api/marketer/orders       → form data (stock vs free)
 router.get(
   '/orders',
   verifyToken, verifyRole(['Marketer']),
   getPlaceOrderData
 );
-// POST a new order
+// POST /api/marketer/orders       → create a new order
 router.post(
   '/orders',
   verifyToken, verifyRole(['Marketer']),
   createOrder
 );
 
-// ────────────────
-// Order History
-// ────────────────
+// ─ Order History ────────────────────────────────────────────────────────────
+// GET /api/marketer/orders/history  → marketer’s past orders
 router.get(
   '/orders/history',
   verifyToken, verifyRole(['Marketer']),
   getOrderHistory
 );
 
-// ────────────────
-// Bio Data Form
-// ────────────────
+// ─ Bio-Data Form ─────────────────────────────────────────────────────────────
 router.post(
   '/bio-data',
   verifyToken, verifyRole(['Marketer']),
@@ -85,9 +78,7 @@ router.post(
   submitBioData
 );
 
-// ────────────────
-// Guarantor Form
-// ────────────────
+// ─ Guarantor Form ───────────────────────────────────────────────────────────
 router.post(
   '/guarantor-form',
   verifyToken, verifyRole(['Marketer']),
@@ -99,9 +90,7 @@ router.post(
   submitGuarantorForm
 );
 
-// ────────────────
-// Commitment Form
-// ────────────────
+// ─ Commitment Form ─────────────────────────────────────────────────────────
 router.post(
   '/commitment',
   verifyToken, verifyRole(['Marketer']),
