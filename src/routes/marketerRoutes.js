@@ -1,121 +1,115 @@
+// src/routes/marketerRoutes.js
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
-const path = require('path'); // For directory paths
-const fs = require('fs');     // For file system operations
+const path = require('path');
+const fs = require('fs');
 
 const { verifyToken } = require('../middlewares/authMiddleware');
-const { verifyRole } = require('../middlewares/roleMiddleware');
+const { verifyRole }  = require('../middlewares/roleMiddleware');
 
-// Import functions from the marketer controller.
+// Import controller functions
 const {
   getAccountSettings,
   updateAccountSettings,
-  placeOrder,
-  getOrders,
+  placeOrder,    // existing POST handler for placing orders
+  getOrders,     // existing GET handler for order history
   submitBioData,
   submitGuarantorForm,
   submitCommitmentForm,
 } = require('../controllers/marketerController');
 
-// Define directories for file uploads.
-const commitmentUploadDir = path.join(__dirname, "../../uploads/commitment_forms");
-if (!fs.existsSync(commitmentUploadDir)) {
-  fs.mkdirSync(commitmentUploadDir, { recursive: true });
-}
+// Ensure upload directories exist
+["../../uploads/commitment_forms", "../../uploads/guarantor_forms", "../../uploads/marketer_documents"].forEach(dir => {
+  const fullPath = path.join(__dirname, dir);
+  if (!fs.existsSync(fullPath)) fs.mkdirSync(fullPath, { recursive: true });
+});
 
-const guarantorUploadDir = path.join(__dirname, "../../uploads/guarantor_forms");
-if (!fs.existsSync(guarantorUploadDir)) {
-  fs.mkdirSync(guarantorUploadDir, { recursive: true });
-}
-
-const marketerUploadDir = path.join(__dirname, "../../uploads/marketer_documents");
-if (!fs.existsSync(marketerUploadDir)) {
-  fs.mkdirSync(marketerUploadDir, { recursive: true });
-}
-
-// Configure Multer for file uploads.
-// Files will be stored in "uploads/" unless otherwise specified.
+// Multer setup for file uploads
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, 'uploads/');
-  },
-  filename: (req, file, cb) => {
-    cb(null, Date.now() + '-' + file.originalname);
-  }
+  destination: (req, file, cb) => cb(null, 'uploads/'),
+  filename:    (req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`)
 });
 const upload = multer({ storage });
 
 // ------------------------------
-// Account Settings Endpoints
+// Account Settings
 // ------------------------------
-
-// GET /api/marketer/account-settings - Retrieve current account settings for the marketer.
 router.get(
   '/account-settings',
   verifyToken,
-  verifyRole(["Marketer"]),
+  verifyRole(['Marketer']),
   getAccountSettings
 );
 
-// PATCH /api/marketer/account-settings - Update account settings (avatar, display name, email, phone, password).
 router.patch(
   '/account-settings',
   verifyToken,
-  verifyRole(["Marketer"]),
+  verifyRole(['Marketer']),
   upload.single('avatar'),
   updateAccountSettings
 );
 
 // ------------------------------
-// Other Marketer Endpoints
+// Place Order
 // ------------------------------
-
-// Protected route: Place a new order.
-router.post('/order', verifyToken, verifyRole(['Marketer']), placeOrder);
-
-// POST endpoint for Bio Data Form submission.
-// Expecting two file fields: "passport_photo" and "id_document".
+// POST /api/marketer/orders/placeorder - consume or free-order stock
 router.post(
-  "/bio-data",
+  '/orders/placeorder',
   verifyToken,
-  verifyRole(["Marketer"]),
+  verifyRole(['Marketer']),
+  placeOrder
+);
+
+// ------------------------------
+// Order History
+// ------------------------------
+// GET /api/marketer/orders - list this marketer's past orders
+router.get(
+  '/orders',
+  verifyToken,
+  verifyRole(['Marketer']),
+  getOrders
+);
+
+// ------------------------------
+// Bio Data Form
+// ------------------------------
+router.post(
+  '/bio-data',
+  verifyToken,
+  verifyRole(['Marketer']),
   upload.fields([
-    { name: "passport_photo", maxCount: 1 },
-    { name: "id_document", maxCount: 1 },
+    { name: 'passport_photo', maxCount: 1 },
+    { name: 'id_document',    maxCount: 1 },
   ]),
   submitBioData
 );
 
-// Protected route for Guarantor Form submission.
-// Expects file fields "id_document", "passport_photo", and "signature".
+// ------------------------------
+// Guarantor Form
+// ------------------------------
 router.post(
-  "/guarantor-form",
+  '/guarantor-form',
   verifyToken,
-  verifyRole(["Marketer"]),
+  verifyRole(['Marketer']),
   upload.fields([
-    { name: "id_document", maxCount: 1 },
-    { name: "passport_photo", maxCount: 1 },
-    { name: "signature", maxCount: 1 },
+    { name: 'id_document',    maxCount: 1 },
+    { name: 'passport_photo', maxCount: 1 },
+    { name: 'signature',      maxCount: 1 },
   ]),
   submitGuarantorForm
 );
 
-// POST endpoint for Commitment Form submission.
-// Expects a single file field "signature" for the Direct Sales Rep's signature.
+// ------------------------------
+// Commitment Form
+// ------------------------------
 router.post(
-  "/commitment",
+  '/commitment',
   verifyToken,
-  verifyRole(["Marketer"]),
-  upload.single("signature"),
+  verifyRole(['Marketer']),
+  upload.single('signature'),
   submitCommitmentForm
-);
-
-// GET /api/marketer/orders - Retrieve pending orders for the logged-in marketer.
-router.get(
-  "/orders",
-  verifyToken,
-  getOrders
 );
 
 module.exports = router;
