@@ -1,65 +1,65 @@
 // src/routes/manageOrderRoutes.js
 const express = require('express');
-const router = express.Router();
-const { verifyToken } = require('../middlewares/authMiddleware');
-const { verifyRole } = require('../middlewares/roleMiddleware');
-const {
-  getOrders,
-  confirmOrder,
-  confirmOrderToDealer,
-  getOrderHistory,
-  updateOrder,
-  deleteOrder,
-} = require('../controllers/manageOrderController');
+const router  = express.Router();
+const { verifyToken }    = require('../middlewares/authMiddleware');
+const { verifyRole }     = require('../middlewares/roleMiddleware');
+const mCtrl              = require('../controllers/manageOrderController');
 
-// GET /api/manage-orders/orders -> Retrieve pending orders created by marketers.
+// Only these roles may manage marketer orders:
+const ADMIN_ROLES = ['MasterAdmin', 'SuperAdmin', 'Admin'];
+
+// ─── 1) List PENDING marketer orders ────────────────────────────────────────
+// GET  /api/manage-orders/orders
 router.get(
-  "/orders",
+  '/orders',
   verifyToken,
-  verifyRole(["MasterAdmin"]),
-  getOrders
+  verifyRole(ADMIN_ROLES),
+  mCtrl.getOrders
 );
 
-// PATCH /api/manage-orders/confirm -> Confirm a pending order (Master Admin confirms order).
-// Expects { orderId: <id> } in the request body.
+// ─── 2) Confirm a pending order ─────────────────────────────────────────────
+// PATCH /api/manage-orders/orders/:orderId/confirm
 router.patch(
   '/orders/:orderId/confirm',
   verifyToken,
-  verifyRole(["MasterAdmin"]),
-  confirmOrder
+  verifyRole(ADMIN_ROLES),
+  mCtrl.confirmOrder
 );
 
-// PATCH /api/manage-orders/:id/confirm-to-dealer -> Confirm an order for dealers.
+// ─── 3) Confirm order to dealer ────────────────────────────────────────────
+// PATCH /api/manage-orders/orders/:orderId/confirm-to-dealer
 router.patch(
-  "/:id/confirm-to-dealer",
+  '/orders/:orderId/confirm-to-dealer',
   verifyToken,
-  verifyRole(["MasterAdmin"]),
-  confirmOrderToDealer
+  verifyRole(ADMIN_ROLES),
+  mCtrl.confirmOrderToDealer
 );
 
-// GET /api/manage-orders/history -> Retrieve order history based on the logged in user's role.
-// Master Admin sees all orders; SuperAdmin and Admin see filtered orders as per their assigned marketers.
+// ─── 4) Full order history (all statuses) ──────────────────────────────────
+// GET /api/manage-orders/orders/history
 router.get(
-  "/history",
+  '/orders/history',
   verifyToken,
-  verifyRole(["MasterAdmin", "SuperAdmin", "Admin"]),
-  getOrderHistory
+  verifyRole(ADMIN_ROLES),
+  mCtrl.getOrderHistory
 );
 
-// PUT /api/manage-orders/update -> Update an order (Master Admin only).
+// ─── 5) Update an order’s fields (MasterAdmin only) ────────────────────────
+// PUT /api/manage-orders/orders/:orderId
 router.put(
-  "/update",
+  '/orders/:orderId',
   verifyToken,
-  verifyRole(["MasterAdmin"]),
-  updateOrder
+  verifyRole(['MasterAdmin']),
+  mCtrl.updateOrder
 );
 
-// DELETE /api/manage-orders/:id -> Delete an order (Master Admin only).
+// ─── 6) Delete an order (MasterAdmin only) ─────────────────────────────────
+// DELETE /api/manage-orders/orders/:orderId
 router.delete(
-  "/:id",
+  '/orders/:orderId',
   verifyToken,
-  verifyRole(["MasterAdmin"]),
-  deleteOrder
+  verifyRole(['MasterAdmin']),
+  mCtrl.deleteOrder
 );
 
 module.exports = router;
