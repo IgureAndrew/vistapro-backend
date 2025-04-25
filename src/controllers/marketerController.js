@@ -159,6 +159,7 @@ async function getPlaceOrderData(req, res, next) {
         p.device_type,
         p.selling_price,
         COUNT(i.*) FILTER (WHERE i.status = 'available') AS qty_available
+         ARRAY_AGG(i.imei) FILTER (WHERE i.status = 'available') AS imeis_available
       FROM products p
       LEFT JOIN inventory_items i
         ON i.product_id = p.id
