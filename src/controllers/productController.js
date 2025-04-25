@@ -112,33 +112,42 @@ const getProducts = async (req, res, next) => {
 /**
  * deleteProduct
  * Only MasterAdmin may delete products.
- * Refuses deletion if there are any non‐completed stock_updates.
+ * Refuses if there are any non-completed stock_updates.
+ * Otherwise: deletes stock_updates → inventory_items → product.
  */
 async function deleteProduct(req, res, next) {
   const productId = req.params.id;
+
   try {
-    // 1) refuse if there are any live stock_updates for this product
-    const { rows: deps } = await pool.query(
+    // 1) Are there any live (non-completed) stock updates?
+    const { rows: live } = await pool.query(
       `SELECT id
          FROM stock_updates
         WHERE product_id = $1
           AND status != 'completed'`,
       [productId]
     );
-    if (deps.length) {
+    if (live.length) {
       return res
         .status(409)
-        .json({ message: "Cannot delete product: there are active stock-updates for it." });
+        .json({ message: "Cannot delete product: there are active stock‐updates for it." });
     }
 
-    // 2) safe to delete any orphaned inventory_items
+    // 2) Safe to remove all stock_updates (they must all be completed)
     await pool.query(
-      `DELETE FROM inventory_items
-         WHERE product_id = $1`,
+      `DELETE FROM stock_updates
+        WHERE product_id = $1`,
       [productId]
     );
 
-    // 3) delete the product itself
+    // 3) Remove any orphaned inventory_items
+    await pool.query(
+      `DELETE FROM inventory_items
+        WHERE product_id = $1`,
+      [productId]
+    );
+
+    // 4) Finally delete the product
     const { rows } = await pool.query(
       `DELETE FROM products
         WHERE id = $1
