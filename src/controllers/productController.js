@@ -110,6 +110,52 @@ const getProducts = async (req, res, next) => {
 };
 
 /**
+ * deleteProduct
+ * Only MasterAdmin may delete products.
+ * Refuses deletion if there are any non‐completed stock_updates.
+ */
+async function deleteProduct(req, res, next) {
+  const productId = req.params.id;
+  try {
+    // 1) refuse if there are any live stock_updates for this product
+    const { rows: deps } = await pool.query(
+      `SELECT id
+         FROM stock_updates
+        WHERE product_id = $1
+          AND status != 'completed'`,
+      [productId]
+    );
+    if (deps.length) {
+      return res
+        .status(409)
+        .json({ message: "Cannot delete product: there are active stock-updates for it." });
+    }
+
+    // 2) safe to delete any orphaned inventory_items
+    await pool.query(
+      `DELETE FROM inventory_items
+         WHERE product_id = $1`,
+      [productId]
+    );
+
+    // 3) delete the product itself
+    const { rows } = await pool.query(
+      `DELETE FROM products
+        WHERE id = $1
+      RETURNING *`,
+      [productId]
+    );
+    if (!rows.length) {
+      return res.status(404).json({ message: "Product not found." });
+    }
+
+    res.json({ message: "Product deleted successfully.", product: rows[0] });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
  * updateProduct
  * Only MasterAdmin may update.
  * Adjusts any provided fields—including IMEI and quantity—and leaves others intact.
@@ -189,35 +235,7 @@ async function updateProduct(req, res, next) {
   }
 }
 
-/**
- * deleteProduct
- * Only MasterAdmin may delete products.
- */
-const deleteProduct = async (req, res, next) => {
-  try {
-    const { role } = req.user;
-    if (role !== 'MasterAdmin') {
-      return res
-        .status(403)
-        .json({ message: 'Not authorized to delete products.' });
-    }
 
-    const id = req.params.id;
-    const { rows } = await pool.query(
-      'DELETE FROM products WHERE id = $1 RETURNING *',
-      [id]
-    );
-    if (!rows.length) {
-      return res.status(404).json({ message: 'Product not found.' });
-    }
-    res.status(200).json({
-      message: 'Product deleted successfully.',
-      product: rows[0],
-    });
-  } catch (err) {
-    next(err);
-  }
-};
 
 module.exports = {
   addProduct,
