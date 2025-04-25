@@ -252,36 +252,29 @@ async function getOrderHistory(req, res, next) {
     const { rows } = await pool.query(`
       SELECT
         o.id,
-        CASE
-          WHEN o.stock_update_id IS NOT NULL THEN (
-            SELECT ARRAY_AGG(i.imei)
-            FROM inventory_items i
+        -- collect all reserved IMEIs for stock orders
+        COALESCE(
+          (SELECT json_agg(i.imei)
+             FROM inventory_items i
             WHERE i.stock_update_id = o.stock_update_id
-          )
-          ELSE ARRAY[o.imei]  -- wrap old single IMEI in array
-        END AS imeis,
-        COALESCE(o.device_name, p.device_name)   AS device_name,
-        COALESCE(o.device_model, p.device_model) AS device_model,
-        COALESCE(o.device_type, p.device_type)   AS device_type,
+          ),
+          '[]'
+        ) AS imeis,
+        p.device_name,
+        p.device_model,
+        p.device_type,
         o.number_of_devices,
         o.sold_amount,
         o.sale_date,
-        o.status,
-        u.unique_id AS marketer_unique_id
+        o.status
       FROM orders o
       LEFT JOIN products p
         ON o.product_id = p.id
-      JOIN users u ON o.marketer_id = u.id
       WHERE o.marketer_id = $1
       ORDER BY o.sale_date DESC
     `, [marketerId]);
 
-    const orders = rows.map(r => ({
-      ...r,
-      imeis: r.imeis || []
-    }));
-
-    res.json({ orders });
+    res.json({ orders: rows });
   } catch (err) {
     next(err);
   }
