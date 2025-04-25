@@ -17,8 +17,10 @@ async function getPendingOrders(req, res, next) {
         p.device_model,
         p.device_type,
         o.bnpl_platform,
-        -- collect any reserved IMEIs for stock-based orders
-        COALESCE(json_agg(i.imei) FILTER (WHERE i.stock_update_id = o.stock_update_id), '[]') AS imeis,
+        COALESCE(
+          json_agg(i.imei) FILTER (WHERE i.stock_update_id = o.stock_update_id),
+          '[]'
+        ) AS imeis,
         u.unique_id AS marketer_unique_id
       FROM orders o
       LEFT JOIN products p
@@ -28,8 +30,9 @@ async function getPendingOrders(req, res, next) {
       JOIN users u
         ON o.marketer_id = u.id
       WHERE o.status = 'pending'
-        AND u.role = 'Marketer'
-      GROUP BY o.id, p.device_name, p.device_model, p.device_type, u.unique_id
+        AND u.role   = 'Marketer'
+      GROUP BY
+        o.id, p.device_name, p.device_model, p.device_type, u.unique_id
       ORDER BY o.sale_date DESC
     `);
     res.json({ orders: rows });
@@ -37,6 +40,7 @@ async function getPendingOrders(req, res, next) {
     next(err);
   }
 }
+
 
 /**
  * confirmOrder - MasterAdmin only
@@ -168,7 +172,7 @@ async function getOrderHistory(req, res, next) {
         FROM orders o
         LEFT JOIN products p ON o.product_id = p.id
         JOIN users u       ON o.marketer_id = u.id
-        JOIN users a       ON u.admin_id = a.id
+        JOIN users a       ON u.admin_id     = a.id
         WHERE a.super_admin_id = (SELECT id FROM users WHERE unique_id = $1)
       `;
       values = [userUniqueId];
@@ -200,7 +204,6 @@ async function getOrderHistory(req, res, next) {
       return res.status(403).json({ message: "Permission denied." });
     }
 
-    // append ORDER BY
     query += " ORDER BY o.sale_date DESC";
     const { rows } = await pool.query(query, values);
     res.json({ orders: rows });
