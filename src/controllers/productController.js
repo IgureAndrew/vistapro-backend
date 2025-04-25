@@ -115,74 +115,79 @@ const getProducts = async (req, res, next) => {
  * Adjusts any provided fields—including IMEI and quantity—and leaves others intact.
  * Enforces is_available=false when quantity <= 0.
  */
-const updateProduct = async (req, res, next) => {
+async function updateProduct(req, res, next) {
   try {
     const productId = req.params.id;
     const {
-      dealer_id,
-      dealer_business_name,
       device_type,
       device_name,
       device_model,
-      product_quantity,
       cost_price,
       selling_price,
-      imei,
+      newImeis,            // expecting an array of { imei: '15digit' }
     } = req.body;
 
-    if (imei !== undefined && !/^\d{15}$/.test(imei)) {
-      return res
-        .status(400)
-        .json({ message: "IMEI must be a 15-digit number." });
+    // Validate incoming IMEIs if provided
+    if (newImeis && !Array.isArray(newImeis)) {
+      return res.status(400).json({ message: "newImeis must be an array of strings." });
+    }
+    if (newImeis && !newImeis.every(i => /^[0-9]{15}$/.test(i))) {
+      return res.status(400).json({ message: "Each IMEI must be a 15-digit string." });
     }
 
-    // If quantity is provided, determine new availability
-    const availabilityCase = product_quantity !== undefined
-      ? `, is_available = CASE WHEN $6 > 0 THEN true ELSE false END`
-      : "";
-
-    const query = `
+    // 1) Update the product row
+    const { rows } = await pool.query(
+      `
       UPDATE products
-      SET
-        dealer_id            = COALESCE($1, dealer_id),
-        dealer_business_name = COALESCE($2, dealer_business_name),
-        device_type          = COALESCE($3, device_type),
-        device_name          = COALESCE($4, device_name),
-        device_model         = COALESCE($5, device_model),
-        product_quantity     = COALESCE($6, product_quantity),
-        cost_price           = COALESCE($7, cost_price),
-        selling_price        = COALESCE($8, selling_price),
-        imei                 = COALESCE($9, imei)
-        ${availabilityCase},
-        updated_at           = NOW()
-      WHERE id = $10
-      RETURNING *
-    `;
-    const values = [
-      dealer_id,
-      dealer_business_name,
-      device_type,
-      device_name,
-      device_model,
-      product_quantity,
-      cost_price,
-      selling_price,
-      imei,
-      productId,
-    ];
+         SET device_type   = COALESCE($1, device_type),
+             device_name   = COALESCE($2, device_name),
+             device_model  = COALESCE($3, device_model),
+             cost_price    = COALESCE($4, cost_price),
+             selling_price = COALESCE($5, selling_price),
+             updated_at    = NOW()
+       WHERE id = $6
+     RETURNING *;
+      `,
+      [
+        device_type,
+        device_name,
+        device_model,
+        cost_price,
+        selling_price,
+        productId,
+      ]
+    );
 
-    const { rows } = await pool.query(query, values);
     if (!rows.length) {
       return res.status(404).json({ message: "Product not found." });
     }
-    res.status(200).json({
+    const updatedProduct = rows[0];
+
+    // 2) If there are new IMEIs to add, insert them into inventory_items
+    if (newImeis && newImeis.length > 0) {
+      // build ($1, $2, 'available', NOW()), ($1, $3, 'available', NOW()), …
+      const placeholders = newImeis
+        .map((_, idx) => `($1, $${idx + 2}, 'available', NOW())`)
+        .join(', ');
+      await pool.query(
+        `
+        INSERT INTO inventory_items
+          (product_id, imei, status, created_at)
+        VALUES
+          ${placeholders};
+        `,
+        [productId, ...newImeis]
+      );
+    }
+
+    return res.json({
       message: "Product updated successfully.",
-      product: rows[0],
+      product: updatedProduct
     });
-  } catch (error) {
-    next(error);
+  } catch (err) {
+    next(err);
   }
-};
+}
 
 /**
  * deleteProduct
