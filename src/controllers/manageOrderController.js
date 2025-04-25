@@ -1,28 +1,46 @@
-// src/controllers/manageOrderController.js
 const { pool } = require("../config/database");
-const walletService = require('../services/walletService');
+const walletService = require("../services/walletService");
 
 /**
- * getOrders - Retrieves pending orders created by marketers.
- * If you want to show *all* orders (not just pending) in your marketer dashboard,
- * remove the `o.status = 'pending'` clause here.
+ * getPendingOrders - MasterAdmin only
+ * GET /api/manage-orders/orders
  */
-async function getOrders(req, res, next) {
+async function getPendingOrders(req, res, next) {
   try {
-    const userId = req.user.id;
-  const { rows } = await pool.query(`
-    SELECT o.*, u.unique_id AS marketer_unique_id
-     FROM orders o
-     JOIN users u ON o.marketer_id = u.id
-     WHERE o.status = 'pending' AND u.role = 'Marketer'
-  ORDER BY o.created_at DESC`, );
-  
+    const { rows } = await pool.query(`
+      SELECT
+        o.id,
+        o.number_of_devices,
+        o.sold_amount,
+        o.sale_date,
+        p.device_name,
+        p.device_model,
+        p.device_type,
+        o.bnpl_platform,
+        -- collect any reserved IMEIs for stock-based orders
+        COALESCE(json_agg(i.imei) FILTER (WHERE i.stock_update_id = o.stock_update_id), '[]') AS imeis,
+        u.unique_id AS marketer_unique_id
+      FROM orders o
+      LEFT JOIN products p
+        ON o.product_id = p.id
+      LEFT JOIN inventory_items i
+        ON i.stock_update_id = o.stock_update_id
+      JOIN users u
+        ON o.marketer_id = u.id
+      WHERE o.status = 'pending'
+        AND u.role = 'Marketer'
+      GROUP BY o.id, p.device_name, p.device_model, p.device_type, u.unique_id
+      ORDER BY o.sale_date DESC
+    `);
     res.json({ orders: rows });
-  } catch (err) { next(err) }
+  } catch (err) {
+    next(err);
+  }
 }
+
 /**
- * confirmOrder - Confirms a pending order, splits the commission 40/60,
- * updates the marketer’s wallet, and logs two wallet transactions.
+ * confirmOrder - MasterAdmin only
+ * PATCH /api/manage-orders/orders/:orderId/confirm
  */
 async function confirmOrder(req, res, next) {
   try {
@@ -40,38 +58,30 @@ async function confirmOrder(req, res, next) {
       `,
       [orderId, adminId]
     );
-    if (!rows.length) {
-      return res.status(404).json({ message: 'Order not found.' });
-    }
+    if (!rows.length) return res.status(404).json({ message: "Order not found." });
     const order = rows[0];
-    // Calculate total commission from the order record
+
+    // 2) Calculate commission
     const commission = Number(order.earnings_per_device) * order.number_of_devices;
-   if (commission <= 0) {
-     throw new Error('Order earnings_per_device is missing or zero');
-   }
+    if (commission <= 0) throw new Error("Order earnings_per_device missing or zero");
 
-       // 1b) Look up the marketer’s unique_id (string) from users table
-   const { rows: urows } = await pool.query(
-    `SELECT unique_id FROM users WHERE id = $1`,
-     [order.marketer_id]
-   );
-   if (!urows.length) {
-     return res.status(500).json({ message: 'Marketer not found.' });
-   }
-   const marketerUniqueId = urows[0].unique_id;
+    // 3) Lookup marketer unique_id
+    const { rows: urows } = await pool.query(
+      `SELECT unique_id FROM users WHERE id = $1`,
+      [order.marketer_id]
+    );
+    if (!urows.length) return res.status(500).json({ message: "Marketer not found." });
+    const marketerUniqueId = urows[0].unique_id;
 
-    // 2) Credit commission
+    // 4) Credit commission
+    const { available, withheld } = await walletService.creditCommissionFromAmount(
+      marketerUniqueId,
+      order.id,
+      commission
+    );
 
-    // New: pass the calculated commission directly
-     const { available, withheld } = await walletService.creditCommissionFromAmount(
-       marketerUniqueId,
-       order.id,
-       commission
-     );
-  
-    // 3) Respond
     res.json({
-      message: 'Order confirmed and commission credited.',
+      message: "Order confirmed and commission credited.",
       order,
       commissionBreakdown: { commission, available, withheld }
     });
@@ -81,86 +91,128 @@ async function confirmOrder(req, res, next) {
 }
 
 /**
- * confirmOrderToDealer - Confirms an order on the dealer side.
+ * confirmOrderToDealer - MasterAdmin only
+ * PATCH /api/manage-orders/orders/:orderId/confirm-to-dealer
  */
-const confirmOrderToDealer = async (req, res, next) => {
+async function confirmOrderToDealer(req, res, next) {
   try {
-    const orderId = req.params.id;
+    const { orderId } = req.params;
     const { rows } = await pool.query(
-      `
-      UPDATE orders
-         SET status       = 'confirmed_to_dealer',
-             confirmed_at = NOW(),
-             updated_at   = NOW()
-       WHERE id = $1
-       RETURNING *
+      `UPDATE orders
+          SET status       = 'confirmed_to_dealer',
+              confirmed_at = NOW(),
+              updated_at   = NOW()
+        WHERE id = $1
+        RETURNING *
       `,
       [orderId]
     );
-    if (rows.length === 0) {
-      return res.status(404).json({ message: "Order not found." });
-    }
-    res.status(200).json({
-      message: "Order confirmed to dealer successfully.",
-      order:   rows[0],
-    });
+    if (!rows.length) return res.status(404).json({ message: "Order not found." });
+    res.json({ message: "Order confirmed to dealer.", order: rows[0] });
   } catch (err) {
     next(err);
   }
-};
+}
 
 /**
- * getOrderHistory - Returns all orders visible to MasterAdmin, SuperAdmin or Admin.
+ * getOrderHistory - Master/Super/Admin
+ * GET /api/manage-orders/orders/history
  */
-const getOrderHistory = async (req, res, next) => {
+async function getOrderHistory(req, res, next) {
   try {
     const { unique_id: userUniqueId, role } = req.user;
     let query, values = [];
 
     if (role === "MasterAdmin") {
       query = `
-        SELECT o.*, u.unique_id AS marketer_unique_id
-          FROM orders o
-          JOIN users u ON o.marketer_id = u.id
-         WHERE u.role = 'Marketer'
+        SELECT
+          o.id,
+          o.number_of_devices,
+          o.sold_amount,
+          o.sale_date,
+          p.device_name,
+          p.device_model,
+          p.device_type,
+          o.bnpl_platform,
+          COALESCE(
+            (SELECT json_agg(i.imei)
+               FROM inventory_items i
+              WHERE i.stock_update_id = o.stock_update_id
+            ), '[]'
+          ) AS imeis,
+          u.unique_id AS marketer_unique_id
+        FROM orders o
+        LEFT JOIN products p ON o.product_id = p.id
+        JOIN users u       ON o.marketer_id = u.id
+        WHERE u.role = 'Marketer'
       `;
     } else if (role === "SuperAdmin") {
       query = `
-        SELECT o.*, u.unique_id AS marketer_unique_id, a.unique_id AS admin_unique_id
-          FROM orders o
-          JOIN users u ON o.marketer_id = u.id
-          JOIN users a ON u.admin_id = a.id
-         WHERE a.super_admin_id = (
-           SELECT id FROM users WHERE unique_id = $1
-         )
+        SELECT
+          o.id,
+          o.number_of_devices,
+          o.sold_amount,
+          o.sale_date,
+          p.device_name,
+          p.device_model,
+          p.device_type,
+          o.bnpl_platform,
+          COALESCE(
+            (SELECT json_agg(i.imei)
+               FROM inventory_items i
+              WHERE i.stock_update_id = o.stock_update_id
+            ), '[]'
+          ) AS imeis,
+          u.unique_id AS marketer_unique_id,
+          a.unique_id AS admin_unique_id
+        FROM orders o
+        LEFT JOIN products p ON o.product_id = p.id
+        JOIN users u       ON o.marketer_id = u.id
+        JOIN users a       ON u.admin_id = a.id
+        WHERE a.super_admin_id = (SELECT id FROM users WHERE unique_id = $1)
       `;
       values = [userUniqueId];
     } else if (role === "Admin") {
       query = `
-        SELECT o.*, u.unique_id AS marketer_unique_id
-          FROM orders o
-          JOIN users u ON o.marketer_id = u.id
-         WHERE u.admin_id = (
-           SELECT id FROM users WHERE unique_id = $1
-         )
+        SELECT
+          o.id,
+          o.number_of_devices,
+          o.sold_amount,
+          o.sale_date,
+          p.device_name,
+          p.device_model,
+          p.device_type,
+          o.bnpl_platform,
+          COALESCE(
+            (SELECT json_agg(i.imei)
+               FROM inventory_items i
+              WHERE i.stock_update_id = o.stock_update_id
+            ), '[]'
+          ) AS imeis,
+          u.unique_id AS marketer_unique_id
+        FROM orders o
+        LEFT JOIN products p ON o.product_id = p.id
+        JOIN users u       ON o.marketer_id = u.id
+        WHERE u.admin_id = (SELECT id FROM users WHERE unique_id = $1)
       `;
       values = [userUniqueId];
     } else {
       return res.status(403).json({ message: "Permission denied." });
     }
 
-    query += " ORDER BY o.created_at DESC";
+    // append ORDER BY
+    query += " ORDER BY o.sale_date DESC";
     const { rows } = await pool.query(query, values);
-    res.status(200).json({ orders: rows });
+    res.json({ orders: rows });
   } catch (err) {
     next(err);
   }
-};
+}
 
 /**
  * updateOrder – MasterAdmin only
  */
-const updateOrder = async (req, res, next) => {
+async function updateOrder(req, res, next) {
   try {
     if (req.user.role !== "MasterAdmin") {
       return res.status(403).json({ message: "Only Master Admin can update orders." });
@@ -172,12 +224,11 @@ const updateOrder = async (req, res, next) => {
 
     const setClauses = [];
     const values     = [];
-    let   i          = 1;
-
+    let   idx        = 1;
     for (const key in updatedData) {
-      setClauses.push(`${key} = $${i}`);
+      setClauses.push(`${key} = $${idx}`);
       values.push(updatedData[key]);
-      i++;
+      idx++;
     }
     values.push(orderId);
 
@@ -185,44 +236,40 @@ const updateOrder = async (req, res, next) => {
       `
       UPDATE orders
          SET ${setClauses.join(", ")}, updated_at = NOW()
-       WHERE id = $${i}
+       WHERE id = $${idx}
        RETURNING *
       `,
       values
     );
-    if (rows.length === 0) {
-      return res.status(404).json({ message: "Order not found." });
-    }
-    res.status(200).json({ message: "Order updated.", order: rows[0] });
+    if (!rows.length) return res.status(404).json({ message: "Order not found." });
+    res.json({ message: "Order updated.", order: rows[0] });
   } catch (err) {
     next(err);
   }
-};
+}
 
 /**
  * deleteOrder – MasterAdmin only
  */
-const deleteOrder = async (req, res, next) => {
+async function deleteOrder(req, res, next) {
   try {
     if (req.user.role !== "MasterAdmin") {
       return res.status(403).json({ message: "Only Master Admin can delete orders." });
     }
-    const orderId = req.params.id;
+    const { orderId } = req.params;
     const { rows } = await pool.query(
       "DELETE FROM orders WHERE id = $1 RETURNING *",
       [orderId]
     );
-    if (rows.length === 0) {
-      return res.status(404).json({ message: "Order not found." });
-    }
-    res.status(200).json({ message: "Order deleted.", order: rows[0] });
+    if (!rows.length) return res.status(404).json({ message: "Order not found." });
+    res.json({ message: "Order deleted.", order: rows[0] });
   } catch (err) {
     next(err);
   }
-};
+}
 
 module.exports = {
-  getOrders,
+  getPendingOrders,
   confirmOrder,
   confirmOrderToDealer,
   getOrderHistory,
