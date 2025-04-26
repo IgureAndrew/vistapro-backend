@@ -195,9 +195,43 @@ async function createOrder(req, res, next) {
     bnpl_platform,
   } = req.body;
 
+  const client = await pool.connect();
   try {
-    // 1) insert order
-    const { rows } = await pool.query(`
+    await client.query("BEGIN");
+
+    // 1️⃣ If it's a free‐mode order, pick N available items and mark them sold
+    if (product_id) {
+      // fetch exactly N available items
+      const itemsRes = await client.query(
+        `
+        SELECT id, imei
+          FROM inventory_items
+         WHERE product_id = $1
+           AND status     = 'available'
+         ORDER BY created_at
+         LIMIT $2
+        `,
+        [product_id, number_of_devices]
+      );
+      if (itemsRes.rowCount < number_of_devices) {
+        throw new Error("Not enough stock available to fulfill that quantity.");
+      }
+      const itemIds = itemsRes.rows.map(r => r.id);
+
+      // mark them sold
+      await client.query(
+        `
+        UPDATE inventory_items
+           SET status = 'sold'
+         WHERE id = ANY($1)
+        `,
+        [itemIds]
+      );
+    }
+
+    // 2️⃣ Insert the order record
+    const orderRes = await client.query(
+      `
       INSERT INTO orders (
         marketer_id,
         product_id,
@@ -214,33 +248,34 @@ async function createOrder(req, res, next) {
         $1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW()
       )
       RETURNING *
-    `, [
-      marketerId,
-      product_id || null,
-      stock_update_id || null,
-      number_of_devices,
-      sold_amount,
-      customer_name,
-      customer_phone,
-      customer_address,
-      bnpl_platform || null,
-    ]);
-    const order = rows[0];
+      `,
+      [
+        marketerId,
+        product_id || null,
+        stock_update_id || null,
+        number_of_devices,
+        sold_amount,
+        customer_name,
+        customer_phone,
+        customer_address,
+        bnpl_platform || null,
+      ]
+    );
 
-    // 2) if stock flow, mark that pickup completed
-    if (stock_update_id) {
-      await pool.query(
-        `UPDATE stock_updates SET status = 'completed' WHERE id = $1`,
-        [stock_update_id]
-      );
-    }
+    await client.query("COMMIT");
 
-    res.status(201).json({ message: "Order placed successfully.", order });
+    // 3️⃣ Respond with the new order
+    res.status(201).json({
+      message: "Order placed successfully.",
+      order: orderRes.rows[0]
+    });
   } catch (err) {
+    await client.query("ROLLBACK");
     next(err);
+  } finally {
+    client.release();
   }
 }
-
 /**
  * getOrderHistory
  * GET /api/marketer/orders/history
