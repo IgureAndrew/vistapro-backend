@@ -90,7 +90,7 @@ const reportRoutes = require('./routes/reportRoutes');
 const profitReportRoutes = require('./routes/profitReportRoutes');
 const performanceRoutes = require('./routes/performanceRoutes');
 const stockupdateRoutes = require('./routes/stockupdateRoutes');
-
+const walletRoutes = require("./routes/walletRoutes");
 
 
 // Mount routes
@@ -110,7 +110,7 @@ app.use('/api/performance', performanceRoutes);
 app.use('/api/stock', stockupdateRoutes);
 app.use("/api/verification", verificationRoutes);
 app.use('/api/notifications', require('./routes/notificationRoutes'));
-
+app.use("/api/wallets", walletRoutes);
 
 // Error handling middleware
 const errorHandler = require('./middlewares/errorHandler');
