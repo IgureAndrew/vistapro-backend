@@ -76,10 +76,11 @@ async function confirmOrder(req, res, next) {
     }
     const marketerUniqueId = urows[0].unique_id;
 
-    const { available, withheld } = await walletService.creditCommissionFromAmount(
+    const { available, withheld } = await walletService.creditCommissionFromOrder(
       marketerUniqueId,
       order.id,
-      commission
+      order.device_type,     // “android” or “iphone”
+      order.number_of_devices
     );
     // ─────────────────────────────────────────────────────────────
 
