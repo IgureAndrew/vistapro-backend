@@ -145,44 +145,33 @@ async function getBankDetails(marketerUniqueId) {
  * Request a withdrawal: deduct (amount+fee) from available,
  * bump it into withheld, insert a withdrawal_requests row.
  */
-async function requestWithdrawal(marketerUniqueId, amount) {
-  const marketerId = await _getUserId(marketerUniqueId);
+async function requestWithdrawal(userId, amount) {
   const FEE = 100;
-
-  // get current balances
-  const { rows: wrows } = await pool.query(
-    `SELECT available_balance
-       FROM wallets
-      WHERE marketer_id = $1`,
-    [marketerId]
-  );
-  if (!wrows.length) throw new Error("Wallet not found");
-  const available = Number(wrows[0].available_balance);
-
-  if (available < amount + FEE) {
+  // 1) fetch balances
+  const wallet = await getWalletRow(userId);
+  if (wallet.available_balance < amount + FEE) {
     throw new Error("Insufficient balance for withdrawal + ₦100 fee");
   }
 
-  // deduct + withhold
-  await pool.query(
-    `UPDATE wallets
-        SET available_balance = available_balance - $1,
-            withheld_balance  = withheld_balance + $1,
-            updated_at        = NOW()
-      WHERE marketer_id = $2`,
-    [amount + FEE, marketerId]
-  );
+  // 2) deduct (amount + fee) from available, move to withheld
+  await pool.query(`
+    UPDATE wallets
+       SET available_balance = available_balance - $1,
+           withheld_balance  = withheld_balance  + $1,
+           updated_at        = NOW()
+     WHERE user_unique_id = $2
+  `, [amount + FEE, userId]);
 
-  // insert request
-  const { rows: reqRows } = await pool.query(
-    `INSERT INTO withdrawal_requests
-       (marketer_id, amount, fee, status, created_at)
-     VALUES ($1, $2, $3, 'pending', NOW())
-     RETURNING *`,
-    [marketerId, amount, FEE]
-  );
+  // 3) insert into withdrawal_requests (note the real column names!)
+  const net = amount - FEE;
+  const { rows } = await pool.query(`
+    INSERT INTO withdrawal_requests
+      (user_unique_id, amount, fee, net_amount, status, requested_at)
+    VALUES ($1, $2, $3, $4, 'pending', NOW())
+    RETURNING *
+  `, [userId, amount, FEE, net]);
 
-  return reqRows[0];
+  return rows[0];
 }
 
 /**

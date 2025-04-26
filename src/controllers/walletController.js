@@ -21,21 +21,18 @@ async function getMyWallet(req, res, next) {
  */
 async function getMyWithdrawals(req, res, next) {
   try {
-    // find the numeric user ID from unique_id, then fetch matching requests
-    const { rows } = await pool.query(
-      `SELECT
-         id,
-         amount,
-         fee,
-         status,
-         created_at
-       FROM withdrawal_requests
-       WHERE marketer_id = (
-         SELECT id FROM users WHERE unique_id = $1
-       )
-       ORDER BY created_at DESC`,
-      [req.user.unique_id]
-    );
+    const { rows } = await pool.query(`
+      SELECT
+        id,
+        amount,
+        fee,
+        net_amount,
+        status,
+        requested_at
+      FROM withdrawal_requests
+      WHERE user_unique_id = $1
+      ORDER BY requested_at DESC
+    `, [req.user.unique_id]);
     res.json({ requests: rows });
   } catch (err) {
     next(err);
