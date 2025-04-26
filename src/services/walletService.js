@@ -124,45 +124,32 @@ async function getBankDetails(userId) {
 /**
  * Marketer withdrawal request
  */
-async function requestWithdrawal(userId, amount) {
-  const fee = 100;
-  // fetch and validate balance
-  const { rows: ws } = await pool.query(
-    `SELECT available_balance FROM wallets WHERE user_unique_id = $1`,
-    [userId]
-  );
-  const available = ws[0]?.available_balance || 0;
-  if (amount + fee > available) throw new Error('Insufficient available balance');
+// services/walletService.js
+async function requestWithdrawal(marketerUniqueId, amount) {
+  const FEE = 100;
+  // 1) fetch balances
+  const wallet = await getWalletRow(marketerUniqueId);
+  if (wallet.available < amount + FEE) {
+    throw new Error("Insufficient balance for withdrawal + ₦100 fee");
+  }
 
-  // fetch bank details
-  const bank = await getBankDetails(userId);
-  if (!bank) throw new Error('Bank details not set');
+  // 2) deduct (amount + fee) from available
+  await pool.query(`
+    UPDATE wallets
+       SET available = available - $1,
+           withheld  = withheld + $1
+     WHERE unique_id = $2
+  `, [amount + FEE, marketerUniqueId]);
 
-  // deduct
-  await pool.query(
-    `UPDATE wallets
-       SET available_balance = available_balance - $1,
-           updated_at        = NOW()
-     WHERE user_unique_id = $2`,
-    [amount + fee, userId]
-  );
-  // insert withdrawal request
-  const netAmount = amount - fee;
-  await pool.query(
-    `INSERT INTO withdrawal_requests
-       (user_unique_id, amount, fee, net_amount, account_name, account_number, bank_name)
-     VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-    [userId, amount, fee, netAmount, bank.account_name, bank.account_number, bank.bank_name]
-  );
-  // log transactions
-  await pool.query(
-    `INSERT INTO wallet_transactions
-       (user_unique_id, amount, transaction_type)
-     VALUES
-       ($1, -$2, 'withdraw_request'),
-       ($1, -$3, 'fee')`,
-    [userId, amount, fee]
-  );
+  // 3) insert into withdrawal_requests
+  const { rows } = await pool.query(`
+    INSERT INTO withdrawal_requests
+      (marketer_unique_id, amount_requested, fee, status, created_at)
+    VALUES ($1, $2, $3, 'pending', NOW())
+    RETURNING *
+  `, [marketerUniqueId, amount, FEE]);
+
+  return rows[0];
 }
 
 /**

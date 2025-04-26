@@ -35,12 +35,14 @@ async function getPendingOrders(req, res, next) {
  * confirmOrder - MasterAdmin only
  * PATCH /api/manage-orders/orders/:orderId/confirm
  */
+// src/controllers/manageOrderController.js
+
 async function confirmOrder(req, res, next) {
   try {
     const { orderId } = req.params;
     const adminId     = req.user.unique_id;
 
-    // 1) Mark order confirmed
+    // 1) Mark the order as confirmed
     const { rows } = await pool.query(
       `UPDATE orders
           SET status       = 'confirmed',
@@ -51,30 +53,39 @@ async function confirmOrder(req, res, next) {
       `,
       [orderId, adminId]
     );
-    if (!rows.length) return res.status(404).json({ message: "Order not found." });
+    if (!rows.length) {
+      return res.status(404).json({ message: 'Order not found.' });
+    }
+
     const order = rows[0];
 
-    // 2) Calculate commission
+    // ─────────────────────────────────────────────────────────────
+    // 2) Calculate and credit the commission *per device* × quantity
     const commission = Number(order.earnings_per_device) * order.number_of_devices;
-    if (commission <= 0) throw new Error("Order earnings_per_device missing or zero");
+    if (commission <= 0) {
+      throw new Error('Order earnings_per_device missing or zero');
+    }
 
-    // 3) Lookup marketer unique_id
+    // Fetch the marketer’s string‐ID, then credit their wallet
     const { rows: urows } = await pool.query(
       `SELECT unique_id FROM users WHERE id = $1`,
       [order.marketer_id]
     );
-    if (!urows.length) return res.status(500).json({ message: "Marketer not found." });
+    if (!urows.length) {
+      return res.status(500).json({ message: 'Marketer not found.' });
+    }
     const marketerUniqueId = urows[0].unique_id;
 
-    // 4) Credit commission
     const { available, withheld } = await walletService.creditCommissionFromAmount(
       marketerUniqueId,
       order.id,
       commission
     );
+    // ─────────────────────────────────────────────────────────────
 
+    // 3) Respond
     res.json({
-      message: "Order confirmed and commission credited.",
+      message: 'Order confirmed and commission credited.',
       order,
       commissionBreakdown: { commission, available, withheld }
     });

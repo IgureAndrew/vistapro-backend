@@ -182,6 +182,8 @@ async function getPlaceOrderData(req, res, next) {
  * • accepts either stock_update_id or product_id
  * • inserts into orders, and marks stock_updates completed if used
  */
+// src/controllers/marketerController.js
+
 async function createOrder(req, res, next) {
   const marketerId = req.user.id;
   const {
@@ -195,43 +197,25 @@ async function createOrder(req, res, next) {
     bnpl_platform,
   } = req.body;
 
-  const client = await pool.connect();
   try {
-    await client.query("BEGIN");
-
-    // 1️⃣ If it's a free‐mode order, pick N available items and mark them sold
-    if (product_id) {
-      // fetch exactly N available items
-      const itemsRes = await client.query(
-        `
-        SELECT id, imei
-          FROM inventory_items
-         WHERE product_id = $1
-           AND status     = 'available'
-         ORDER BY created_at
-         LIMIT $2
-        `,
-        [product_id, number_of_devices]
-      );
-      if (itemsRes.rowCount < number_of_devices) {
-        throw new Error("Not enough stock available to fulfill that quantity.");
-      }
-      const itemIds = itemsRes.rows.map(r => r.id);
-
-      // mark them sold
-      await client.query(
-        `
-        UPDATE inventory_items
-           SET status = 'sold'
-         WHERE id = ANY($1)
-        `,
-        [itemIds]
-      );
+    // 1) Look up device_type so we know the per-device commission
+    const { rows: info } = await pool.query(
+      `SELECT device_type FROM ${
+        stock_update_id ? 'stock_updates su JOIN products p ON su.product_id = p.id'
+                        : 'products'
+      } WHERE ${stock_update_id ? 'su.id = $1' : 'id = $1'}`,
+      [stock_update_id || product_id]
+    );
+    if (!info.length) {
+      return res.status(400).json({ message: "Product/stock not found." });
     }
+    const deviceType = info[0].device_type.toLowerCase();
+    const earnings_per_device = deviceType.includes('iphone')
+      ? 15000
+      : 10000;
 
-    // 2️⃣ Insert the order record
-    const orderRes = await client.query(
-      `
+    // 2) Insert the order, including earnings_per_device
+    const { rows } = await pool.query(`
       INSERT INTO orders (
         marketer_id,
         product_id,
@@ -242,40 +226,44 @@ async function createOrder(req, res, next) {
         customer_phone,
         customer_address,
         bnpl_platform,
+        earnings_per_device,
         sale_date,
         created_at
       ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW()
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW()
       )
       RETURNING *
-      `,
-      [
-        marketerId,
-        product_id || null,
-        stock_update_id || null,
-        number_of_devices,
-        sold_amount,
-        customer_name,
-        customer_phone,
-        customer_address,
-        bnpl_platform || null,
-      ]
-    );
+    `, [
+      marketerId,
+      product_id  || null,
+      stock_update_id || null,
+      number_of_devices,
+      sold_amount,
+      customer_name,
+      customer_phone,
+      customer_address,
+      bnpl_platform || null,
+      earnings_per_device
+    ]);
+    const order = rows[0];
 
-    await client.query("COMMIT");
+    // 3) If this was a stock pickup, mark that fulfilled
+    if (stock_update_id) {
+      await pool.query(
+        `UPDATE stock_updates SET status = 'completed' WHERE id = $1`,
+        [stock_update_id]
+      );
+    }
 
-    // 3️⃣ Respond with the new order
     res.status(201).json({
       message: "Order placed successfully.",
-      order: orderRes.rows[0]
+      order
     });
   } catch (err) {
-    await client.query("ROLLBACK");
     next(err);
-  } finally {
-    client.release();
   }
 }
+
 /**
  * getOrderHistory
  * GET /api/marketer/orders/history
