@@ -60,23 +60,38 @@ async function creditCommissionFromAmount(userId, orderId, commission) {
 /**
  * Retrieve wallet summary and recent transactions
  */
-async function getMyWallet(userId) {
-  const { rows: ws } = await pool.query(
-    `SELECT total_balance, available_balance, withheld_balance
-       FROM wallets
-      WHERE user_unique_id = $1`,
-    [userId]
+async function getMyWallet(marketerUniqueId) {
+  // 1) ensure there's always a wallet row for this marketer
+  await pool.query(
+    `INSERT INTO wallets 
+       (marketer_unique_id, total_balance, available_balance, withheld_balance, created_at, updated_at)
+     VALUES ($1, 0, 0, 0, NOW(), NOW())
+     ON CONFLICT (marketer_unique_id) DO NOTHING`,
+    [marketerUniqueId]
   );
-  if (!ws.length) throw new Error('Wallet not found');
-  const wallet = ws[0];
 
+  // 2) now safely select it
+  const { rows } = await pool.query(
+    `SELECT 
+       total_balance, available_balance, withheld_balance 
+     FROM wallets 
+     WHERE marketer_unique_id = $1`,
+    [marketerUniqueId]
+  );
+  const wallet = rows[0];
+  if (!wallet) {
+    // This really shouldn’t happen now
+    throw new Error("Wallet not found");
+  }
+
+  // 3) fetch recent transactions
   const { rows: txs } = await pool.query(
-    `SELECT id, amount, transaction_type, meta, created_at
+    `SELECT id, transaction_type, amount, created_at
        FROM wallet_transactions
-      WHERE user_unique_id = $1
+      WHERE marketer_unique_id = $1
       ORDER BY created_at DESC
-      LIMIT 50`,
-    [userId]
+      LIMIT 20`,
+    [marketerUniqueId]
   );
 
   return { wallet, transactions: txs };
