@@ -2,7 +2,6 @@ const { pool } = require("../config/database");
 const walletService = require("../services/walletService");
 
 /**
- * getPendingOrders - MasterAdmin only
  * GET /api/manage-orders/orders
  */
 async function getPendingOrders(req, res, next) {
@@ -13,26 +12,17 @@ async function getPendingOrders(req, res, next) {
         o.number_of_devices,
         o.sold_amount,
         o.sale_date,
+        o.status,
         p.device_name,
         p.device_model,
-        p.device_type,
         o.bnpl_platform,
-        COALESCE(
-          json_agg(i.imei) FILTER (WHERE i.stock_update_id = o.stock_update_id),
-          '[]'
-        ) AS imeis,
-        u.unique_id AS marketer_unique_id
+        u.first_name     AS marketer_name,
+        u.unique_id      AS marketer_unique_id
       FROM orders o
-      LEFT JOIN products p
-        ON o.product_id = p.id
-      LEFT JOIN inventory_items i
-        ON i.stock_update_id = o.stock_update_id
-      JOIN users u
-        ON o.marketer_id = u.id
+      LEFT JOIN products p   ON o.product_id       = p.id
+      JOIN users u           ON o.marketer_id      = u.id
       WHERE o.status = 'pending'
         AND u.role   = 'Marketer'
-      GROUP BY
-        o.id, p.device_name, p.device_model, p.device_type, u.unique_id
       ORDER BY o.sale_date DESC
     `);
     res.json({ orders: rows });
@@ -40,7 +30,6 @@ async function getPendingOrders(req, res, next) {
     next(err);
   }
 }
-
 
 /**
  * confirmOrder - MasterAdmin only
@@ -119,7 +108,6 @@ async function confirmOrderToDealer(req, res, next) {
 }
 
 /**
- * getOrderHistory - Master/Super/Admin
  * GET /api/manage-orders/orders/history
  */
 async function getOrderHistory(req, res, next) {
@@ -127,6 +115,7 @@ async function getOrderHistory(req, res, next) {
     const { unique_id: userUniqueId, role } = req.user;
     let query, values = [];
 
+    // same logic for Master/Super/Admin, but always select name, status, device, etc.
     if (role === "MasterAdmin") {
       query = `
         SELECT
@@ -134,20 +123,15 @@ async function getOrderHistory(req, res, next) {
           o.number_of_devices,
           o.sold_amount,
           o.sale_date,
+          o.status,
           p.device_name,
           p.device_model,
-          p.device_type,
           o.bnpl_platform,
-          COALESCE(
-            (SELECT json_agg(i.imei)
-               FROM inventory_items i
-              WHERE i.stock_update_id = o.stock_update_id
-            ), '[]'
-          ) AS imeis,
-          u.unique_id AS marketer_unique_id
+          u.first_name     AS marketer_name,
+          u.unique_id      AS marketer_unique_id
         FROM orders o
-        LEFT JOIN products p ON o.product_id = p.id
-        JOIN users u       ON o.marketer_id = u.id
+        LEFT JOIN products p ON o.product_id    = p.id
+        JOIN users u         ON o.marketer_id   = u.id
         WHERE u.role = 'Marketer'
       `;
     } else if (role === "SuperAdmin") {
@@ -157,22 +141,17 @@ async function getOrderHistory(req, res, next) {
           o.number_of_devices,
           o.sold_amount,
           o.sale_date,
+          o.status,
           p.device_name,
           p.device_model,
-          p.device_type,
           o.bnpl_platform,
-          COALESCE(
-            (SELECT json_agg(i.imei)
-               FROM inventory_items i
-              WHERE i.stock_update_id = o.stock_update_id
-            ), '[]'
-          ) AS imeis,
-          u.unique_id AS marketer_unique_id,
-          a.unique_id AS admin_unique_id
+          u.first_name     AS marketer_name,
+          u.unique_id      AS marketer_unique_id,
+          a.unique_id      AS admin_unique_id
         FROM orders o
-        LEFT JOIN products p ON o.product_id = p.id
-        JOIN users u       ON o.marketer_id = u.id
-        JOIN users a       ON u.admin_id     = a.id
+        LEFT JOIN products p ON o.product_id    = p.id
+        JOIN users u         ON o.marketer_id   = u.id
+        JOIN users a         ON u.admin_id      = a.id
         WHERE a.super_admin_id = (SELECT id FROM users WHERE unique_id = $1)
       `;
       values = [userUniqueId];
@@ -183,20 +162,15 @@ async function getOrderHistory(req, res, next) {
           o.number_of_devices,
           o.sold_amount,
           o.sale_date,
+          o.status,
           p.device_name,
           p.device_model,
-          p.device_type,
           o.bnpl_platform,
-          COALESCE(
-            (SELECT json_agg(i.imei)
-               FROM inventory_items i
-              WHERE i.stock_update_id = o.stock_update_id
-            ), '[]'
-          ) AS imeis,
-          u.unique_id AS marketer_unique_id
+          u.first_name     AS marketer_name,
+          u.unique_id      AS marketer_unique_id
         FROM orders o
-        LEFT JOIN products p ON o.product_id = p.id
-        JOIN users u       ON o.marketer_id = u.id
+        LEFT JOIN products p ON o.product_id    = p.id
+        JOIN users u         ON o.marketer_id   = u.id
         WHERE u.admin_id = (SELECT id FROM users WHERE unique_id = $1)
       `;
       values = [userUniqueId];
