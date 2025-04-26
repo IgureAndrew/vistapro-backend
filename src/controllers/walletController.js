@@ -2,7 +2,10 @@
 const { pool } = require('../config/database');
 const walletService = require('../services/walletService');
 
-// GET /api/wallet
+/**
+ * GET /api/wallet
+ * returns { wallet: { total_balance, available_balance, withheld_balance }, transactions: [...] }
+ */
 async function getMyWallet(req, res, next) {
   try {
     const data = await walletService.getMyWallet(req.user.unique_id);
@@ -12,18 +15,24 @@ async function getMyWallet(req, res, next) {
   }
 }
 
-// GET /api/wallet/withdrawals
+/**
+ * GET /api/wallet/withdrawals
+ * (Marketer only) — list your own withdrawal requests
+ */
 async function getMyWithdrawals(req, res, next) {
   try {
+    // find the numeric user ID from unique_id, then fetch matching requests
     const { rows } = await pool.query(
       `SELECT
          id,
-         amount_requested AS amount,
+         amount,
          fee,
          status,
          created_at
        FROM withdrawal_requests
-       WHERE marketer_unique_id = $1
+       WHERE marketer_id = (
+         SELECT id FROM users WHERE unique_id = $1
+       )
        ORDER BY created_at DESC`,
       [req.user.unique_id]
     );
@@ -33,7 +42,9 @@ async function getMyWithdrawals(req, res, next) {
   }
 }
 
-// POST /api/wallet/bank-details
+/**
+ * POST /api/wallet/bank-details
+ */
 async function createOrUpdateBankDetails(req, res, next) {
   try {
     await walletService.upsertBankDetails(req.user.unique_id, req.body);
@@ -43,7 +54,9 @@ async function createOrUpdateBankDetails(req, res, next) {
   }
 }
 
-// GET /api/wallet/bank-details
+/**
+ * GET /api/wallet/bank-details
+ */
 async function getBankDetails(req, res, next) {
   try {
     const bank = await walletService.getBankDetails(req.user.unique_id);
@@ -53,7 +66,9 @@ async function getBankDetails(req, res, next) {
   }
 }
 
-// POST /api/wallet/withdraw
+/**
+ * POST /api/wallet/withdraw
+ */
 async function requestWithdrawal(req, res, next) {
   try {
     const amount = Number(req.body.amount);
@@ -67,25 +82,30 @@ async function requestWithdrawal(req, res, next) {
   }
 }
 
-// GET /api/wallet/withdrawal-requests  (MasterAdmin)
+/**
+ * GET /api/wallet/withdrawal-requests
+ * (MasterAdmin only) — list all marketers’ withdrawal requests
+ */
 async function listAllWithdrawals(req, res, next) {
   try {
     const { rows } = await pool.query(
       `SELECT
          w.id,
-         w.marketer_unique_id,
-         u.business_name  AS marketer_name,
+         u.unique_id        AS marketer_unique_id,
+         u.business_name    AS marketer_name,
          b.bank_name,
          b.account_name,
          b.account_no,
-         w.amount_requested  AS amount,
+         w.amount,
          w.fee,
-         (w.amount_requested + w.fee) AS total,
+         (w.amount + w.fee) AS total,
          w.status,
          w.created_at
        FROM withdrawal_requests w
-       JOIN users u ON u.unique_id = w.marketer_unique_id
-       LEFT JOIN bank_details b ON b.unique_id = w.marketer_unique_id
+       JOIN users u
+         ON u.id = w.marketer_id
+       LEFT JOIN bank_details b
+         ON b.marketer_id = w.marketer_id
        ORDER BY w.created_at DESC`
     );
     res.json({ requests: rows });
@@ -94,19 +114,29 @@ async function listAllWithdrawals(req, res, next) {
   }
 }
 
-// PATCH /api/wallet/withdrawal-requests/:reqId
+/**
+ * PATCH /api/wallet/withdrawal-requests/:reqId
+ * body: { action: "approve"|"reject" }
+ */
 async function reviewWithdrawalRequest(req, res, next) {
   try {
     const { reqId } = req.params;
-    const action    = req.body.action; // 'approve' or 'reject'
-    await walletService.reviewWithdrawalRequest(Number(reqId), action, req.user.unique_id);
+    const { action } = req.body;
+    await walletService.reviewWithdrawalRequest(
+      Number(reqId),
+      action,
+      req.user.unique_id
+    );
     res.json({ message: `Withdrawal ${action}d.` });
   } catch (err) {
     next(err);
   }
 }
 
-// POST /api/wallet/release
+/**
+ * POST /api/wallet/release
+ * (System cron or admin only)
+ */
 async function releaseWithheld(req, res, next) {
   try {
     await walletService.releaseWithheld();
@@ -116,7 +146,9 @@ async function releaseWithheld(req, res, next) {
   }
 }
 
-// GET /api/wallet/stats?from=...&to=...
+/**
+ * GET /api/wallet/stats?from=...&to=...
+ */
 async function getStats(req, res, next) {
   try {
     const { from, to } = req.query;
