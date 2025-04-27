@@ -75,6 +75,7 @@ if (commission <= 0) throw new Error('Order earnings_per_device is missing or ze
     const marketerUniqueId = urows[0].unique_id;
 
     // 3) Credit commission (40% available, 60% withheld)
+  
 const { available, withheld } = await walletService.creditCommissionFromAmount(
   marketerUniqueId,
   order.id,
