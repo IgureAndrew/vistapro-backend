@@ -4,6 +4,12 @@ const bcrypt = require('bcrypt');
 const { pool } = require('../config/database');
 const { createUser } = require('../models/userModel'); // if needed elsewhere
 
+// Commission rates per device
+const COMMISSION_RATES = {
+  android: 10000,
+  iphone:  15000,
+};
+
 /**
  * getAccountSettings - Retrieves current marketer’s account info.
  */
@@ -14,18 +20,17 @@ async function getAccountSettings(req, res, next) {
       return res.status(400).json({ message: "Marketer unique ID not available." });
     }
     const { rows } = await pool.query(`
-      SELECT first_name AS displayName,
+      SELECT first_name        AS displayName,
              email,
              phone,
              profile_image
-      FROM users
-      WHERE unique_id = $1
+        FROM users
+       WHERE unique_id = $1
     `, [marketerUniqueId]);
 
     if (!rows.length) {
       return res.status(404).json({ message: "User not found." });
     }
-
     res.json({ settings: rows[0] });
   } catch (err) {
     next(err);
@@ -41,11 +46,10 @@ async function updateAccountSettings(req, res, next) {
     if (!marketerUniqueId) {
       return res.status(400).json({ message: "Marketer unique ID not available." });
     }
-
     const { displayName, email, phone, oldPassword, newPassword } = req.body;
     let clauses = [], values = [], idx = 1;
 
-    // password change
+    // 1) handle password change
     if (newPassword) {
       if (!oldPassword) {
         return res.status(400).json({ message: "Old password is required." });
@@ -62,30 +66,21 @@ async function updateAccountSettings(req, res, next) {
         return res.status(400).json({ message: "Old password is incorrect." });
       }
       const hash = await bcrypt.hash(newPassword, 10);
-      clauses.push(`password = $${idx}`);
-      values.push(hash);
-      idx++;
+      clauses.push(`password = $${idx}`); values.push(hash); idx++;
     }
 
+    // 2) other optional fields
     if (displayName) {
-      clauses.push(`first_name = $${idx}`);
-      values.push(displayName);
-      idx++;
+      clauses.push(`first_name = $${idx}`); values.push(displayName); idx++;
     }
     if (email) {
-      clauses.push(`email = $${idx}`);
-      values.push(email);
-      idx++;
+      clauses.push(`email = $${idx}`); values.push(email); idx++;
     }
     if (phone) {
-      clauses.push(`phone = $${idx}`);
-      values.push(phone);
-      idx++;
+      clauses.push(`phone = $${idx}`); values.push(phone); idx++;
     }
     if (req.file) {
-      clauses.push(`profile_image = $${idx}`);
-      values.push(req.file.path);
-      idx++;
+      clauses.push(`profile_image = $${idx}`); values.push(req.file.path); idx++;
     }
 
     if (!clauses.length) {
@@ -93,27 +88,29 @@ async function updateAccountSettings(req, res, next) {
     }
 
     clauses.push(`updated_at = NOW()`);
+    values.push(marketerUniqueId);
+
     const query = `
       UPDATE users
          SET ${clauses.join(', ')}
        WHERE unique_id = $${idx}
-     RETURNING id, unique_id, first_name AS displayName, email, phone, profile_image, updated_at
+       RETURNING id, unique_id, first_name AS displayName, email, phone, profile_image, updated_at
     `;
-    values.push(marketerUniqueId);
-
     const { rows } = await pool.query(query, values);
+
     if (!rows.length) {
       return res.status(404).json({ message: "User not found." });
     }
-
     res.json({ message: "Account updated successfully.", marketer: rows[0] });
   } catch (err) {
     next(err);
   }
 }
+
+
 /**
  * getPlaceOrderData
- *   GET /marketer/orders
+ *   GET /api/marketer/orders
  *   • if any live pending pickups exist → mode:'stock' + pending[]
  *   • else → mode:'free' + products[]
  */
@@ -180,10 +177,10 @@ async function getPlaceOrderData(req, res, next) {
  * createOrder
  * POST /api/marketer/orders
  * • accepts either stock_update_id or product_id
- * • inserts into orders, and marks stock_updates completed if used
+ * • calculates earnings_per_device
+ * • inserts into orders
+ * • marks stock_updates completed if used
  */
-// src/controllers/marketerController.js
-
 async function createOrder(req, res, next) {
   const marketerId = req.user.id;
   const {
@@ -199,20 +196,25 @@ async function createOrder(req, res, next) {
 
   try {
     // 1) Look up device_type so we know the per-device commission
+    const table = stock_update_id
+      ? 'stock_updates su JOIN products p ON su.product_id = p.id'
+      : 'products p';
+    const where = stock_update_id
+      ? 'su.id = $1'
+      : 'p.id = $1';
+
     const { rows: info } = await pool.query(
-      `SELECT device_type FROM ${
-        stock_update_id ? 'stock_updates su JOIN products p ON su.product_id = p.id'
-                        : 'products'
-      } WHERE ${stock_update_id ? 'su.id = $1' : 'id = $1'}`,
-      [stock_update_id || product_id]
+      `SELECT p.device_type
+         FROM ${table}
+        WHERE ${where}`,
+      [ stock_update_id || product_id ]
     );
     if (!info.length) {
       return res.status(400).json({ message: "Product/stock not found." });
     }
-    const deviceType = info[0].device_type.toLowerCase();
-    const earnings_per_device = deviceType.includes('iphone')
-      ? 15000
-      : 10000;
+
+    const devTypeKey = info[0].device_type.toLowerCase();
+    const earnings_per_device = COMMISSION_RATES[devTypeKey] || 0;
 
     // 2) Insert the order, including earnings_per_device
     const { rows } = await pool.query(`
@@ -235,14 +237,14 @@ async function createOrder(req, res, next) {
       RETURNING *
     `, [
       marketerId,
-      product_id  || null,
-      stock_update_id || null,
+      product_id        || null,
+      stock_update_id  || null,
       number_of_devices,
       sold_amount,
       customer_name,
       customer_phone,
       customer_address,
-      bnpl_platform || null,
+      bnpl_platform     || null,
       earnings_per_device
     ]);
     const order = rows[0];
@@ -264,6 +266,7 @@ async function createOrder(req, res, next) {
   }
 }
 
+
 /**
  * getOrderHistory
  * GET /api/marketer/orders/history
@@ -275,7 +278,6 @@ async function getOrderHistory(req, res, next) {
     const { rows } = await pool.query(`
       SELECT
         o.id,
-        -- collect all reserved IMEIs for stock orders
         COALESCE(
           (SELECT json_agg(i.imei)
              FROM inventory_items i
@@ -302,6 +304,7 @@ async function getOrderHistory(req, res, next) {
     next(err);
   }
 }
+
 
 /**
  * submitBioData - Submits the marketer's bio data form.
@@ -336,7 +339,6 @@ async function submitBioData(req, res, next) {
 
     const passport_photo    = req.files?.passport_photo?.[0].filename;
     const id_document_image = req.files?.id_document?.[0].filename;
-
     if (!passport_photo || !id_document_image) {
       return res.status(400).json({ message: "Both passport photo and ID document are required." });
     }
@@ -359,7 +361,8 @@ async function submitBioData(req, res, next) {
       )
       RETURNING *
     `, [
-      marketerId, name, address, phone_no, religion, date_of_birth, marital_status,
+      marketerId,
+      name, address, phone_no, religion, date_of_birth, marital_status,
       state_of_origin, state_of_residence, mothers_maiden_name, school_attended,
       id_type, id_document_image, passport_photo,
       last_place_of_work, job_description, reason_for_quitting, medical_condition,
@@ -372,6 +375,7 @@ async function submitBioData(req, res, next) {
     next(err);
   }
 }
+
 
 /**
  * submitGuarantorForm - Processes the guarantor form submission.
@@ -398,7 +402,6 @@ async function submitGuarantorForm(req, res, next) {
     const id_document    = req.files?.id_document?.[0].filename;
     const passport_photo = req.files?.passport_photo?.[0].filename;
     const signature      = req.files?.signature?.[0].filename;
-
     if (!id_document || !passport_photo || !signature) {
       return res.status(400).json({ message: "All file uploads are required." });
     }
@@ -431,6 +434,7 @@ async function submitGuarantorForm(req, res, next) {
     next(err);
   }
 }
+
 
 /**
  * submitCommitmentForm - Processes the marketer's Commitment Form.
@@ -505,6 +509,7 @@ async function submitCommitmentForm(req, res, next) {
     next(err);
   }
 }
+
 
 module.exports = {
   getAccountSettings,
