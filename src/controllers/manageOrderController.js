@@ -36,45 +36,60 @@ async function getPendingOrders(req, res, next) {
  * confirmOrder - MasterAdmin only
  * PATCH /api/manage-orders/orders/:orderId/confirm
  */
+// fixed rates per device-type
+const COMMISSION_RATES = {
+  android: 10000,
+  iphone:  15000,
+};
+
 async function confirmOrder(req, res, next) {
-  const { orderId }       = req.params;
-  const adminUniqueId     = req.user.unique_id;
-  const client            = await pool.connect();
+  const { orderId }    = req.params;
+  const adminId        = req.user.unique_id;
+  const client         = await pool.connect();
 
   try {
     await client.query("BEGIN");
 
-    // 1) Lock the order row
-    const orderRes = await client.query(
-      `SELECT id, marketer_id, sold_amount, number_of_devices, commission_paid
-         FROM orders
-        WHERE id = $1
-          FOR UPDATE`,
+    // 1) Lock the order row AND grab its product type
+    const { rows } = await client.query(
+      `SELECT
+         o.id,
+         o.marketer_id,
+         o.number_of_devices,
+         o.commission_paid,
+         p.device_name
+       FROM orders o
+       JOIN products p
+         ON o.product_id = p.id
+       WHERE o.id = $1
+         FOR UPDATE`,
       [orderId]
     );
-    if (!orderRes.rows.length) {
+    if (!rows.length) {
       await client.query("ROLLBACK");
       return res.status(404).json({ message: "Order not found." });
     }
-    const order = orderRes.rows[0];
+    const order = rows[0];
 
-    // 2) Prevent double-paying
+    // 2) Prevent double‐paying
     if (order.commission_paid) {
       await client.query("ROLLBACK");
       return res.status(400).json({ message: "Commission already paid." });
     }
 
-    // 3) Compute commission (40% of sale)
-    const totalSale   = Number(order.sold_amount);
-    const deviceCount = order.number_of_devices;
-    const RATE        = 0.4;
-    if (totalSale <= 0 || deviceCount <= 0) {
-      throw new Error("Invalid sale amount or device count");
+    // 3) Compute commission: rate * count
+    const key = order.device_name.toLowerCase();
+    const rate = COMMISSION_RATES[key];
+    if (!rate) {
+      throw new Error(`Unsupported device type: ${order.device_name}`);
     }
-    const commission = totalSale * RATE;
+    if (order.number_of_devices <= 0) {
+      throw new Error("Invalid device count");
+    }
+    const commission = rate * order.number_of_devices;
 
-    // 4) Update order to confirmed + flag commission_paid
-    const confirmRes = await client.query(
+    // 4) Mark order confirmed & flag commission_paid
+    const upd = await client.query(
       `UPDATE orders
           SET status          = 'confirmed',
               confirmed_by    = $2,
@@ -83,19 +98,21 @@ async function confirmOrder(req, res, next) {
               updated_at      = NOW()
         WHERE id = $1
         RETURNING *`,
-      [orderId, adminUniqueId]
+      [orderId, adminId]
     );
-    const updatedOrder = confirmRes.rows[0];
+    const updatedOrder = upd.rows[0];
 
-    // 5) Look up marketer’s unique_id
-    const userRes = await client.query(
+    // 5) Lookup marketer’s unique_id
+    const ures = await client.query(
       `SELECT unique_id FROM users WHERE id = $1`,
       [order.marketer_id]
     );
-    if (!userRes.rows.length) throw new Error("Marketer not found.");
-    const marketerUniqueId = userRes.rows[0].unique_id;
+    if (!ures.rows.length) {
+      throw new Error("Marketer not found.");
+    }
+    const marketerUniqueId = ures.rows[0].unique_id;
 
-    // 6) Credit the wallet
+    // 6) Credit wallet (service splits 40%/60% internally)
     const { available, withheld } = await walletService.creditCommissionFromAmount(
       marketerUniqueId,
       orderId,
@@ -103,20 +120,26 @@ async function confirmOrder(req, res, next) {
     );
 
     await client.query("COMMIT");
+
+    // 7) Respond
     return res.json({
       message: "Order confirmed and commission credited.",
       order: updatedOrder,
-      commissionBreakdown: { commission, available, withheld }
+      commissionBreakdown: {
+        // for logging/demo—these will show as e.g. "10 000"
+        commission:   commission.toLocaleString(),
+        available:    available.toLocaleString(),
+        withheld:     withheld.toLocaleString(),
+      }
     });
 
   } catch (err) {
     await client.query("ROLLBACK");
-    return next(err);
+    next(err);
   } finally {
     client.release();
   }
 }
-
 /**
  * confirmOrderToDealer - MasterAdmin only
  * PATCH /api/manage-orders/orders/:orderId/confirm-to-dealer
