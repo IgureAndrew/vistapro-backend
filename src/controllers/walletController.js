@@ -38,10 +38,22 @@ async function review(req, res, next) {
   } catch (e) { next(e) }
 }
 
+async function getWalletStats(req, res, next) {
+  try {
+    const { from, to } = req.query;
+    // make sure your service expects (userId, from, to)
+    const stats = await walletService.getStats(req.user.unique_id, from, to);
+    return res.json(stats);
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   getMyWallet,
   getMyWithdrawals,
   requestWithdrawal,
   listPending,
+  getWalletStats,
   review
 };
