@@ -38,61 +38,86 @@ async function getPendingOrders(req, res, next) {
 // src/controllers/manageOrderController.js
 
 async function confirmOrder(req, res, next) {
-  try {
-    const { orderId } = req.params;
-    const adminId     = req.user.unique_id;
+  const { orderId } = req.params;
+  const adminUniqueId = req.user.unique_id;
+  const client = await pool.connect();
 
-    // 1) Mark the order as confirmed
-    const { rows } = await pool.query(
-      `UPDATE orders
-          SET status       = 'confirmed',
-              confirmed_by = $2,
-              confirmed_at = NOW()
+  try {
+    await client.query("BEGIN");
+
+    // 1) Lock the order row and fetch its commission details
+    const orderRes = await client.query(
+      `SELECT id, marketer_id, earnings_per_device, number_of_devices, commission_paid
+         FROM orders
         WHERE id = $1
-        RETURNING *
-      `,
-      [orderId, adminId]
+          FOR UPDATE`,
+      [orderId]
     );
-    if (!rows.length) {
-      return res.status(404).json({ message: 'Order not found.' });
+    if (!orderRes.rows.length) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ message: "Order not found." });
+    }
+    const order = orderRes.rows[0];
+
+    // 2) Prevent double‐paying
+    if (order.commission_paid) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ message: "Commission already paid for this order." });
     }
 
-    const order = rows[0];
+    // 3) Calculate total commission
+    const commission = Number(order.earnings_per_device) * order.number_of_devices;
+    if (commission <= 0) {
+      throw new Error("Order earnings_per_device is missing or zero");
+    }
 
-    // ─────────────────────────────────────────────────────────────
-    // 2) Calculate total commission
-const commission = Number(order.earnings_per_device) * order.number_of_devices;
-if (commission <= 0) throw new Error('Order earnings_per_device is missing or zero');
+    // 4) Mark order confirmed & flag commission as paid
+    const confirmRes = await client.query(
+      `UPDATE orders
+          SET status         = 'confirmed',
+              confirmed_by   = $2,
+              confirmed_at   = NOW(),
+              commission_paid = TRUE,
+              updated_at     = NOW()
+        WHERE id = $1
+        RETURNING *`,
+      [orderId, adminUniqueId]
+    );
+    const updatedOrder = confirmRes.rows[0];
 
-    // Fetch the marketer’s string‐ID, then credit their wallet
-    const { rows: urows } = await pool.query(
+    // 5) Fetch marketer’s unique_id
+    const userRes = await client.query(
       `SELECT unique_id FROM users WHERE id = $1`,
       [order.marketer_id]
     );
-    if (!urows.length) {
-      return res.status(500).json({ message: 'Marketer not found.' });
+    if (!userRes.rows.length) {
+      throw new Error("Marketer not found.");
     }
-    const marketerUniqueId = urows[0].unique_id;
+    const marketerUniqueId = userRes.rows[0].unique_id;
 
-    // 3) Credit commission (40% available, 60% withheld)
-  
-const { available, withheld } = await walletService.creditCommissionFromAmount(
-  marketerUniqueId,
-  order.id,
-  commission
-);
-    // ─────────────────────────────────────────────────────────────
+    // 6) Credit the commission (40% available, 60% withheld)
+    const { available, withheld } = await walletService.creditCommissionFromAmount(
+      marketerUniqueId,
+      orderId,
+      commission
+    );
 
-    // 3) Respond
+    await client.query("COMMIT");
+
     res.json({
-      message: 'Order confirmed and commission credited.',
-      order,
+      message: "Order confirmed and commission credited.",
+      order: updatedOrder,
       commissionBreakdown: { commission, available, withheld }
     });
+
   } catch (err) {
+    await client.query("ROLLBACK");
     next(err);
+  } finally {
+    client.release();
   }
 }
+
 
 /**
  * confirmOrderToDealer - MasterAdmin only
