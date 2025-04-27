@@ -60,11 +60,9 @@ async function confirmOrder(req, res, next) {
     const order = rows[0];
 
     // ─────────────────────────────────────────────────────────────
-    // 2) Calculate and credit the commission *per device* × quantity
-    const commission = Number(order.earnings_per_device) * order.number_of_devices;
-    if (commission <= 0) {
-      throw new Error('Order earnings_per_device missing or zero');
-    }
+    // 2) Calculate total commission
+const commission = Number(order.earnings_per_device) * order.number_of_devices;
+if (commission <= 0) throw new Error('Order earnings_per_device is missing or zero');
 
     // Fetch the marketer’s string‐ID, then credit their wallet
     const { rows: urows } = await pool.query(
@@ -76,12 +74,12 @@ async function confirmOrder(req, res, next) {
     }
     const marketerUniqueId = urows[0].unique_id;
 
-    const { available, withheld } = await walletService.creditCommissionFromOrder(
-      marketerUniqueId,
-      order.id,
-      order.device_type,     // “android” or “iphone”
-      order.number_of_devices
-    );
+    // 3) Credit commission (40% available, 60% withheld)
+const { available, withheld } = await walletService.creditCommissionFromAmount(
+  marketerUniqueId,
+  order.id,
+  commission
+);
     // ─────────────────────────────────────────────────────────────
 
     // 3) Respond
