@@ -57,7 +57,7 @@ async function confirmOrder(req, res, next) {
          o.marketer_id,
          o.number_of_devices,
          o.commission_paid,
-         p.device_name
+          p.device_type
        FROM orders o
        JOIN products p
          ON o.product_id = p.id
@@ -77,12 +77,12 @@ async function confirmOrder(req, res, next) {
       return res.status(400).json({ message: "Commission already paid." });
     }
 
-    // 3) Compute commission: rate * count
-    const key = order.device_name.toLowerCase();
-    const rate = COMMISSION_RATES[key];
+  // 3) Compute commission: flat rate per-device × count
+    const type = order.device_type;                  // 'android' or 'iphone'
+    const rate = COMMISSION_RATES[type];
     if (!rate) {
-      throw new Error(`Unsupported device type: ${order.device_name}`);
-    }
+      throw new Error(`Unsupported device type: ${type}`);
+   }
     if (order.number_of_devices <= 0) {
       throw new Error("Invalid device count");
     }
