@@ -78,10 +78,10 @@ async function confirmOrder(req, res, next) {
     }
 
   // 3) Compute commission: flat rate per-device × count
-    const type = order.device_type;                  // 'android' or 'iphone'
-    const rate = COMMISSION_RATES[type];
+   const typeKey = order.device_type.toLowerCase();                 // 'android' or 'iphone'
+    const rate = COMMISSION_RATES[typeKey];
     if (!rate) {
-      throw new Error(`Unsupported device type: ${type}`);
+      throw new Error(`Unsupported device type: ${order.device_type}`);
    }
     if (order.number_of_devices <= 0) {
       throw new Error("Invalid device count");
