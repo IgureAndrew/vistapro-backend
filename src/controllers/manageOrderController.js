@@ -133,7 +133,6 @@ async function confirmOrder(req, res, next) {
     client.release();
   }
 }
-
 /**
  * confirmOrderToDealer - MasterAdmin only
  * PATCH /api/manage-orders/orders/:orderId/confirm-to-dealer
