@@ -68,4 +68,12 @@ router.post(
   wc.releaseWithheld
 );
 
+// MasterAdmin only: revert the last release for a specific marketer
+router.patch(
+  '/master/:userId/release-revert',
+  verifyToken,
+  verifyRole(['MasterAdmin']),
+  wc.revertRelease
+);
+
 module.exports = router;

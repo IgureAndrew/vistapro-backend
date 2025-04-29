@@ -250,6 +250,47 @@ async function getAllWallets() {
   return rows;
 }
 
+/**
+ * 8) Revert the most recent release_withheld for one marketer:
+ *    ➔ subtracts the released amount from available_balance,
+ *      adds it back into withheld_balance,
+ *    ➔ logs a `release_reverted` transaction.
+ */
+async function revertLastRelease(userId) {
+  // 1) Find the most recent release_withheld transaction
+  const { rows } = await pool.query(`
+    SELECT amount
+      FROM wallet_transactions
+     WHERE user_unique_id = $1
+       AND transaction_type = 'release_withheld'
+     ORDER BY created_at DESC
+     LIMIT 1
+  `, [ userId ]);
+
+  if (!rows.length) {
+    throw new Error("No release_withheld found to revert.");
+  }
+  const releasedAmount = Number(rows[0].amount);
+
+  // 2) Move it back: available_balance -= released, withheld_balance += released
+  await pool.query(`
+    UPDATE wallets
+       SET available_balance = available_balance - $1,
+           withheld_balance  = withheld_balance  + $1,
+           updated_at        = NOW()
+     WHERE user_unique_id = $2
+  `, [ releasedAmount, userId ]);
+
+  // 3) Log the reversal
+  await pool.query(`
+    INSERT INTO wallet_transactions
+      (user_unique_id, amount, transaction_type, meta)
+    VALUES ($1, -$2, 'release_reverted', '{}'::jsonb)
+  `, [ userId, releasedAmount ]);
+
+  return releasedAmount;
+}
+
 module.exports = {
   COMMISSION_RATES,
   creditCommissionFromAmount,
@@ -260,4 +301,5 @@ module.exports = {
   reviewRequest,
   releaseWithheld,   // now per‐user
   getAllWallets,
+  revertLastRelease,
 };
