@@ -264,21 +264,38 @@ async function releaseWithheld() {
   }
 }
 
-async function getAllWallets() {
-  const { rows } = await pool.query(`
+/**
+ * 8) Fetch summary stats (e.g. total commission) over a date range.
+ *
+ * @param {string} userId – marketer’s unique_id
+ * @param {string} from   – ISO date string (inclusive)
+ * @param {string} to     – ISO date string (inclusive)
+ */
+async function getStats(userId, from, to) {
+  // default to epoch start / now if missing
+  const fromDate = from ? new Date(from) : new Date(0);
+  const toDate   = to   ? new Date(to)   : new Date();
+
+  const { rows } = await pool.query(
+    `
     SELECT
-      w.user_unique_id,
-      u.first_name    AS marketer_name,
-      w.total_balance,
-      w.available_balance,
-      w.withheld_balance
-    FROM wallets w
-    JOIN users u
-      ON u.unique_id = w.user_unique_id
-    ORDER BY u.first_name
-  `);
-  return rows;
+      COALESCE(SUM(amount), 0)::BIGINT AS total_commission
+    FROM wallet_transactions
+    WHERE user_unique_id   = $1
+      AND transaction_type  = 'commission'
+      AND created_at BETWEEN $2 AND $3
+  `, [
+    userId,
+    fromDate.toISOString(),
+    toDate  .toISOString(),
+  ]);
+
+  return {
+    commission: Number(rows[0].total_commission)
+  };
 }
+
+
 module.exports = {
   creditCommissionFromAmount,
   getMyWallet,
@@ -287,5 +304,5 @@ module.exports = {
   listPendingRequests,
   reviewRequest,
   releaseWithheld,
-  getAllWallets, 
+  getStats,
 };

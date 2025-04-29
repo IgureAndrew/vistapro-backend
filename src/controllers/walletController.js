@@ -92,7 +92,15 @@ async function releaseWithheld(req, res, next) {
   }
 }
 
-
+async function getWalletStats(req, res, next) {
+  try {
+    const { from, to } = req.query;
+    const stats = await svc.getStats(req.user.unique_id, from, to);
+    res.json(stats);
+  } catch (err) {
+    next(err);
+  }
+}
 
 module.exports = {
   // marketer

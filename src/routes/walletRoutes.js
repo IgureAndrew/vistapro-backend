@@ -22,6 +22,13 @@ router.get(
 );
 
 router.get(
+  '/stats',
+  verifyToken,
+  verifyRole(['Marketer']),
+  wc.getWalletStats
+);
+
+router.get(
   '/withdrawals',
   verifyToken,
   verifyRole(['Marketer']),
