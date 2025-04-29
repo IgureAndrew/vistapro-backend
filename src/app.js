@@ -91,7 +91,7 @@ const profitReportRoutes = require('./routes/profitReportRoutes');
 const performanceRoutes = require('./routes/performanceRoutes');
 const stockupdateRoutes = require('./routes/stockupdateRoutes');
 const walletRoutes = require("./routes/walletRoutes");
-
+const messageRoutes = require('./routes/messageRoutes');
 
 // Mount routes
 app.use('/api/auth', authRoutes);
@@ -111,6 +111,7 @@ app.use('/api/stock', stockupdateRoutes);
 app.use("/api/verification", verificationRoutes);
 app.use('/api/notifications', require('./routes/notificationRoutes'));
 app.use("/api/wallets", walletRoutes);
+app.use('/api/messages', messageRoutes);
 
 // Error handling middleware
 const errorHandler = require('./middlewares/errorHandler');
