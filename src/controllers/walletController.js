@@ -92,22 +92,6 @@ async function releaseWithheld(req, res, next) {
   }
 }
 
-async function revertRelease(req, res, next) {
-  try {
-    // only MasterAdmin may do this
-    if (req.user.role !== 'MasterAdmin') {
-      return res.sendStatus(403);
-    }
-    const userId = req.params.userId;
-    const amount = await svc.revertLastRelease(userId);
-    res.json({
-      message: `Reverted ₦${amount.toLocaleString()} back into withheld.`,
-      amount
-    });
-  } catch (err) {
-    next(err);
-  }
-}
 
 
 module.exports = {
@@ -121,5 +105,4 @@ module.exports = {
   listPendingRequests,
   reviewRequest,
   releaseWithheld,
-  revertRelease,
 };
