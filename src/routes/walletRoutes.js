@@ -62,7 +62,7 @@ router.patch(
 
 // release all withheld balances to available
 router.post(
-  '/master-admin/release-withheld',
+  '/master/:userId/release-withheld',
   verifyToken,
   verifyRole(['MasterAdmin']),
   wc.releaseWithheld

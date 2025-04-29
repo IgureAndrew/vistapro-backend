@@ -84,8 +84,9 @@ async function reviewRequest(req, res, next) {
 // POST  /api/wallets/master-admin/release-withheld
 async function releaseWithheld(req, res, next) {
   try {
-    await svc.releaseWithheld();
-    res.json({ message: "All withheld balances released." });
+    if (req.user.role !== "MasterAdmin") return res.sendStatus(403);
+    const { released } = await svc.releaseWithheld(req.params.userId);
+    res.json({ message: `Released ₦${released.toLocaleString()}`, released });
   } catch (err) {
     next(err);
   }
