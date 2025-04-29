@@ -264,6 +264,21 @@ async function releaseWithheld() {
   }
 }
 
+async function getAllWallets() {
+  const { rows } = await pool.query(`
+    SELECT
+      w.user_unique_id,
+      u.first_name    AS marketer_name,
+      w.total_balance,
+      w.available_balance,
+      w.withheld_balance
+    FROM wallets w
+    JOIN users u
+      ON u.unique_id = w.user_unique_id
+    ORDER BY u.first_name
+  `);
+  return rows;
+}
 module.exports = {
   creditCommissionFromAmount,
   getMyWallet,
@@ -272,4 +287,5 @@ module.exports = {
   listPendingRequests,
   reviewRequest,
   releaseWithheld,
+  getAllWallets, 
 };

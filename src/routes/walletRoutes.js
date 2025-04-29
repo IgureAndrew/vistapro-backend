@@ -8,9 +8,9 @@ const router = express.Router();
 // ─── Marketer routes ────────────────────────────────────────
 // all of these require a valid token + Marketer role
 router.get(
-  '/', 
-  verifyToken, 
-  verifyRole(['Marketer']), 
+  '/',
+  verifyToken,
+  verifyRole(['Marketer']),
   wc.getMyWallet
 );
 
@@ -36,19 +36,36 @@ router.post(
 );
 
 // ─── MasterAdmin routes ──────────────────────────────────────
-// only MasterAdmin can list & review withdrawal requests
+// list all marketers’ wallet balances
 router.get(
-  '/requests',
+  '/master-admin/wallets',
   verifyToken,
   verifyRole(['MasterAdmin']),
-  wc.listPending
+  wc.getAllWallets
 );
 
-router.patch(
-  '/requests/:reqId',
+// list pending withdrawal requests
+router.get(
+  '/master-admin/requests',
   verifyToken,
   verifyRole(['MasterAdmin']),
-  wc.review
+  wc.listPendingRequests
+);
+
+// approve or reject a withdrawal request
+router.patch(
+  '/master-admin/requests/:reqId',
+  verifyToken,
+  verifyRole(['MasterAdmin']),
+  wc.reviewRequest
+);
+
+// release all withheld balances to available
+router.post(
+  '/master-admin/release-withheld',
+  verifyToken,
+  verifyRole(['MasterAdmin']),
+  wc.releaseWithheld
 );
 
 module.exports = router;

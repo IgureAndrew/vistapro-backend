@@ -600,8 +600,6 @@ const masterApprove = async (req, res, next) => {
 
 /**
  * deleteBiodataSubmission
- * Deletes a biodata record from the marketer_biodata table based on the submission ID.
- * Only a Master Admin can delete the submission.
  */
 const deleteBiodataSubmission = async (req, res, next) => {
   try {
@@ -609,17 +607,44 @@ const deleteBiodataSubmission = async (req, res, next) => {
       return res.status(403).json({ message: "Only a Master Admin can delete submissions." });
     }
     const { submissionId } = req.params;
-    if (!submissionId) {
-      return res.status(400).json({ message: "Submission ID is required." });
+    const { marketerUniqueId } = req.body;
+    if (!submissionId || !marketerUniqueId) {
+      return res.status(400).json({ message: "Submission ID and marketerUniqueId are required." });
     }
-    const query = "DELETE FROM marketer_biodata WHERE id = $1 RETURNING *";
-    const result = await pool.query(query, [submissionId]);
-    if (result.rowCount === 0) {
+
+    // 1) Delete the biodata record
+    const deleteResult = await pool.query(
+      "DELETE FROM marketer_biodata WHERE id = $1 RETURNING *",
+      [submissionId]
+    );
+    if (deleteResult.rowCount === 0) {
       return res.status(404).json({ message: "Biodata submission not found." });
     }
+
+    // 2) Clear the flag and set overall status to pending
+    const userResult = await pool.query(
+      `UPDATE users
+         SET bio_submitted = FALSE,
+             overall_verification_status = 'pending',
+             updated_at = NOW()
+       WHERE unique_id = $1
+       RETURNING *`,
+      [marketerUniqueId]
+    );
+
+    // 3) Notify the marketer via WebSocket
+    const io = req.app.get("socketio");
+    if (io) {
+      io.to(marketerUniqueId).emit("formReset", {
+        formType: "biodata",
+        message: "Your Biodata form has been reset by Master Admin. Please refill it."
+      });
+    }
+
     res.status(200).json({
-      message: "Biodata submission deleted successfully.",
-      submission: result.rows[0],
+      message: "Biodata submission deleted and reset.",
+      deleted: deleteResult.rows[0],
+      user: userResult.rows[0]
     });
   } catch (error) {
     next(error);
@@ -628,8 +653,6 @@ const deleteBiodataSubmission = async (req, res, next) => {
 
 /**
  * deleteGuarantorSubmission
- * Deletes a guarantor submission from the guarantor_employment_form table based on the submission ID.
- * Only a Master Admin can delete the submission.
  */
 const deleteGuarantorSubmission = async (req, res, next) => {
   try {
@@ -637,27 +660,51 @@ const deleteGuarantorSubmission = async (req, res, next) => {
       return res.status(403).json({ message: "Only a Master Admin can delete submissions." });
     }
     const { submissionId } = req.params;
-    if (!submissionId) {
-      return res.status(400).json({ message: "Submission ID is required." });
+    const { marketerUniqueId } = req.body;
+    if (!submissionId || !marketerUniqueId) {
+      return res.status(400).json({ message: "Submission ID and marketerUniqueId are required." });
     }
-    const query = "DELETE FROM guarantor_employment_form WHERE id = $1 RETURNING *";
-    const result = await pool.query(query, [submissionId]);
-    if (result.rowCount === 0) {
+
+    // 1) Delete the guarantor record
+    const deleteResult = await pool.query(
+      "DELETE FROM guarantor_employment_form WHERE id = $1 RETURNING *",
+      [submissionId]
+    );
+    if (deleteResult.rowCount === 0) {
       return res.status(404).json({ message: "Guarantor submission not found." });
     }
+
+    // 2) Clear the flag and reset overall status
+    const userResult = await pool.query(
+      `UPDATE users
+         SET guarantor_submitted = FALSE,
+             overall_verification_status = 'pending',
+             updated_at = NOW()
+       WHERE unique_id = $1
+       RETURNING *`,
+      [marketerUniqueId]
+    );
+
+    // 3) Notify via socket
+    const io = req.app.get("socketio");
+    if (io) {
+      io.to(marketerUniqueId).emit("formReset", {
+        formType: "guarantor",
+        message: "Your Guarantor form has been reset by Master Admin. Please refill it."
+      });
+    }
+
     res.status(200).json({
-      message: "Guarantor submission deleted successfully.",
-      submission: result.rows[0],
+      message: "Guarantor submission deleted and reset.",
+      deleted: deleteResult.rows[0],
+      user: userResult.rows[0]
     });
   } catch (error) {
     next(error);
   }
 };
-
 /**
  * deleteCommitmentSubmission
- * Deletes a commitment submission from the direct_sales_commitment_form table based on the submission ID.
- * Only a Master Admin can delete the submission.
  */
 const deleteCommitmentSubmission = async (req, res, next) => {
   try {
@@ -665,17 +712,44 @@ const deleteCommitmentSubmission = async (req, res, next) => {
       return res.status(403).json({ message: "Only a Master Admin can delete submissions." });
     }
     const { submissionId } = req.params;
-    if (!submissionId) {
-      return res.status(400).json({ message: "Submission ID is required." });
+    const { marketerUniqueId } = req.body;
+    if (!submissionId || !marketerUniqueId) {
+      return res.status(400).json({ message: "Submission ID and marketerUniqueId are required." });
     }
-    const query = "DELETE FROM direct_sales_commitment_form WHERE id = $1 RETURNING *";
-    const result = await pool.query(query, [submissionId]);
-    if (result.rowCount === 0) {
+
+    // 1) Delete the commitment record
+    const deleteResult = await pool.query(
+      "DELETE FROM direct_sales_commitment_form WHERE id = $1 RETURNING *",
+      [submissionId]
+    );
+    if (deleteResult.rowCount === 0) {
       return res.status(404).json({ message: "Commitment submission not found." });
     }
+
+    // 2) Clear the flag and reset overall status
+    const userResult = await pool.query(
+      `UPDATE users
+         SET commitment_submitted = FALSE,
+             overall_verification_status = 'pending',
+             updated_at = NOW()
+       WHERE unique_id = $1
+       RETURNING *`,
+      [marketerUniqueId]
+    );
+
+    // 3) Notify via socket
+    const io = req.app.get("socketio");
+    if (io) {
+      io.to(marketerUniqueId).emit("formReset", {
+        formType: "commitment",
+        message: "Your Commitment form has been reset by Master Admin. Please refill it."
+      });
+    }
+
     res.status(200).json({
-      message: "Commitment submission deleted successfully.",
-      submission: result.rows[0],
+      message: "Commitment submission deleted and reset.",
+      deleted: deleteResult.rows[0],
+      user: userResult.rows[0]
     });
   } catch (error) {
     next(error);
