@@ -43,20 +43,21 @@ const COMMISSION_RATES = {
 };
 
 async function confirmOrder(req, res, next) {
-  const { orderId }      = req.params;
-  const adminUniqueId    = req.user.unique_id;
-  const client           = await pool.connect();
+  const { orderId }   = req.params;
+  const adminUniqueId = req.user.unique_id;
+  const client        = await pool.connect();
 
   try {
     await client.query("BEGIN");
 
-    // 1) Lock and fetch order + device_type
-    const orderRes = await client.query(
+    // 1) Lock the order row and fetch commission_paid, qty & device_type
+    const { rows } = await client.query(
       `
       SELECT
         o.id,
         o.marketer_id,
         o.number_of_devices,
+        o.commission_paid,
         p.device_type
       FROM orders o
       JOIN products p
@@ -66,12 +67,11 @@ async function confirmOrder(req, res, next) {
       `,
       [orderId]
     );
-
-    if (!orderRes.rows.length) {
+    if (!rows.length) {
       await client.query("ROLLBACK");
       return res.status(404).json({ message: "Order not found." });
     }
-    const order = orderRes.rows[0];
+    const order = rows[0];
 
     // 2) Prevent double‐paying
     if (order.commission_paid) {
@@ -79,8 +79,9 @@ async function confirmOrder(req, res, next) {
       return res.status(400).json({ message: "Commission already paid for this order." });
     }
 
-    // 3) Calculate total commission from fixed rates
-    const rate = COMMISSION_RATES[order.device_type];
+    // 3) Compute commission from fixed rates (case‐insensitive)
+    const dt   = (order.device_type || "").trim().toLowerCase();
+    const rate = COMMISSION_RATES[dt];
     if (!rate) {
       throw new Error(`Unsupported device type: ${order.device_type}`);
     }
@@ -126,6 +127,7 @@ async function confirmOrder(req, res, next) {
       order: updatedOrder,
       commissionBreakdown: { commission, available, withheld }
     });
+
   } catch (err) {
     await client.query("ROLLBACK");
     next(err);
@@ -133,6 +135,7 @@ async function confirmOrder(req, res, next) {
     client.release();
   }
 }
+
 /**
  * confirmOrderToDealer - MasterAdmin only
  * PATCH /api/manage-orders/orders/:orderId/confirm-to-dealer
