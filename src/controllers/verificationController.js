@@ -962,15 +962,17 @@ async function getVerifiedMarketersMaster(req, res, next) {
   try {
     const { rows } = await pool.query(`
       SELECT
-        unique_id,
-        first_name,
-        last_name,
-        email,
-        phone,
-        location
-      FROM users
-      WHERE overall_verification_status = 'approved'
-      ORDER BY first_name, last_name
+        u.unique_id,
+        u.first_name,
+        u.last_name,
+        u.email,
+        b.phone,
+        u.location
+      FROM users u
+      LEFT JOIN marketer_biodata b
+        ON b.marketer_unique_id = u.unique_id
+      WHERE u.overall_verification_status = 'approved'
+      ORDER BY u.first_name, u.last_name
     `);
     res.json({ marketers: rows });
   } catch (err) {
@@ -990,10 +992,12 @@ async function getVerifiedMarketersSuperadmin(req, res, next) {
         m.first_name,
         m.last_name,
         m.email,
-        m.phone,
+        b.phone,
         m.location
       FROM users m
-      JOIN users a ON m.admin_id = a.id
+      JOIN users a     ON m.admin_id = a.id
+      LEFT JOIN marketer_biodata b
+        ON b.marketer_unique_id = m.unique_id
       WHERE a.super_admin_id = $1
         AND m.overall_verification_status = 'approved'
       ORDER BY m.first_name, m.last_name
@@ -1012,23 +1016,24 @@ async function getVerifiedMarketersAdmin(req, res, next) {
     const adminId = req.user.id;
     const { rows } = await pool.query(`
       SELECT
-        unique_id,
-        first_name,
-        last_name,
-        email,
-        phone,
-        location
-      FROM users
-      WHERE admin_id = $1
-        AND overall_verification_status = 'approved'
-      ORDER BY first_name, last_name
+        u.unique_id,
+        u.first_name,
+        u.last_name,
+        u.email,
+        b.phone,
+        u.location
+      FROM users u
+      LEFT JOIN marketer_biodata b
+        ON b.marketer_unique_id = u.unique_id
+      WHERE u.admin_id = $1
+        AND u.overall_verification_status = 'approved'
+      ORDER BY u.first_name, u.last_name
     `, [adminId]);
     res.json({ marketers: rows });
   } catch (err) {
     next(err);
   }
 }
-
 
 
 module.exports = {
