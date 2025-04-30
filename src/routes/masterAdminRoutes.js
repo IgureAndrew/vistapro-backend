@@ -31,6 +31,7 @@ const {
   listAdminsBySuperAdmin,
   getTotalUsers,
   getStats,
+  getRecentActivity, 
   getAllDealers
 } = require('../controllers/masterAdminController');
 
@@ -188,6 +189,12 @@ router.use((err, req, res, next) => {
   console.error(err);
   res.status(500).send({ message: 'Internal Server Error' });
 });
+
+router.get(
+  "/recent-activity",
+  verifyToken,
+  getRecentActivity
+);
 
 // GET /api/master-admin/stats
 router.get(

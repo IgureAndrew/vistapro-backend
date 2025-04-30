@@ -2,6 +2,7 @@ const bcrypt = require('bcrypt');
 const { pool } = require('../config/database');
 const { createUser } = require('../models/userModel');
 const { generateUniqueID } = require('../utils/uniqueId');
+const logActivity = require("../utils/logActivity");
 
 // Updated password regex: Minimum 12 characters, at least one letter, one digit, and one special character.
 const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d)(?=.*[@$!%*#?&])[A-Za-z\d@$!%*#?&]{12,}$/;
@@ -43,6 +44,14 @@ const registerMasterAdmin = async (req, res, next) => {
       business_account_number: null,
       registration_certificate_url: null,
     });
+     // log activity
+    await logActivity(
+      req.user.id,
+      `${req.user.first_name} ${req.user.last_name}`,
+      'Register Master Admin',
+      'MasterAdmin',
+      newUser.unique_id
+    );
     return res.status(201).json({
       message: "Master Admin registered successfully.",
       user: newUser,
@@ -128,6 +137,14 @@ const updateProfile = async (req, res, next) => {
     const values = [email, gender, phone, profileImage, hashedPassword, userId];
 
     const result = await pool.query(query, values);
+    // log activity
+    await logActivity(
+      userId,
+      `${req.user.first_name} ${req.user.last_name}`,
+      'Update Profile',
+      'MasterAdmin',
+      req.user.unique_id
+    );
     return res.status(200).json({
       message: "Master Admin profile updated successfully.",
       user: result.rows[0],
@@ -308,7 +325,14 @@ const addUser = async (req, res, next) => {
         [newUser.unique_id]
       );
     }
-
+      // log activity
+    await logActivity(
+      req.user.id,
+      `${req.user.first_name} ${req.user.last_name}`,
+      'Create User',
+      newUser.role,
+      newUser.unique_id
+    );
     return res.status(201).json({
       message: "User created successfully",
       user: newUser,
@@ -413,7 +437,14 @@ const updateUser = async (req, res, next) => {
     
     // Execute the query.
     const result = await pool.query(query, values);
-    
+     // log activity
+     await logActivity(
+      req.user.id,
+      `${req.user.first_name} ${req.user.last_name}`,
+      'Update User',
+      'User',
+      userUniqueId
+    );
     if (!result.rowCount) {
       return res.status(404).json({ message: "User not found." });
     }
@@ -435,10 +466,18 @@ const deleteUser = async (req, res, next) => {
   try {
     const userId = req.params.id;
     const query = `DELETE FROM users WHERE id = $1 RETURNING *`;
-    const result = await pool.query(query, [userId]);
+    const result = await pool.query(query, [userId]);   
     if (result.rows.length === 0) {
       return res.status(404).json({ message: "User not found" });
     }
+      // log activity
+    await logActivity(
+      req.user.id,
+      `${req.user.first_name} ${req.user.last_name}`,
+      'Delete User',
+      'User',
+      result.rows[0].unique_id
+    );
     return res.status(200).json({
       message: "User deleted successfully",
       user: result.rows[0],
@@ -586,6 +625,17 @@ const assignMarketersToAdmin = async (req, res, next) => {
     `;
     const values = [adminUniqueId, marketerUniqueIds];
     const result = await pool.query(query, values);
+    await pool.query(`
+      INSERT INTO activity_logs
+        (actor_id, actor_name, activity_type, entity_type, entity_unique_id)
+      VALUES
+        ($1, $2, 'Assigned to Admin', 'Marketer', $3)
+    `, [
+      req.user.id,
+      `${req.user.first_name} ${req.user.last_name}`,
+      marketerUniqueIds.join(',')   // or each ID in a loop, as you prefer
+    ]);
+
     return res.status(200).json({
       message: "Marketers assigned to Admin successfully.",
       assignedMarketers: result.rows,
@@ -687,9 +737,21 @@ const unassignMarketersFromAdmin = async (req, res, next) => {
     // Here, $1 is the array of marketer IDs and $2 is the adminUniqueId.
     const values = [marketerUniqueIds, adminUniqueId];
     const result = await pool.query(query, values);
+    await pool.query(`
+      INSERT INTO activity_logs
+        (actor_id, actor_name, activity_type, entity_type, entity_unique_id)
+      VALUES
+        ($1, $2, 'Unassigned from Admin', 'Marketer', $3)
+    `, [
+      req.user.id,
+      `${req.user.first_name} ${req.user.last_name}`,
+      marketerUniqueIds.join(',')
+    ]);
+
     if (result.rowCount === 0) {
       return res.status(404).json({ message: "Marketer(s) not found or already unassigned." });
     }
+    
     res.status(200).json({
       message: "Marketer(s) unassigned successfully.",
       unassignedMarketers: result.rows,
@@ -938,6 +1000,26 @@ async function getStats(req, res, next) {
     next(err);
   }
 }
+
+/**
+ * getRecentActivity - Returns the latest activity log entries.
+ */
+async function getRecentActivity(req, res, next) {
+  try {
+    const limit = parseInt(req.query.limit, 10) || 20;
+    const { rows } = await pool.query(
+      `SELECT id, actor_name, activity_type, entity_type, entity_unique_id, created_at
+         FROM activity_logs
+        ORDER BY created_at DESC
+        LIMIT $1`,
+      [limit]
+    );
+    res.json({ activities: rows });
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   registerMasterAdmin,
   registerSuperAdmin,
@@ -960,5 +1042,6 @@ module.exports = {
   getAllDealers,
   getTotalUsers,
   getStats,
+  getRecentActivity,
   
 };
