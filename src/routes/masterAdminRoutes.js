@@ -172,4 +172,46 @@ router.use((err, req, res, next) => {
   res.status(500).send({ message: 'Internal Server Error' });
 });
 
+// GET /api/master-admin/stats
+router.get(
+  "/stats",
+  verifyToken,
+  verifyRole(["MasterAdmin"]),
+  async (req, res, next) => {
+    try {
+      const [
+        { rows: usersRows },
+        { rows: pendingOrdersRows },
+        { rows: confirmedOrdersRows },
+        { rows: salesRows },
+        { rows: productsRows },
+        { rows: pendingVerifRows },
+        { rows: pickupRows },
+      ] = await Promise.all([
+        pool.query("SELECT COUNT(*) AS count FROM users"),
+        pool.query("SELECT COUNT(*) AS count FROM orders WHERE status = 'pending'"),
+        pool.query("SELECT COUNT(*) AS count FROM orders WHERE status = 'completed'"),
+        pool.query("SELECT COALESCE(SUM(sold_amount),0) AS total FROM orders"),
+        pool.query("SELECT COUNT(*) AS count FROM products WHERE /* any availability logic */ TRUE"),
+        pool.query("SELECT COUNT(*) AS count FROM users WHERE overall_verification_status = 'pending'"),
+        pool.query("SELECT COUNT(*) AS count FROM stock_updates WHERE status = 'pending'"),
+      ]);
+
+      res.json({
+        stats: {
+          totalUsers: Number(usersRows[0].count),
+          totalPendingOrders: Number(pendingOrdersRows[0].count),
+          totalConfirmedOrders: Number(confirmedOrdersRows[0].count),
+          totalSales: Number(salesRows[0].total),
+          totalAvailableProducts: Number(productsRows[0].count),
+          pendingVerification: Number(pendingVerifRows[0].count),
+          totalPickupStocks: Number(pickupRows[0].count),
+        }
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 module.exports = router;
