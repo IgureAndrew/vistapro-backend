@@ -904,6 +904,21 @@ const getDashboardSummary = async (req, res, next) => {
   }
 };
 
+/**
+ * getTotalUsers - returns the count of all users
+ */
+async function getTotalUsers(req, res, next) {
+  try {
+    const { rows } = await pool.query(`
+      SELECT COUNT(*)::int AS total_users
+      FROM users
+    `);
+    return res.json({ totalUsers: rows[0].total_users });
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   registerMasterAdmin,
   registerSuperAdmin,
@@ -924,4 +939,5 @@ module.exports = {
   getAllAssignments,
   listAdminsBySuperAdmin,
   getAllDealers,
+  getTotalUsers,
 };

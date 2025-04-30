@@ -29,6 +29,7 @@ const {
   listMarketersByAdmin,
   getAllAssignments,
   listAdminsBySuperAdmin,
+  getTotalUsers,
   getAllDealers
 } = require('../controllers/masterAdminController');
 
@@ -164,6 +165,14 @@ router.get(
   verifyToken,
   verifyRole(['Marketer', 'Admin', 'MasterAdmin']),
   getAllDealers
+);
+
+// GET /api/master-admin/total-users
+router.get(
+  '/total-users',
+  verifyToken,
+  verifyRole(['MasterAdmin']),
+  getTotalUsers
 );
 
 // Error handling middleware.
