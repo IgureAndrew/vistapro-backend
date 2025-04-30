@@ -30,6 +30,7 @@ const {
   getAllAssignments,
   listAdminsBySuperAdmin,
   getTotalUsers,
+  getStats,
   getAllDealers
 } = require('../controllers/masterAdminController');
 
@@ -173,6 +174,13 @@ router.get(
   verifyToken,
   verifyRole(['MasterAdmin']),
   getTotalUsers
+);
+
+router.get(
+  '/stats',
+  verifyToken,
+  verifyRole(['MasterAdmin']),
+  getStats
 );
 
 // Error handling middleware.

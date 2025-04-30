@@ -919,6 +919,25 @@ async function getTotalUsers(req, res, next) {
   }
 }
 
+async function getStats(req, res, next) {
+  try {
+    const { rows } = await pool.query(`
+      SELECT 
+        (SELECT COUNT(*) FROM users)                             AS "totalUsers",
+        (SELECT COUNT(*) FROM orders WHERE status = 'pending')   AS "totalPendingOrders",
+        (SELECT COUNT(*) FROM orders WHERE status = 'completed') AS "totalConfirmedOrders",
+        (SELECT COALESCE(SUM(sold_amount),0) FROM orders)         AS "totalSales",
+        (SELECT COUNT(*) FROM products AS p
+           JOIN inventory_items AS i ON i.product_id = p.id
+          WHERE i.status = 'available')                          AS "totalAvailableProducts",
+        (SELECT COUNT(*) FROM users WHERE overall_verification_status = 'pending') AS "pendingVerification",
+        (SELECT COUNT(*) FROM stock_updates WHERE status = 'pending')             AS "totalPickupStocks"
+    `);
+    res.json(rows[0]);
+  } catch (err) {
+    next(err);
+  }
+}
 module.exports = {
   registerMasterAdmin,
   registerSuperAdmin,
@@ -940,4 +959,6 @@ module.exports = {
   listAdminsBySuperAdmin,
   getAllDealers,
   getTotalUsers,
+  getStats,
+  
 };
