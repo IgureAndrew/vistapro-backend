@@ -17,6 +17,8 @@ const {
   submitBioData,
   submitGuarantorForm,
   submitCommitmentForm,
+  listDealersByState, 
+  listDealerProducts
 } = require('../controllers/marketerController');
 
 // ensure upload dirs exist
@@ -97,5 +99,8 @@ router.post(
   upload.single('signature'),
   submitCommitmentForm
 );
+
+router.get('/dealers', verifyToken, listDealersByState);
+router.get('/dealers/:dealerUniqueId/products', verifyToken, listDealerProducts);
 
 module.exports = router;

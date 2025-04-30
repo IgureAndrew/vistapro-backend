@@ -510,6 +510,66 @@ async function submitCommitmentForm(req, res, next) {
   }
 }
 
+/**
+ * GET /api/marketer/dealers
+ * Returns all dealers in the logged-in marketer’s state.
+ */
+async function listDealersByState(req, res, next) {
+  try {
+    const myState = req.user.location;
+    const { rows } = await pool.query(`
+      SELECT id, unique_id, business_name
+        FROM users
+       WHERE role = 'Dealer' AND location = $1
+       ORDER BY business_name
+    `, [myState]);
+    res.json({ dealers: rows });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * GET /api/marketer/dealers/:dealerUniqueId/products
+ * Returns only that dealer’s products which have available inventory.
+ */
+async function listDealerProducts(req, res, next) {
+  try {
+    const { dealerUniqueId } = req.params;
+    const marketerState = req.user.location;
+
+    // ensure dealer is in same state
+    const dealerQ = await pool.query(`
+      SELECT id FROM users
+       WHERE unique_id = $1 AND role = 'Dealer' AND location = $2
+    `, [dealerUniqueId, marketerState]);
+    if (!dealerQ.rowCount) {
+      return res.status(403).json({ message: "Dealer not in your state." });
+    }
+    const dealerId = dealerQ.rows[0].id;
+
+    const { rows } = await pool.query(`
+      SELECT
+        p.id            AS product_id,
+        p.device_name,
+        p.device_model,
+        p.device_type,
+        p.selling_price,
+        COUNT(i.*)       FILTER (WHERE i.status = 'available')        AS qty_available,
+        ARRAY_AGG(i.imei) FILTER (WHERE i.status = 'available')        AS imeis_available
+      FROM products p
+      JOIN inventory_items i
+        ON i.product_id = p.id AND i.status = 'available'
+      WHERE p.dealer_id = $1
+      GROUP BY p.id, p.device_name, p.device_model, p.device_type, p.selling_price
+      HAVING COUNT(i.*) FILTER (WHERE i.status = 'available') > 0
+    `, [dealerId]);
+
+    res.json({ products: rows });
+  } catch (err) {
+    next(err);
+  }
+}
 
 module.exports = {
   getAccountSettings,
@@ -520,4 +580,6 @@ module.exports = {
   submitBioData,
   submitGuarantorForm,
   submitCommitmentForm,
+  listDealersByState,
+  listDealerProducts,
 };
