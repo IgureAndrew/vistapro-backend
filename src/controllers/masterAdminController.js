@@ -156,10 +156,13 @@ const addUser = async (req, res, next) => {
     } else {
       unique_id = await generateUniqueID("User");
     }
+
     const saltRounds = 10;
-    let hashedPassword = null;
+    let hashedPassword;
     let userData = {};
+
     if (role === "Dealer") {
+      // Dealers: only business info + location + CAC PDF
       const {
         first_name,
         last_name,
@@ -168,36 +171,43 @@ const addUser = async (req, res, next) => {
         password,
         registered_business_name,
         registered_business_address,
-        business_account_name,
-        business_account_number,
-        bank_name,
-        account_number,
-        account_name,
         location,
       } = req.body;
+
+      // validation
       if (
-        !first_name || !last_name || !gender || !email || !password ||
-        !registered_business_name || !registered_business_address ||
-        !business_account_name || !business_account_number ||
-        !bank_name || !account_number || !account_name || !location
+        !first_name ||
+        !last_name ||
+        !gender ||
+        !email ||
+        !password ||
+        !registered_business_name ||
+        !registered_business_address ||
+        !location
       ) {
-        return res.status(400).json({ message: "All dealer fields are required." });
-      }
-      if (!/^\d{10}$/.test(account_number)) {
-        return res.status(400).json({ message: "Bank account number must be exactly 10 digits." });
+        return res
+          .status(400)
+          .json({ message: "All dealer fields are required." });
       }
       if (!passwordRegex.test(password)) {
         return res.status(400).json({
-          message: "Password must be at least 12 characters with letters, numbers, and special characters."
+          message:
+            "Password must be at least 12 characters with letters, numbers, and special characters.",
         });
       }
       if (!req.file) {
-        return res.status(400).json({ message: "Registration certificate (CAC) is required and must be a PDF." });
+        return res.status(400).json({
+          message:
+            "Registration certificate (CAC) is required and must be a PDF.",
+        });
       }
       if (req.file.mimetype !== "application/pdf") {
-        return res.status(400).json({ message: "Registration certificate must be in PDF format." });
+        return res
+          .status(400)
+          .json({ message: "Registration certificate must be PDF." });
       }
-      const registration_certificate_url = req.file.path;
+
+      // hash + assemble
       hashedPassword = await bcrypt.hash(password, saltRounds);
       userData = {
         unique_id,
@@ -206,18 +216,24 @@ const addUser = async (req, res, next) => {
         gender,
         email,
         password: hashedPassword,
-        bank_name,
-        account_number,
-        account_name,
-        location,
         role,
+        location,
+
+        // Dealer-specific business fields
         business_name: registered_business_name,
         business_address: registered_business_address,
-        business_account_name,
-        business_account_number,
-        registration_certificate_url,
+        business_account_name: null,
+        business_account_number: null,
+
+        // banking always null for Dealers
+        bank_name: null,
+        account_number: null,
+        account_name: null,
+
+        registration_certificate_url: req.file.path,
       };
     } else {
+      // All other roles: require bank details + location
       const {
         first_name,
         last_name,
@@ -229,17 +245,34 @@ const addUser = async (req, res, next) => {
         account_name,
         location,
       } = req.body;
-      if (!first_name || !last_name || !gender || !email || !password || !bank_name || !account_number || !account_name || !location) {
-        return res.status(400).json({ message: "All required fields must be provided." });
+
+      if (
+        !first_name ||
+        !last_name ||
+        !gender ||
+        !email ||
+        !password ||
+        !bank_name ||
+        !account_number ||
+        !account_name ||
+        !location
+      ) {
+        return res
+          .status(400)
+          .json({ message: "All required fields must be provided." });
       }
       if (!/^\d{10}$/.test(account_number)) {
-        return res.status(400).json({ message: "Account number must be exactly 10 digits." });
+        return res
+          .status(400)
+          .json({ message: "Account number must be exactly 10 digits." });
       }
       if (!passwordRegex.test(password)) {
         return res.status(400).json({
-          message: "Password must be at least 12 characters with letters, numbers, and special characters."
+          message:
+            "Password must be at least 12 characters with letters, numbers, and special characters.",
         });
       }
+
       hashedPassword = await bcrypt.hash(password, saltRounds);
       userData = {
         unique_id,
@@ -248,11 +281,15 @@ const addUser = async (req, res, next) => {
         gender,
         email,
         password: hashedPassword,
+        role,
+        location,
+
+        // banking fields
         bank_name,
         account_number,
         account_name,
-        location,
-        role,
+
+        // no business info for non-Dealers
         business_name: null,
         business_address: null,
         business_account_name: null,
@@ -260,11 +297,12 @@ const addUser = async (req, res, next) => {
         registration_certificate_url: null,
       };
     }
+
     // Create the new user
     const newUser = await createUser(userData);
 
-    // --- NEW: initialize wallet for every marketer ---
-    if (newUser.role === 'Marketer') {
+    // initialize wallet for marketers
+    if (newUser.role === "Marketer") {
       await pool.query(
         `INSERT INTO wallets (user_unique_id) VALUES ($1)`,
         [newUser.unique_id]
@@ -279,6 +317,7 @@ const addUser = async (req, res, next) => {
     next(error);
   }
 };
+
 
 
 /**
