@@ -7,11 +7,11 @@ const multer = require("multer");
 const memoryStorage = multer.memoryStorage();
 const upload = multer({ storage: memoryStorage });
 
-// Import authentication and role verification middleware.
+// Import authentication and role‐verification middleware.
 const { verifyToken } = require("../middlewares/authMiddleware");
-const { verifyRole } = require("../middlewares/roleMiddleware");
+const { verifyRole }  = require("../middlewares/roleMiddleware");
 
-// Import all your controller functions from VerificationController
+// Import all your controller functions
 const {
   submitBiodata,
   submitGuarantor,
@@ -28,38 +28,42 @@ const {
   getSubmissionsForSuperAdmin,
   biodataSuccess,
   guarantorSuccess,
-  commitmentSuccess
+  commitmentSuccess,
+  getVerifiedMarketersMaster,
+  getVerifiedMarketersSuperadmin,
+  getVerifiedMarketersAdmin,
 } = require("../controllers/verificationController");
+
 
 /**
  * *********************** Submission Endpoints *************************
  */
 
-// POST /api/verification/bio-data
+// Marketer submits biodata
 router.post(
   "/bio-data",
   verifyToken,
   verifyRole(["Marketer"]),
   upload.fields([
     { name: "passport_photo", maxCount: 1 },
-    { name: "id_document", maxCount: 1 },
+    { name: "id_document",    maxCount: 1 },
   ]),
   submitBiodata
 );
 
-// POST /api/verification/guarantor
+// Marketer submits guarantor form
 router.post(
   "/guarantor",
   verifyToken,
   verifyRole(["Marketer"]),
   upload.fields([
     { name: "identification_file", maxCount: 1 },
-    { name: "signature", maxCount: 1 },
+    { name: "signature",           maxCount: 1 },
   ]),
   submitGuarantor
 );
 
-// POST /api/verification/commitment-handbook
+// Marketer submits commitment form
 router.post(
   "/commitment-handbook",
   verifyToken,
@@ -68,11 +72,12 @@ router.post(
   submitCommitment
 );
 
+
 /**
  * *********************** Admin / Master Admin Endpoints *************************
  */
 
-// PATCH /api/verification/allow-refill
+// MasterAdmin allows a refill
 router.patch(
   "/allow-refill",
   verifyToken,
@@ -80,7 +85,7 @@ router.patch(
   allowRefillForm
 );
 
-// PATCH /api/verification/admin-review
+// Admin reviews (first‐line)
 router.patch(
   "/admin-review",
   verifyToken,
@@ -88,7 +93,7 @@ router.patch(
   adminReview
 );
 
-// PATCH /api/verification/superadmin-verify
+// SuperAdmin verifies
 router.patch(
   "/superadmin-verify",
   verifyToken,
@@ -96,13 +101,14 @@ router.patch(
   superadminVerify
 );
 
-// PATCH /api/verification/master-approve
+// MasterAdmin final approval
 router.patch(
   "/master-approve",
   verifyToken,
   verifyRole(["MasterAdmin"]),
   masterApprove
 );
+
 
 /**
  * *********************** Deletion Endpoints (Master Admin Only) *************************
@@ -129,10 +135,12 @@ router.delete(
   deleteCommitmentSubmission
 );
 
+
 /**
- * *********************** GET Endpoints *************************
+ * *********************** GET Submissions Lists *************************
  */
 
+// MasterAdmin sees _all_ submissions
 router.get(
   "/submissions/master",
   verifyToken,
@@ -140,6 +148,7 @@ router.get(
   getAllSubmissionsForMasterAdmin
 );
 
+// Admin sees submissions for _their_ marketers
 router.get(
   "/submissions/admin",
   verifyToken,
@@ -147,6 +156,7 @@ router.get(
   getSubmissionsForAdmin
 );
 
+// SuperAdmin sees submissions for all marketers under _their_ admins
 router.get(
   "/submissions/superadmin",
   verifyToken,
@@ -154,12 +164,58 @@ router.get(
   getSubmissionsForSuperAdmin
 );
 
+
 /**
- * *********************** “Success” Endpoints (to avoid 404s) *************************
+ * *********************** GET Verified‐Marketers Lists *************************
+ *
+ * MasterAdmin: all approved marketers
+ * SuperAdmin: only marketers assigned to admins under this super‐admin
+ * Admin: only marketers assigned to this admin
  */
 
-router.patch("/biodata-success",    verifyToken, biodataSuccess);
-router.patch("/guarantor-success",  verifyToken, guarantorSuccess);
-router.patch("/commitment-success", verifyToken, commitmentSuccess);
+router.get(
+  "/verified-master",
+  verifyToken,
+  verifyRole(["MasterAdmin"]),
+  getVerifiedMarketersMaster
+);
+
+router.get(
+  "/verified-superadmin",
+  verifyToken,
+  verifyRole(["SuperAdmin"]),
+  getVerifiedMarketersSuperadmin
+);
+
+router.get(
+  "/verified-admin",
+  verifyToken,
+  verifyRole(["Admin"]),
+  getVerifiedMarketersAdmin
+);
+
+
+/**
+ * *********************** “Success” Endpoints (no‐ops to avoid 404s) *************************
+ */
+
+router.patch(
+  "/biodata-success",
+  verifyToken,
+  biodataSuccess
+);
+
+router.patch(
+  "/guarantor-success",
+  verifyToken,
+  guarantorSuccess
+);
+
+router.patch(
+  "/commitment-success",
+  verifyToken,
+  commitmentSuccess
+);
+
 
 module.exports = router;

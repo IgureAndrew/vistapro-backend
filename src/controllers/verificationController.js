@@ -955,6 +955,78 @@ const commitmentSuccess = async (req, res, next) => {
   }
 };
 
+/**
+ * GET /api/verification/verified-marketers
+ * MasterAdmin only: list every marketer with overall_verification_status = 'approved'
+ */
+async function getVerifiedMarketersMaster(req, res, next) {
+  try {
+    if (req.user.role !== 'MasterAdmin') {
+      return res.status(403).json({ message: 'Forbidden' });
+    }
+    const { rows: marketers } = await pool.query(`
+      SELECT unique_id, first_name, last_name, email, phone
+      FROM users
+      WHERE role = 'Marketer'
+        AND overall_verification_status = 'approved'
+      ORDER BY last_name, first_name
+    `);
+    res.json({ marketers });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * GET /api/verification/verified-superadmin
+ * SuperAdmin only: list marketers under this superadmin whose overall_verification_status = 'approved'
+ */
+async function getVerifiedMarketersSuperadmin(req, res, next) {
+  try {
+    if (req.user.role !== 'SuperAdmin') {
+      return res.status(403).json({ message: 'Forbidden' });
+    }
+    const superId = req.user.id;
+    const { rows: marketers } = await pool.query(`
+      SELECT m.unique_id, m.first_name, m.last_name, m.email, m.phone
+      FROM users m
+      JOIN users a ON m.admin_id = a.id
+      WHERE a.super_admin_id = $1
+        AND m.role = 'Marketer'
+        AND m.overall_verification_status = 'approved'
+      ORDER BY m.last_name, m.first_name
+    `, [superId]);
+    res.json({ marketers });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * GET /api/verification/verified-admin
+ * Admin only: list marketers assigned to this admin whose overall_verification_status = 'approved'
+ */
+async function getVerifiedMarketersAdmin(req, res, next) {
+  try {
+    if (req.user.role !== 'Admin') {
+      return res.status(403).json({ message: 'Forbidden' });
+    }
+    const adminId = req.user.id;
+    const { rows: marketers } = await pool.query(`
+      SELECT unique_id, first_name, last_name, email, phone
+      FROM users
+      WHERE admin_id = $1
+        AND role = 'Marketer'
+        AND overall_verification_status = 'approved'
+      ORDER BY last_name, first_name
+    `, [adminId]);
+    res.json({ marketers });
+  } catch (err) {
+    next(err);
+  }
+}
+
+
 
 module.exports = {
   // form‐submission endpoints
@@ -982,4 +1054,8 @@ module.exports = {
   biodataSuccess,
   guarantorSuccess,
   commitmentSuccess,
+
+  getVerifiedMarketersMaster,
+  getVerifiedMarketersSuperadmin,
+  getVerifiedMarketersAdmin,
 };
