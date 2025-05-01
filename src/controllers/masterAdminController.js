@@ -460,50 +460,41 @@ const updateUser = async (req, res, next) => {
 
 
 /**
- * deleteUser - Soft-deletes a user specified by :id.
+ * deleteUser - Soft‐delete a user by their unique_id
  */
 const deleteUser = async (req, res, next) => {
   try {
-    const userId = req.params.id;
-
-    // 1) Soft-delete and return the deleted row
+    const uniqueId = req.params.uniqueId;      // e.g. "DLR00003"
     const result = await pool.query(
-      `
-      UPDATE users
-         SET deleted_at = NOW()
-       WHERE id = $1
-         AND deleted_at IS NULL
-       RETURNING *
-      `,
-      [userId]
+      `UPDATE users
+          SET deleted_at = NOW()
+        WHERE unique_id = $1
+          AND deleted_at IS NULL
+        RETURNING *`,
+      [uniqueId]
     );
-
-    // 2) If nothing was returned, either the user doesn't exist or was already deleted
-    if (result.rowCount === 0) {
-      return res.status(404).json({ message: "User not found or already deleted." });
+    if (result.rows.length === 0) {
+      // either didn’t exist, or was already deleted
+      return res.status(404).json({ message: "User not found" });
     }
 
-    const deletedUser = result.rows[0];
-
-    // 3) Log the activity (assuming you have a logActivity(userId, actorName, action, entity, entityId) helper)
+    // logActivity stays the same
     await logActivity(
       req.user.id,
       `${req.user.first_name} ${req.user.last_name}`,
       'Delete User',
       'User',
-      deletedUser.unique_id
+      uniqueId
     );
 
-    // 4) Return success
     return res.status(200).json({
       message: "User deleted successfully",
-      user: deletedUser,
+      user: result.rows[0],
     });
   } catch (error) {
     next(error);
   }
 };
-
 /**
  * lockUser - Locks a user account (Master Admin only).
  */
