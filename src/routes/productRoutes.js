@@ -8,7 +8,8 @@ const {
   getProducts,
   updateProduct,
   deleteProduct,
-  listProducts
+  listProducts,
+  getAllProducts
 } = require('../controllers/productController');
 
 // → Allow MasterAdmin **or** Dealer to add
@@ -43,5 +44,6 @@ router.delete(
 );
 
 router.get("/", listProducts);
+router.get("/", getAllProducts);
 
 module.exports = router;

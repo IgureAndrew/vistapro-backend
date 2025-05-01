@@ -270,11 +270,34 @@ async function listProducts(req, res, next) {
   }
 }
 
+// GET /api/products
+async function getAllProducts(req, res, next) {
+  try {
+    const { rows } = await pool.query(`
+      SELECT 
+        p.id,
+        p.device_name,
+        p.device_model,
+        p.device_type,
+        p.selling_price,
+        u.business_name   AS dealer_business_name,
+        u.location        AS dealer_location
+      FROM products p
+      JOIN users u
+        ON p.dealer_id = u.id
+      ORDER BY p.device_name, p.device_model
+    `);
+    res.json({ products: rows });
+  } catch (err) {
+    next(err);
+  }
+}
 
 module.exports = {
   addProduct,
   getProducts,
   updateProduct,
   deleteProduct,
+  getAllProducts,
   listProducts 
 };
