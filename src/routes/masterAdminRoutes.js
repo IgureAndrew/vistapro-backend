@@ -111,7 +111,7 @@ router.post(
 router.get('/dashboard-summary', verifyToken, verifyRole(['MasterAdmin']), getDashboardSummary);
 router.get('/users/summary', verifyToken, verifyRole(['MasterAdmin']), getUserSummary);
 router.put('/users/:id', verifyToken, verifyRole(['MasterAdmin']), updateUser);
-router.delete('/users/:id', verifyToken, verifyRole(['MasterAdmin']), deleteUser);
+router.delete('/users/:uniqueId', verifyToken, verifyRole(['MasterAdmin']), deleteUser);
 router.patch('/users/:id/lock', verifyToken, verifyRole(['MasterAdmin']), lockUser);
 router.patch('/users/:id/unlock', verifyToken, verifyRole(['MasterAdmin']), unlockUser);
 
