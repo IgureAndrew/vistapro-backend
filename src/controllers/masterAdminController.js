@@ -460,30 +460,44 @@ const updateUser = async (req, res, next) => {
 
 
 /**
- * deleteUser - Deletes a user specified by :id.
+ * deleteUser - Soft-deletes a user specified by :id.
  */
 const deleteUser = async (req, res, next) => {
   try {
     const userId = req.params.id;
-    const query = `DELETE FROM users WHERE id = $1 RETURNING *`;
-    const result = await pool.query(`UPDATE users
-          SET deleted_at = NOW()
-        WHERE id = $1`,
-      [userId]);   
-    if (result.rows.length === 0) {
-      return res.status(404).json({ message: "User not found" });
+
+    // 1) Soft-delete and return the deleted row
+    const result = await pool.query(
+      `
+      UPDATE users
+         SET deleted_at = NOW()
+       WHERE id = $1
+         AND deleted_at IS NULL
+       RETURNING *
+      `,
+      [userId]
+    );
+
+    // 2) If nothing was returned, either the user doesn't exist or was already deleted
+    if (result.rowCount === 0) {
+      return res.status(404).json({ message: "User not found or already deleted." });
     }
-      // log activity
+
+    const deletedUser = result.rows[0];
+
+    // 3) Log the activity (assuming you have a logActivity(userId, actorName, action, entity, entityId) helper)
     await logActivity(
       req.user.id,
       `${req.user.first_name} ${req.user.last_name}`,
       'Delete User',
       'User',
-      result.rows[0].unique_id
+      deletedUser.unique_id
     );
+
+    // 4) Return success
     return res.status(200).json({
       message: "User deleted successfully",
-      user: result.rows[0],
+      user: deletedUser,
     });
   } catch (error) {
     next(error);
