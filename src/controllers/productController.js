@@ -252,23 +252,22 @@ async function listProducts(req, res, next) {
         p.device_name,
         p.device_model,
         p.device_type,
+        p.cost_price,
         p.selling_price,
-        COUNT(i.*) FILTER (WHERE i.status = 'available')       AS qty_available,
-        ARRAY_AGG(i.imei) FILTER (WHERE i.status = 'available') AS imeis_available,
-        u.business_name        AS dealer_business_name,
-        u.location             AS dealer_location
+        u.business_name   AS dealer_name,
+        u.location        AS dealer_location   -- <-- add this
       FROM products p
-      LEFT JOIN inventory_items i
-        ON i.product_id = p.id
       JOIN users u
-        ON p.dealer_id = u.id            -- or however you link product → dealer
-      GROUP BY p.id, u.business_name, u.location
+        ON u.id = p.dealer_id
+      ORDER BY p.device_name
     `);
+
     res.json({ products: rows });
   } catch (err) {
     next(err);
   }
 }
+
 
 // GET /api/products
 async function getAllProducts(req, res, next) {
