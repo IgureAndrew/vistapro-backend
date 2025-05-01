@@ -244,6 +244,31 @@ async function updateProduct(req, res, next) {
   }
 }
 
+async function listProducts(req, res, next) {
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        p.id,
+        p.device_name,
+        p.device_model,
+        p.device_type,
+        p.selling_price,
+        COUNT(i.*) FILTER (WHERE i.status = 'available')       AS qty_available,
+        ARRAY_AGG(i.imei) FILTER (WHERE i.status = 'available') AS imeis_available,
+        u.business_name        AS dealer_business_name,
+        u.location             AS dealer_location
+      FROM products p
+      LEFT JOIN inventory_items i
+        ON i.product_id = p.id
+      JOIN users u
+        ON p.dealer_id = u.id            -- or however you link product → dealer
+      GROUP BY p.id, u.business_name, u.location
+    `);
+    res.json({ products: rows });
+  } catch (err) {
+    next(err);
+  }
+}
 
 
 module.exports = {
@@ -251,4 +276,5 @@ module.exports = {
   getProducts,
   updateProduct,
   deleteProduct,
+  listProducts 
 };
