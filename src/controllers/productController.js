@@ -71,43 +71,42 @@ async function addProduct(req, res, next) {
  * Any authenticated user may list all products.
  * Now includes IMEI, is_low_stock, and is_available flags.
  */
-const getProducts = async (req, res, next) => {
+async function getProducts(req, res, next) {
   try {
     const { rows } = await pool.query(`
       SELECT
         p.id,
         p.dealer_id,
-        u.business_name    AS dealer_name,       -- pull name from users
+        u.business_name   AS dealer_name,
+        u.location        AS dealer_location,    -- <— grab it here
         p.device_type,
         p.device_name,
         p.device_model,
         p.cost_price,
         p.selling_price,
-
-        -- stock flags
-        COUNT(i.*) FILTER (WHERE i.status = 'available')   AS quantity_available,
-        (COUNT(i.*) FILTER (WHERE i.status = 'available') <= 2) AS is_low_stock,
-        (COUNT(i.*) FILTER (WHERE i.status = 'available') >  0) AS is_available,
-
-        -- collect all IMEIs into an array
-        ARRAY_AGG(i.imei) FILTER (WHERE i.status = 'available') AS available_imeis,
-
-        p.created_at,
-        p.updated_at
+        COALESCE(i.qty_available, 0) AS quantity_available,
+        (CASE WHEN COALESCE(i.qty_available, 0) <= 2 THEN true ELSE false END) AS is_low_stock,
+        (CASE WHEN COALESCE(i.qty_available, 0) >  0 THEN true ELSE false END) AS is_available,
+        i.available_imeis
       FROM products p
       JOIN users u
         ON p.dealer_id = u.id
-      LEFT JOIN inventory_items i
-        ON i.product_id = p.id
-      GROUP BY p.id, u.business_name
-      ORDER BY p.created_at DESC
+      LEFT JOIN (
+        SELECT
+          product_id,
+          COUNT(*) FILTER (WHERE status = 'available') AS qty_available,
+          ARRAY_AGG(imei)   FILTER (WHERE status = 'available') AS available_imeis
+        FROM inventory_items
+        GROUP BY product_id
+      ) AS i
+        ON p.id = i.product_id
+      ORDER BY p.id DESC
     `);
-
-    res.status(200).json({ products: rows });
+    res.json({ products: rows });
   } catch (err) {
     next(err);
   }
-};
+}
 
 /**
  * deleteProduct
