@@ -1,4 +1,5 @@
 // src/routes/masterAdminRoutes.js
+
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
@@ -7,9 +8,9 @@ const fs = require('fs');
 
 const { verifyToken } = require('../middlewares/authMiddleware');
 const { verifyRole } = require('../middlewares/roleMiddleware');
+const pool = require('../config/database').pool;
 
-// Import controller functions from masterAdminController.
-// Ensure that your masterAdminController.js exports these functions exactly.
+// Import controller functions
 const {
   registerMasterAdmin,
   registerSuperAdmin,
@@ -31,55 +32,41 @@ const {
   listAdminsBySuperAdmin,
   getTotalUsers,
   getStats,
-  getRecentActivity, 
+  getRecentActivity,
   getAllDealers
 } = require('../controllers/masterAdminController');
 
-// Define the uploads directory and ensure it exists.
+// Ensure uploads directory exists
 const uploadDir = path.join(__dirname, '../../uploads');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
 
-// Configure Multer storage settings.
+// Multer storage config
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, uploadDir);
-  },
-  filename: (req, file, cb) => {
-    cb(null, Date.now() + '-' + file.originalname);
-  },
+  destination: (req, file, cb) => cb(null, uploadDir),
+  filename:    (req, file, cb) => cb(null, Date.now() + '-' + file.originalname),
 });
 
-// Multer for profile images
-const uploadImage = multer({
-  storage,
-  limits: { fileSize: 1024 * 1024 * 5 }
-});
-
-// Multer for PDF uploads (used for dealer registration certificate)
+// upload handlers
+const uploadImage = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } });
 const uploadPDF = multer({
   storage,
-  limits: { fileSize: 1024 * 1024 * 5 },
+  limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    if (file.fieldname === "registrationCertificate") {
-      if (file.mimetype === "application/pdf") {
-        cb(null, true);
-      } else {
-        cb(new Error("Only PDF files are allowed for the registration certificate."), false);
-      }
-    } else {
-      cb(null, true);
+    if (file.fieldname === 'registrationCertificate') {
+      return file.mimetype === 'application/pdf'
+        ? cb(null, true)
+        : cb(new Error('Only PDF files allowed'), false);
     }
+    cb(null, true);
   }
 });
 
-// Routes for Master Admin
-
-// Public route: Register a new Master Admin using a secret key.
+// --- Public ---
 router.post('/register', registerMasterAdmin);
 
-// Protected route: Update Master Admin profile (with optional file upload for profileImage).
+// --- MasterAdmin-only profile ---
 router.put(
   '/profile',
   verifyToken,
@@ -87,19 +74,15 @@ router.put(
   uploadImage.single('profileImage'),
   updateProfile
 );
-
-// Get current Master Admin profile.
 router.get(
   '/profile',
   verifyToken,
   verifyRole(['MasterAdmin']),
-  (req, res, next) => {
-    res.status(200).json({ user: req.user });
-  }
+  (req, res) => res.status(200).json({ user: req.user })
 );
 
-// User management routes.
-router.get('/users', verifyToken, verifyRole(['MasterAdmin']), getUsers);
+// --- User management ---
+router.get(   '/users',           verifyToken, verifyRole(['MasterAdmin']), getUsers);
 router.post(
   '/users',
   verifyToken,
@@ -107,68 +90,44 @@ router.post(
   uploadPDF.single('registrationCertificate'),
   addUser
 );
+router.get(   '/users/summary',   verifyToken, verifyRole(['MasterAdmin']), getUserSummary);
 
-router.get('/dashboard-summary', verifyToken, verifyRole(['MasterAdmin']), getDashboardSummary);
-router.get('/users/summary', verifyToken, verifyRole(['MasterAdmin']), getUserSummary);
-router.put('/users/:id', verifyToken, verifyRole(['MasterAdmin']), updateUser);
-// masterAdminRoutes.js
-router.delete(
-  '/users/:uniqueId',
-  verifyToken,
-  verifyRole(['MasterAdmin']),
-  deleteUser
-);
+// NOTE: we use `:uniqueId` here (not `:id`) to match deleteUser / updateUser expectations
+router.put(   '/users/:uniqueId', verifyToken, verifyRole(['MasterAdmin']), updateUser);
+router.delete('/users/:uniqueId', verifyToken, verifyRole(['MasterAdmin']), deleteUser);
 
-router.patch('/users/:id/lock', verifyToken, verifyRole(['MasterAdmin']), lockUser);
+// Lock/unlock by internal numeric ID
+router.patch('/users/:id/lock',   verifyToken, verifyRole(['MasterAdmin']), lockUser);
 router.patch('/users/:id/unlock', verifyToken, verifyRole(['MasterAdmin']), unlockUser);
 
-// Assignment routes.
-// Assign marketers to an admin.
-router.post('/assign-marketers-to-admin', verifyToken, verifyRole(['MasterAdmin']), assignMarketersToAdmin);
+// --- Dashboard & stats ---
+router.get('/dashboard-summary', verifyToken, verifyRole(['MasterAdmin']), getDashboardSummary);
+router.get('/total-users',      verifyToken, verifyRole(['MasterAdmin']), getTotalUsers);
+router.get('/stats',            verifyToken, verifyRole(['MasterAdmin']), getStats);
+router.get('/recent-activity',  verifyToken,                              getRecentActivity);
 
-// Unassign marketers from an admin.
+// --- Assignments ---
+router.post('/assign-marketers-to-admin',   verifyToken, verifyRole(['MasterAdmin']), assignMarketersToAdmin);
 router.post('/unassign-marketers-from-admin', verifyToken, verifyRole(['MasterAdmin']), unassignMarketersFromAdmin);
-
-// Assign admins to a super admin.
 router.post('/assign-admins-to-superadmin', verifyToken, verifyRole(['MasterAdmin']), assignAdminToSuperAdmin);
-
-// Unassign admins from a super admin.
 router.post('/unassign-admins-from-superadmin', verifyToken, verifyRole(['MasterAdmin']), unassignAdminsFromSuperadmin);
+router.get('/assignments',                  verifyToken, verifyRole(['MasterAdmin']), getAllAssignments);
 
-// New routes to list assigned users:
-// Get marketers assigned to a specific Admin via that admin's unique ID.
+// --- Listing assigned subsets ---
 router.get(
-  "/marketers/:adminUniqueId",
+  '/marketers/:adminUniqueId',
   verifyToken,
-  verifyRole(["Admin", "MasterAdmin"]),
+  verifyRole(['Admin', 'MasterAdmin']),
   listMarketersByAdmin
 );
-
-// Get admins assigned to a specific SuperAdmin via the superadmin's unique ID.
 router.get(
-  "/admins/:superAdminUniqueId",
+  '/admins/:superAdminUniqueId',
   verifyToken,
-  verifyRole(["MasterAdmin"]),
+  verifyRole(['MasterAdmin']),
   listAdminsBySuperAdmin
 );
 
-// New route: Get all current assignments
-router.get(
-  '/assignments',
-  verifyToken,
-  verifyRole(["MasterAdmin"]),
-  getAllAssignments
-);
-
-// PATCH /api/admin/users/:uniqueId
-// Allows a Master Admin to update any user's details using the user's unique ID.
-router.patch(
-  '/users/:uniqueId',
-  verifyToken,
-  verifyRole(['MasterAdmin']),
-  updateUser
-);
-
+// --- Dealers list for Marketers/Admins ---
 router.get(
   '/dealers',
   verifyToken,
@@ -176,73 +135,10 @@ router.get(
   getAllDealers
 );
 
-// GET /api/master-admin/total-users
-router.get(
-  '/total-users',
-  verifyToken,
-  verifyRole(['MasterAdmin']),
-  getTotalUsers
-);
-
-router.get(
-  '/stats',
-  verifyToken,
-  verifyRole(['MasterAdmin']),
-  getStats
-);
-
-// Error handling middleware.
+// --- Global error handler ---
 router.use((err, req, res, next) => {
   console.error(err);
-  res.status(500).send({ message: 'Internal Server Error' });
+  res.status(500).json({ message: 'Internal Server Error' });
 });
-
-router.get(
-  "/recent-activity",
-  verifyToken,
-  getRecentActivity
-);
-
-// GET /api/master-admin/stats
-router.get(
-  "/stats",
-  verifyToken,
-  verifyRole(["MasterAdmin"]),
-  async (req, res, next) => {
-    try {
-      const [
-        { rows: usersRows },
-        { rows: pendingOrdersRows },
-        { rows: confirmedOrdersRows },
-        { rows: salesRows },
-        { rows: productsRows },
-        { rows: pendingVerifRows },
-        { rows: pickupRows },
-      ] = await Promise.all([
-        pool.query("SELECT COUNT(*) AS count FROM users"),
-        pool.query("SELECT COUNT(*) AS count FROM orders WHERE status = 'pending'"),
-        pool.query("SELECT COUNT(*) AS count FROM orders WHERE status = 'completed'"),
-        pool.query("SELECT COALESCE(SUM(sold_amount),0) AS total FROM orders"),
-        pool.query("SELECT COUNT(*) AS count FROM products WHERE /* any availability logic */ TRUE"),
-        pool.query("SELECT COUNT(*) AS count FROM users WHERE overall_verification_status = 'pending'"),
-        pool.query("SELECT COUNT(*) AS count FROM stock_updates WHERE status = 'pending'"),
-      ]);
-
-      res.json({
-        stats: {
-          totalUsers: Number(usersRows[0].count),
-          totalPendingOrders: Number(pendingOrdersRows[0].count),
-          totalConfirmedOrders: Number(confirmedOrdersRows[0].count),
-          totalSales: Number(salesRows[0].total),
-          totalAvailableProducts: Number(productsRows[0].count),
-          pendingVerification: Number(pendingVerifRows[0].count),
-          totalPickupStocks: Number(pickupRows[0].count),
-        }
-      });
-    } catch (err) {
-      next(err);
-    }
-  }
-);
 
 module.exports = router;
