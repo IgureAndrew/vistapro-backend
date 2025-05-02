@@ -439,16 +439,21 @@ async function getStockUpdates(req, res, next) {
     const { rows } = await pool.query(`
       SELECT 
         su.id,
-        su.product_id,
+        p.device_name,
+        p.device_model,
+        d.business_name  AS dealer_name,
+        d.location       AS dealer_location,
         su.quantity,
         su.pickup_date,
         su.deadline,
         su.status,
         su.transfer_status,
-        u.first_name || ' ' || u.last_name AS marketer_name,
-        u.unique_id AS marketer_unique_id
+        m.first_name || ' ' || m.last_name AS marketer_name,
+        m.unique_id    AS marketer_unique_id
       FROM stock_updates su
-      JOIN users u ON su.marketer_id = u.id
+      JOIN products p   ON p.id       = su.product_id
+      JOIN users d      ON d.id       = p.dealer_id
+      JOIN users m      ON m.id       = su.marketer_id
       ORDER BY su.pickup_date DESC
     `);
     return res.status(200).json({ data: rows });
