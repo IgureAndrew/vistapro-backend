@@ -546,8 +546,9 @@ async function listDealersByState(req, res, next) {
                     FROM users
                    WHERE role = 'Dealer'
                      AND location = $1
-                   ORDER BY business_name
-                `, [marketerState]);
+                   ORDER BY business_name`,
+                 [marketerState]
+                );
             
     res.json({ dealers: rows });
   } catch (err) {
