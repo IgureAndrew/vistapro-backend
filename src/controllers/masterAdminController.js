@@ -338,6 +338,7 @@ const addUser = async (req, res, next) => {
       user: newUser,
     });
   } catch (error) {
+    console.error("🛑 addUser error:", error);
     next(error);
   }
 };
