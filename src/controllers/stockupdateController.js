@@ -498,21 +498,26 @@ async function getStockUpdates(req, res, next) {
         su.id,
         p.device_name,
         p.device_model,
-        d.business_name  AS dealer_name,
-        d.location       AS dealer_location,
+        d.business_name          AS dealer_name,
+        d.location               AS dealer_location,
         su.quantity,
         su.pickup_date,
         su.deadline,
         su.status,
         su.transfer_status,
         m.first_name || ' ' || m.last_name AS marketer_name,
-        m.unique_id    AS marketer_unique_id
+        m.unique_id                       AS marketer_unique_id,
+        -- New fields for transfer target:
+        tgt.first_name || ' ' || tgt.last_name AS transfer_to_name,
+        tgt.unique_id                           AS transfer_to_uid
       FROM stock_updates su
-      JOIN products p   ON p.id       = su.product_id
-      JOIN users d      ON d.id       = p.dealer_id
-      JOIN users m      ON m.id       = su.marketer_id
+      JOIN products p   ON p.id = su.product_id
+      JOIN users   d    ON d.id = p.dealer_id
+      JOIN users   m    ON m.id = su.marketer_id
+      LEFT JOIN users tgt ON tgt.id = su.transfer_to_marketer_id
       ORDER BY su.pickup_date DESC
     `);
+
     return res.status(200).json({ data: rows });
   } catch (err) {
     next(err);
