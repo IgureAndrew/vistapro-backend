@@ -338,13 +338,13 @@ const addUser = async (req, res, next) => {
       user: newUser,
     });
   } catch (error) {
-    console.error("🛑 addUser error:", error);
-    // handle unique‐email violation
-    if (err.code === '23505' && err.constraint === 'users_email_key') {
-      return res.status(409).json({ message: "That email is already in use." });
+    if (error.code === '23505' && error.constraint === 'users_email_key') {
+      return res.status(409).json({ message: 'Email already exists' });
     }
-    next(error);
+    console.error(error);
+    return res.status(500).json({ message: 'Internal server error' });
   }
+
 };
 
 
@@ -445,7 +445,7 @@ const updateUser = async (req, res, next) => {
       user: rows[0],
     });
   } catch (error) {
-    if (err.code === '23505' && err.constraint === 'users_email_key') {
+    if (error.code === '23505' && error.constraint === 'users_email_key') {
       return res.status(409).json({ message: "That email is already in use." });
     }
   
