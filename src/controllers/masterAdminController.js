@@ -856,8 +856,10 @@ const getAllAssignments = async (req, res, next) => {
 const getAllDealers = async (req, res, next) => {
   try {
     const { rows } = await pool.query(
-      "SELECT id, unique_id, business_name FROM users WHERE role = 'Dealer'"
-    );
+          `SELECT id, unique_id, business_name, location
+             FROM users
+            WHERE role = 'Dealer'`
+        );
     return res.json({ dealers: rows });
   } catch (error) {
     next(error);
