@@ -5,6 +5,22 @@ const { verifyToken } = require('../middlewares/authMiddleware');
 const { verifyRole }  = require('../middlewares/roleMiddleware');
 const ctrl = require('../controllers/stockupdateController');
 
+// --- new: list dealers for stock pickup in marketer's state ---
+router.get(
+  '/pickup/dealers',
+  verifyToken,
+  verifyRole(['Marketer']),
+  ctrl.listStockPickupDealers
+);
+
+// --- new: list available products for a given dealer (same state only) ---
+router.get(
+  '/pickup/dealers/:dealerUniqueId/products',
+  verifyToken,
+  verifyRole(['Marketer']),
+  ctrl.listStockProductsByDealer
+);
+
 // 1. Marketer picks up stock
 router.post(
   '/',

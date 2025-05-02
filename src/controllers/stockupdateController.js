@@ -2,8 +2,103 @@
 const { pool } = require('../config/database');
 
 /**
+ * GET /api/marketer/stock-pickup/dealers
+ * Returns all dealers in the logged-in marketer’s state.
+ */
+async function listStockPickupDealers(req, res, next) {
+  try {
+    // 1) Fetch marketer’s state
+    const marketerId = req.user.id;
+    const { rows: meRows } = await pool.query(
+      `SELECT location FROM users WHERE id = $1`,
+      [marketerId]
+    );
+    if (!meRows.length) {
+      return res.status(404).json({ message: "Marketer not found." });
+    }
+    const state = meRows[0].location;
+
+    // 2) Return all dealers in that state
+    const { rows: dealers } = await pool.query(
+      `SELECT unique_id, business_name, location
+         FROM users
+        WHERE role = 'Dealer'
+          AND location = $1
+        ORDER BY business_name`,
+      [state]
+    );
+
+    res.json({ dealers });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * GET /api/marketer/stock-pickup/dealers/:dealerUniqueId/products
+ * Returns all available products for that dealer,
+ * only if the dealer is in the same state as the marketer.
+ */
+async function listStockProductsByDealer(req, res, next) {
+  try {
+    const marketerId     = req.user.id;
+    const { dealerUniqueId } = req.params;
+
+    // 1) Fetch marketer’s state
+    const { rows: meRows } = await pool.query(
+      `SELECT location FROM users WHERE id = $1`,
+      [marketerId]
+    );
+    if (!meRows.length) {
+      return res.status(404).json({ message: "Marketer not found." });
+    }
+    const state = meRows[0].location;
+
+    // 2) Verify dealer is in same state
+    const { rows: dqRows } = await pool.query(
+      `SELECT id
+         FROM users
+        WHERE unique_id = $1
+          AND role      = 'Dealer'
+          AND location  = $2`,
+      [dealerUniqueId, state]
+    );
+    if (!dqRows.length) {
+      return res.status(403).json({ message: "Dealer not in your location." });
+    }
+    const dealerId = dqRows[0].id;
+
+    // 3) Fetch available products
+    const { rows: products } = await pool.query(
+      `SELECT
+         p.id               AS product_id,
+         p.device_name,
+         p.device_model,
+         p.device_type,
+         p.selling_price,
+         COUNT(i.*) FILTER (WHERE i.status = 'available')        AS qty_available,
+         ARRAY_AGG(i.imei) FILTER (WHERE i.status = 'available') AS imeis_available
+       FROM products p
+       JOIN inventory_items i
+         ON i.product_id = p.id
+        AND i.status     = 'available'
+      WHERE p.dealer_id = $1
+      GROUP BY
+         p.id, p.device_name, p.device_model, p.device_type, p.selling_price
+      HAVING COUNT(i.*) FILTER (WHERE i.status = 'available') > 0`,
+      [dealerId]
+    );
+
+    res.json({ products });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
  * 1) createStockUpdate
- *    Marketer picks up stock → decrements product_quantity, creates a pending record.
+ *    Marketer picks up stock → creates a pending record.
+ *    Only from dealers in the same state as the marketer.
  *    Deadline is 48 hrs from pickup.
  */
 const createStockUpdate = async (req, res, next) => {
@@ -18,14 +113,43 @@ const createStockUpdate = async (req, res, next) => {
 
     await client.query('BEGIN');
 
+    // --- Verify same-location constraint ---
+    // a) marketer's state
+    const { rows: meRows } = await client.query(
+      `SELECT location FROM users WHERE unique_id = $1`,
+      [marketerUID]
+    );
+    if (!meRows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: "Marketer not found." });
+    }
+    const marketerState = meRows[0].location;
+
+    // b) product's dealer & its state
+    const { rows: pdRows } = await client.query(
+      `SELECT u.location
+         FROM products p
+         JOIN users u ON p.dealer_id = u.id
+        WHERE p.id = $1`,
+      [product_id]
+    );
+    if (!pdRows.length || pdRows[0].location !== marketerState) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({
+        message: "Cannot pick up from a dealer outside your location."
+      });
+    }
+    // -----------------------------------------
+
     // 1) count available items
-    const { rows: [{ cnt }] } = await client.query(
+    const { rows: cntRows } = await client.query(
       `SELECT COUNT(*)::int AS cnt
          FROM inventory_items
         WHERE product_id = $1
           AND status = 'available'`,
       [product_id]
     );
+    const cnt = cntRows[0].cnt;
     if (cnt < qty) {
       await client.query('ROLLBACK');
       return res.status(400).json({ message: "Not enough stock available" });
@@ -51,7 +175,7 @@ const createStockUpdate = async (req, res, next) => {
     ]);
     const stock = suRows[0];
 
-    // 3) reserve exactly `qty` units and link them
+    // 3) reserve exactly `qty` units
     const { rows: itemsToReserve } = await client.query(
       `SELECT id
          FROM inventory_items
@@ -106,7 +230,6 @@ const createStockUpdate = async (req, res, next) => {
 /**
  * 2) placeOrder
  *    - If marketer has any live ('pending' & before deadline) pickups, must supply stock_update_id.
- *      that pickup → status='completed'.
  *    - Otherwise may free-order by product_id.
  */
 async function placeOrder(req, res, next) {
@@ -190,7 +313,7 @@ async function placeOrder(req, res, next) {
  */
 async function requestStockTransfer(req, res, next) {
   try {
-    const id = req.params.id;           // stock_updates.id
+    const id = req.params.id;
     const { targetUniqueId } = req.body;
     const myUID = req.user.unique_id;
 
@@ -218,7 +341,6 @@ async function requestStockTransfer(req, res, next) {
     if (!tgtQ.rowCount) {
       return res.status(404).json({ message: "Target marketer not found." });
     }
-    // require same location
     if (tgtQ.rows[0].state_of_residence !== req.user.state_of_residence) {
       return res.status(400).json({ message: "Transfers must stay within same location." });
     }
@@ -254,7 +376,7 @@ async function approveStockTransfer(req, res, next) {
       return res.status(400).json({ message: "Invalid action." });
     }
 
-    let q, params;
+    let q;
     if (action === 'approve') {
       q = `
         UPDATE stock_updates
@@ -270,9 +392,8 @@ async function approveStockTransfer(req, res, next) {
          WHERE id = $1
          RETURNING *`;
     }
-    params = [id];
 
-    const { rows } = await pool.query(q, params);
+    const { rows } = await pool.query(q, [id]);
     if (!rows.length) {
       return res.status(404).json({ message: "Transfer record not found." });
     }
@@ -287,7 +408,7 @@ async function approveStockTransfer(req, res, next) {
 
 /**
  * 5) getMarketerStockUpdates
- *    List this marketer’s pickups (with countdown if needed).
+ *    List this marketer’s pickups.
  */
 async function getMarketerStockUpdates(req, res, next) {
   try {
@@ -311,13 +432,11 @@ async function getMarketerStockUpdates(req, res, next) {
 }
 
 /**
- * getStockUpdates – Master/Admin/SuperAdmin: list all pickups
- * now including marketer name & unique_id
+ * 6) getStockUpdates – Master/Admin: list all pickups
  */
 async function getStockUpdates(req, res, next) {
   try {
-    // you can still filter by role if desired, but here we show all for MasterAdmin
-    const query = `
+    const { rows } = await pool.query(`
       SELECT 
         su.id,
         su.product_id,
@@ -331,8 +450,7 @@ async function getStockUpdates(req, res, next) {
       FROM stock_updates su
       JOIN users u ON su.marketer_id = u.id
       ORDER BY su.pickup_date DESC
-    `;
-    const { rows } = await pool.query(query);
+    `);
     return res.status(200).json({ data: rows });
   } catch (err) {
     next(err);
@@ -340,6 +458,8 @@ async function getStockUpdates(req, res, next) {
 }
 
 module.exports = {
+  listStockPickupDealers,
+  listStockProductsByDealer,
   createStockUpdate,
   placeOrder,
   requestStockTransfer,
