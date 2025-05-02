@@ -119,27 +119,33 @@ async function getPlaceOrderData(req, res, next) {
   try {
     // 1) pending stock‐pickups
     const { rows: pending } = await pool.query(`
-      SELECT
-        su.id                       AS stock_update_id,
-        p.id                        AS product_id,
-        p.device_name,
-        p.device_model,
-        p.device_type,
-        p.selling_price,
-        su.quantity                 AS qty_reserved,
-        ARRAY_AGG(i.imei)           AS imeis_reserved
-      FROM stock_updates su
-      JOIN inventory_items i
-        ON i.stock_update_id = su.id
-       AND i.status            = 'reserved'
-      JOIN products p
-        ON p.id = su.product_id
-      WHERE su.marketer_id = $1
-        AND su.status       = 'pending'
-        AND su.deadline > NOW()
-      GROUP BY
-        su.id, p.id, p.device_name, p.device_model,
-        p.device_type, p.selling_price, su.quantity
+       SELECT
+    su.id                       AS stock_update_id,
+    p.id                        AS product_id,
+    p.device_name,
+    p.device_model,
+    p.device_type,
+    p.selling_price,
+    u.business_name             AS dealer_name,
+    u.location                  AS dealer_location,
+    su.quantity                 AS qty_reserved,
+    ARRAY_AGG(i.imei)           AS imeis_reserved
+  FROM stock_updates su
+  JOIN products p
+    ON su.product_id = p.id
+  JOIN users u
+    ON p.dealer_id = u.id
+  JOIN inventory_items i
+    ON i.stock_update_id = su.id
+   AND i.status            = 'reserved'
+  WHERE su.marketer_id = $1
+    AND su.status       = 'pending'
+    AND su.deadline > NOW()
+  GROUP BY
+    su.id, p.id, p.device_name, p.device_model,
+    p.device_type, p.selling_price,
+    u.business_name, u.location,
+    su.quantity
     `, [marketerId]);
 
     if (pending.length) {
@@ -149,21 +155,26 @@ async function getPlaceOrderData(req, res, next) {
     // 2) free‐order products
     const { rows: products } = await pool.query(`
       SELECT
-        p.id                            AS product_id,
-        p.device_name,
-        p.device_model,
-        p.device_type,
-        p.selling_price,
-        COUNT(i.*) FILTER (WHERE i.status = 'available')       AS qty_available,
-        ARRAY_AGG(i.imei) FILTER (WHERE i.status = 'available') AS imeis_available
-      FROM products p
-      LEFT JOIN inventory_items i
-        ON i.product_id = p.id
-      GROUP BY
-        p.id, p.device_name, p.device_model,
-        p.device_type, p.selling_price
-      HAVING COUNT(i.*) FILTER (WHERE i.status = 'available') > 0
-      ORDER BY p.device_name
+    p.id                            AS product_id,
+    p.device_name,
+    p.device_model,
+    p.device_type,
+    p.selling_price,
+    u.business_name                 AS dealer_name,
+    u.location                      AS dealer_location,
+    COUNT(i.*) FILTER (WHERE i.status = 'available')       AS qty_available,
+    ARRAY_AGG(i.imei) FILTER (WHERE i.status = 'available') AS imeis_available
+  FROM products p
+  JOIN users u
+    ON p.dealer_id = u.id
+  LEFT JOIN inventory_items i
+    ON i.product_id = p.id
+  GROUP BY
+    p.id, p.device_name, p.device_model,
+    p.device_type, p.selling_price,
+    u.business_name, u.location
+  HAVING COUNT(i.*) FILTER (WHERE i.status = 'available') > 0
+  ORDER BY p.device_name
     `);
 
     return res.json({ mode: 'free', products });
