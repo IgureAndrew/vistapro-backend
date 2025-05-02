@@ -2,7 +2,7 @@ const bcrypt = require('bcrypt');
 const { pool } = require('../config/database');
 const { createUser } = require('../models/userModel');
 const { generateUniqueID } = require('../utils/uniqueId');
-const logActivity = require("../utils/logActivity");
+const logActivity = require('../utils/logActivity');
 
 // Updated password regex: Minimum 12 characters, at least one letter, one digit, and one special character.
 const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d)(?=.*[@$!%*#?&])[A-Za-z\d@$!%*#?&]{12,}$/;
@@ -14,18 +14,19 @@ const registerMasterAdmin = async (req, res, next) => {
   try {
     const { secretKey, first_name, last_name, gender, email, password } = req.body;
     if (secretKey !== process.env.MASTER_ADMIN_SECRET_KEY) {
-      return res.status(403).json({ message: "Invalid secret key." });
+      return res.status(403).json({ message: 'Invalid secret key.' });
     }
     if (!first_name || !last_name || !gender || !email || !password) {
-      return res.status(400).json({ message: "All required fields must be provided." });
+      return res.status(400).json({ message: 'All required fields must be provided.' });
     }
     if (!passwordRegex.test(password)) {
       return res.status(400).json({
-        message: "Password must be at least 12 characters with letters, numbers, and special characters."
+        message: 'Password must be at least 12 characters with letters, numbers, and special characters.'
       });
     }
+
     const hashedPassword = await bcrypt.hash(password, 10);
-    const unique_id = await generateUniqueID("MasterAdmin");
+    const unique_id = await generateUniqueID('MasterAdmin');
     const newUser = await createUser({
       unique_id,
       first_name,
@@ -42,9 +43,9 @@ const registerMasterAdmin = async (req, res, next) => {
       business_address: null,
       business_account_name: null,
       business_account_number: null,
-      registration_certificate_url: null,
+      registration_certificate_url: null
     });
-     // log activity
+
     await logActivity(
       req.user.id,
       `${req.user.first_name} ${req.user.last_name}`,
@@ -52,9 +53,10 @@ const registerMasterAdmin = async (req, res, next) => {
       'MasterAdmin',
       newUser.unique_id
     );
+
     return res.status(201).json({
-      message: "Master Admin registered successfully.",
-      user: newUser,
+      message: 'Master Admin registered successfully.',
+      user: newUser
     });
   } catch (error) {
     next(error);
@@ -66,20 +68,30 @@ const registerMasterAdmin = async (req, res, next) => {
  */
 const registerSuperAdmin = async (req, res, next) => {
   try {
-    const { first_name, last_name, gender, email, password, bank_name, account_number, account_name, location } = req.body;
-    if (!first_name || !last_name || !gender || !email || !password || !bank_name || !account_number || !account_name || !location) {
-      return res.status(400).json({ message: "All required fields must be provided." });
+    const {
+      first_name, last_name, gender,
+      email, password, bank_name,
+      account_number, account_name, location
+    } = req.body;
+
+    if (
+      !first_name || !last_name || !gender ||
+      !email || !password ||
+      !bank_name || !account_number || !account_name || !location
+    ) {
+      return res.status(400).json({ message: 'All required fields must be provided.' });
     }
     if (!/^\d{10}$/.test(account_number)) {
-      return res.status(400).json({ message: "Account number must be exactly 10 digits." });
+      return res.status(400).json({ message: 'Account number must be exactly 10 digits.' });
     }
     if (!passwordRegex.test(password)) {
       return res.status(400).json({
-        message: "Password must be at least 12 characters with letters, numbers, and special characters."
+        message: 'Password must be at least 12 characters with letters, numbers, and special characters.'
       });
     }
+
     const hashedPassword = await bcrypt.hash(password, 10);
-    const unique_id = await generateUniqueID("SuperAdmin");
+    const unique_id = await generateUniqueID('SuperAdmin');
     const newSuperAdmin = await createUser({
       unique_id,
       first_name,
@@ -96,11 +108,20 @@ const registerSuperAdmin = async (req, res, next) => {
       business_address: null,
       business_account_name: null,
       business_account_number: null,
-      registration_certificate_url: null,
+      registration_certificate_url: null
     });
+
+    await logActivity(
+      req.user.id,
+      `${req.user.first_name} ${req.user.last_name}`,
+      'Register Super Admin',
+      'SuperAdmin',
+      newSuperAdmin.unique_id
+    );
+
     return res.status(201).json({
-      message: "Super Admin registered successfully. Login details have been sent to the email.",
-      superAdmin: newSuperAdmin,
+      message: 'Super Admin registered successfully. Login details have been sent to the email.',
+      superAdmin: newSuperAdmin
     });
   } catch (error) {
     next(error);
@@ -113,31 +134,28 @@ const registerSuperAdmin = async (req, res, next) => {
 const updateProfile = async (req, res, next) => {
   try {
     const userId = req.user.id;
-    // Include phone in the destructuring from req.body
     const { email, gender, newPassword, phone } = req.body;
     let hashedPassword = null;
+
     if (newPassword) {
       hashedPassword = await bcrypt.hash(newPassword, 10);
     }
-    // Get profile image file path if uploaded
-    const profileImage = req.file ? req.file.path : null;
 
-    // Updated SQL query now includes the "phone" field.
+    const profileImage = req.file ? req.file.path : null;
     const query = `
       UPDATE users
-      SET email = COALESCE($1, email),
-          gender = COALESCE($2, gender),
-          phone = COALESCE($3, phone),
-          profile_image = COALESCE($4, profile_image),
-          password = COALESCE($5, password),
-          updated_at = NOW()
+      SET email          = COALESCE($1, email),
+          gender         = COALESCE($2, gender),
+          phone          = COALESCE($3, phone),
+          profile_image  = COALESCE($4, profile_image),
+          password       = COALESCE($5, password),
+          updated_at     = NOW()
       WHERE id = $6
       RETURNING *
     `;
     const values = [email, gender, phone, profileImage, hashedPassword, userId];
+    const { rows } = await pool.query(query, values);
 
-    const result = await pool.query(query, values);
-    // log activity
     await logActivity(
       userId,
       `${req.user.first_name} ${req.user.last_name}`,
@@ -145,15 +163,15 @@ const updateProfile = async (req, res, next) => {
       'MasterAdmin',
       req.user.unique_id
     );
+
     return res.status(200).json({
-      message: "Master Admin profile updated successfully.",
-      user: result.rows[0],
+      message: 'Master Admin profile updated successfully.',
+      user: rows[0]
     });
   } catch (error) {
     next(error);
   }
 };
-
 
 /**
  * addUser - Allows Master Admin to create a new user.
@@ -162,69 +180,46 @@ const addUser = async (req, res, next) => {
   try {
     const { role } = req.body;
     let unique_id;
-    if (role === "Dealer") {
-      unique_id = await generateUniqueID("Dealer");
-    } else if (role === "Admin") {
-      unique_id = await generateUniqueID("Admin");
-    } else if (role === "Marketer") {
-      unique_id = await generateUniqueID("Marketer");
-    } else if (role === "SuperAdmin") {
-      unique_id = await generateUniqueID("SuperAdmin");
-    } else {
-      unique_id = await generateUniqueID("User");
+
+    switch (role) {
+      case 'Dealer':     unique_id = await generateUniqueID('Dealer');     break;
+      case 'Admin':      unique_id = await generateUniqueID('Admin');      break;
+      case 'Marketer':   unique_id = await generateUniqueID('Marketer');   break;
+      case 'SuperAdmin': unique_id = await generateUniqueID('SuperAdmin'); break;
+      default:           unique_id = await generateUniqueID('User');
     }
 
     const saltRounds = 10;
-    let hashedPassword;
-    let userData = {};
+    let hashedPassword, userData = {};
 
-    if (role === "Dealer") {
-      // Dealers: only business info + location + CAC PDF
+    if (role === 'Dealer') {
       const {
-        first_name,
-        last_name,
-        gender,
-        email,
-        password,
+        first_name, last_name, gender,
+        email, password,
         registered_business_name,
-        registered_business_address,
-        location,
+        registered_business_address, location
       } = req.body;
 
-      // validation
       if (
-        !first_name ||
-        !last_name ||
-        !gender ||
-        !email ||
-        !password ||
+        !first_name || !last_name || !gender ||
+        !email || !password ||
         !registered_business_name ||
-        !registered_business_address ||
-        !location
+        !registered_business_address || !location
       ) {
-        return res
-          .status(400)
-          .json({ message: "All dealer fields are required." });
+        return res.status(400).json({ message: 'All dealer fields are required.' });
       }
       if (!passwordRegex.test(password)) {
         return res.status(400).json({
-          message:
-            "Password must be at least 12 characters with letters, numbers, and special characters.",
+          message: 'Password must be at least 12 characters with letters, numbers, and special characters.'
         });
       }
       if (!req.file) {
-        return res.status(400).json({
-          message:
-            "Registration certificate (CAC) is required and must be a PDF.",
-        });
+        return res.status(400).json({ message: 'Registration certificate (CAC) is required and must be a PDF.' });
       }
-      if (req.file.mimetype !== "application/pdf") {
-        return res
-          .status(400)
-          .json({ message: "Registration certificate must be PDF." });
+      if (req.file.mimetype !== 'application/pdf') {
+        return res.status(400).json({ message: 'Registration certificate must be PDF.' });
       }
 
-      // hash + assemble
       hashedPassword = await bcrypt.hash(password, saltRounds);
       userData = {
         unique_id,
@@ -235,58 +230,37 @@ const addUser = async (req, res, next) => {
         password: hashedPassword,
         role,
         location,
-
-        // Dealer-specific business fields
         business_name: registered_business_name,
         business_address: registered_business_address,
         business_account_name: null,
         business_account_number: null,
-
-        // banking always null for Dealers
         bank_name: null,
         account_number: null,
         account_name: null,
-
-        registration_certificate_url: req.file.path,
+        registration_certificate_url: req.file.path
       };
     } else {
-      // All other roles: require bank details + location
       const {
-        first_name,
-        last_name,
-        gender,
-        email,
-        password,
-        bank_name,
-        account_number,
-        account_name,
-        location,
+        first_name, last_name, gender,
+        email, password,
+        bank_name, account_number,
+        account_name, location
       } = req.body;
 
       if (
-        !first_name ||
-        !last_name ||
-        !gender ||
-        !email ||
-        !password ||
-        !bank_name ||
-        !account_number ||
-        !account_name ||
-        !location
+        !first_name || !last_name || !gender ||
+        !email || !password ||
+        !bank_name || !account_number ||
+        !account_name || !location
       ) {
-        return res
-          .status(400)
-          .json({ message: "All required fields must be provided." });
+        return res.status(400).json({ message: 'All required fields must be provided.' });
       }
       if (!/^\d{10}$/.test(account_number)) {
-        return res
-          .status(400)
-          .json({ message: "Account number must be exactly 10 digits." });
+        return res.status(400).json({ message: 'Account number must be exactly 10 digits.' });
       }
       if (!passwordRegex.test(password)) {
         return res.status(400).json({
-          message:
-            "Password must be at least 12 characters with letters, numbers, and special characters.",
+          message: 'Password must be at least 12 characters with letters, numbers, and special characters.'
         });
       }
 
@@ -300,32 +274,26 @@ const addUser = async (req, res, next) => {
         password: hashedPassword,
         role,
         location,
-
-        // banking fields
         bank_name,
         account_number,
         account_name,
-
-        // no business info for non-Dealers
         business_name: null,
         business_address: null,
         business_account_name: null,
         business_account_number: null,
-        registration_certificate_url: null,
+        registration_certificate_url: null
       };
     }
 
-    // Create the new user
     const newUser = await createUser(userData);
 
-    // initialize wallet for marketers
-    if (newUser.role === "Marketer") {
+    if (newUser.role === 'Marketer') {
       await pool.query(
         `INSERT INTO wallets (user_unique_id) VALUES ($1)`,
         [newUser.unique_id]
       );
     }
-      // log activity
+
     await logActivity(
       req.user.id,
       `${req.user.first_name} ${req.user.last_name}`,
@@ -333,9 +301,10 @@ const addUser = async (req, res, next) => {
       newUser.role,
       newUser.unique_id
     );
+
     return res.status(201).json({
-      message: "User created successfully",
-      user: newUser,
+      message: 'User created successfully',
+      user: newUser
     });
   } catch (error) {
     if (error.code === '23505' && error.constraint === 'users_email_key') {
@@ -344,10 +313,7 @@ const addUser = async (req, res, next) => {
     console.error(error);
     return res.status(500).json({ message: 'Internal server error' });
   }
-
 };
-
-
 
 /**
  * updateUser - Updates a user specified by :id.
@@ -362,63 +328,24 @@ const updateUser = async (req, res, next) => {
     } = req.body;
 
     const clauses = [];
-    const values  = [];
-    let   idx     = 1;
+    const values = [];
+    let idx = 1;
 
-    if (first_name) {
-      clauses.push(`first_name = $${idx}`);
-      values.push(first_name);
-      idx++;
-    }
-    if (last_name) {
-      clauses.push(`last_name = $${idx}`);
-      values.push(last_name);
-      idx++;
-    }
-    if (email) {
-      clauses.push(`email = $${idx}`);
-      values.push(email);
-      idx++;
-    }
-    if (bank_name) {
-      clauses.push(`bank_name = $${idx}`);
-      values.push(bank_name);
-      idx++;
-    }
-    if (account_number) {
-      clauses.push(`account_number = $${idx}`);
-      values.push(account_number);
-      idx++;
-    }
-    if (role) {
-      clauses.push(`role = $${idx}`);
-      values.push(role);
-      idx++;
-    }
-    if (location) {
-      clauses.push(`location = $${idx}`);
-      values.push(location);
-      idx++;
-    }
-    if (phone) {
-      clauses.push(`phone = $${idx}`);
-      values.push(phone);
-      idx++;
-    }
-    if (profile_image) {
-      clauses.push(`profile_image = $${idx}`);
-      values.push(profile_image);
-      idx++;
-    }
+    if (first_name)      { clauses.push(`first_name = $${idx}`);      values.push(first_name);      idx++; }
+    if (last_name)       { clauses.push(`last_name = $${idx}`);       values.push(last_name);       idx++; }
+    if (email)           { clauses.push(`email = $${idx}`);           values.push(email);           idx++; }
+    if (bank_name)       { clauses.push(`bank_name = $${idx}`);       values.push(bank_name);       idx++; }
+    if (account_number)  { clauses.push(`account_number = $${idx}`);  values.push(account_number);  idx++; }
+    if (role)            { clauses.push(`role = $${idx}`);            values.push(role);            idx++; }
+    if (location)        { clauses.push(`location = $${idx}`);        values.push(location);        idx++; }
+    if (phone)           { clauses.push(`phone = $${idx}`);           values.push(phone);           idx++; }
+    if (profile_image)   { clauses.push(`profile_image = $${idx}`);   values.push(profile_image);   idx++; }
 
     if (clauses.length === 0) {
-      return res.status(400).json({ message: "No fields provided for update." });
+      return res.status(400).json({ message: 'No fields provided for update.' });
     }
 
-    // always update timestamp
     clauses.push(`updated_at = NOW()`);
-
-    // add WHERE id = $idx
     const sql = `
       UPDATE users
          SET ${clauses.join(', ')}
@@ -426,10 +353,10 @@ const updateUser = async (req, res, next) => {
        RETURNING *
     `;
     values.push(userId);
-
     const { rowCount, rows } = await pool.query(sql, values);
+
     if (rowCount === 0) {
-      return res.status(404).json({ message: "User not found." });
+      return res.status(404).json({ message: 'User not found.' });
     }
 
     await logActivity(
@@ -441,14 +368,13 @@ const updateUser = async (req, res, next) => {
     );
 
     return res.json({
-      message: "User updated successfully.",
-      user: rows[0],
+      message: 'User updated successfully.',
+      user: rows[0]
     });
   } catch (error) {
     if (error.code === '23505' && error.constraint === 'users_email_key') {
-      return res.status(409).json({ message: "That email is already in use." });
+      return res.status(409).json({ message: 'That email is already in use.' });
     }
-  
     next(error);
   }
 };
@@ -464,7 +390,7 @@ const deleteUser = async (req, res, next) => {
       [userId]
     );
     if (rowCount === 0) {
-      return res.status(404).json({ message: "User not found" });
+      return res.status(404).json({ message: 'User not found' });
     }
 
     await logActivity(
@@ -476,30 +402,42 @@ const deleteUser = async (req, res, next) => {
     );
 
     return res.json({
-      message: "User deleted successfully",
-      user: rows[0],
+      message: 'User deleted successfully',
+      user: rows[0]
     });
   } catch (error) {
     next(error);
   }
 };
+
 /**
  * lockUser - Locks a user account (Master Admin only).
  */
 const lockUser = async (req, res, next) => {
   try {
-    if (req.user.role !== "MasterAdmin") {
-      return res.status(403).json({ message: "Only a Master Admin can lock user accounts." });
+    if (req.user.role !== 'MasterAdmin') {
+      return res.status(403).json({ message: 'Only a Master Admin can lock user accounts.' });
     }
     const userId = req.params.id;
-    const query = `UPDATE users SET locked = true WHERE id = $1 RETURNING *`;
-    const result = await pool.query(query, [userId]);
-    if (result.rowCount === 0) {
-      return res.status(404).json({ message: "User not found." });
+    const { rowCount, rows } = await pool.query(
+      `UPDATE users SET locked = true WHERE id = $1 RETURNING *`,
+      [userId]
+    );
+    if (rowCount === 0) {
+      return res.status(404).json({ message: 'User not found.' });
     }
+
+    await logActivity(
+      req.user.id,
+      `${req.user.first_name} ${req.user.last_name}`,
+      'Lock User',
+      'User',
+      rows[0].unique_id
+    );
+
     return res.status(200).json({
-      message: "User locked successfully",
-      user: result.rows[0],
+      message: 'User locked successfully',
+      user: rows[0]
     });
   } catch (error) {
     next(error);
@@ -511,18 +449,29 @@ const lockUser = async (req, res, next) => {
  */
 const unlockUser = async (req, res, next) => {
   try {
-    if (req.user.role !== "MasterAdmin") {
-      return res.status(403).json({ message: "Only a Master Admin can unlock user accounts." });
+    if (req.user.role !== 'MasterAdmin') {
+      return res.status(403).json({ message: 'Only a Master Admin can unlock user accounts.' });
     }
     const userId = req.params.id;
-    const query = `UPDATE users SET locked = false WHERE id = $1 RETURNING *`;
-    const result = await pool.query(query, [userId]);
-    if (result.rowCount === 0) {
-      return res.status(404).json({ message: "User not found." });
+    const { rowCount, rows } = await pool.query(
+      `UPDATE users SET locked = false WHERE id = $1 RETURNING *`,
+      [userId]
+    );
+    if (rowCount === 0) {
+      return res.status(404).json({ message: 'User not found.' });
     }
+
+    await logActivity(
+      req.user.id,
+      `${req.user.first_name} ${req.user.last_name}`,
+      'Unlock User',
+      'User',
+      rows[0].unique_id
+    );
+
     return res.status(200).json({
-      message: "User unlocked successfully",
-      user: result.rows[0],
+      message: 'User unlocked successfully',
+      user: rows[0]
     });
   } catch (error) {
     next(error);
@@ -535,16 +484,14 @@ const unlockUser = async (req, res, next) => {
 const getUsers = async (req, res, next) => {
   try {
     const { role } = req.query;
-    let query;
-    let values = [];
+    let query = 'SELECT * FROM users';
+    const values = [];
     if (role) {
-      query = "SELECT * FROM users WHERE role = $1";
+      query += ' WHERE role = $1';
       values.push(role);
-    } else {
-      query = "SELECT * FROM users";
     }
-    const result = await pool.query(query, values);
-    res.status(200).json({ users: result.rows });
+    const { rows } = await pool.query(query, values);
+    return res.status(200).json({ users: rows });
   } catch (error) {
     next(error);
   }
@@ -555,86 +502,102 @@ const getUsers = async (req, res, next) => {
  */
 const getUserSummary = async (req, res, next) => {
   try {
-    const totalResult = await pool.query("SELECT COUNT(*) FROM users");
-    const roleResult = await pool.query("SELECT role, COUNT(*) AS count FROM users GROUP BY role");
-    const lockedResult = await pool.query("SELECT COUNT(*) FROM users WHERE locked = true");
-    
-    res.status(200).json({
-      totalUsers: totalResult.rows[0].count,
+    const totalResult = await pool.query('SELECT COUNT(*) FROM users');
+    const roleResult = await pool.query('SELECT role, COUNT(*) AS count FROM users GROUP BY role');
+    const lockedResult = await pool.query('SELECT COUNT(*) FROM users WHERE locked = true');
+
+    return res.status(200).json({
+      totalUsers: parseInt(totalResult.rows[0].count, 10),
       usersByRole: roleResult.rows,
-      lockedUsers: lockedResult.rows[0].count,
+      lockedUsers: parseInt(lockedResult.rows[0].count, 10)
     });
   } catch (error) {
     next(error);
   }
 };
 
+/**
+ * getDashboardSummary - Provides a summary of the activities on the dashboard overview.
+ */
+const getDashboardSummary = async (req, res, next) => {
+  try {
+    const totalUsersResult = await pool.query('SELECT COUNT(*) AS total FROM users');
+    const totalOrdersResult = await pool.query('SELECT COUNT(*) AS total FROM orders');
+    const pendingApprovalsResult = await pool.query(
+      "SELECT COUNT(*) AS total FROM users WHERE overall_verification_status = 'pending'"
+    );
+    const totalSalesResult = await pool.query(
+      'SELECT COALESCE(SUM(sold_amount), 0) AS total_sales FROM orders'
+    );
+
+    return res.status(200).json({
+      totalUsers: parseInt(totalUsersResult.rows[0].total, 10),
+      totalOrders: parseInt(totalOrdersResult.rows[0].total, 10),
+      pendingApprovals: parseInt(pendingApprovalsResult.rows[0].total, 10),
+      totalSales: parseFloat(totalSalesResult.rows[0].total_sales) || 0,
+      activeSessions: 0
+    });
+  } catch (error) {
+    next(error);
+  }
+};
 
 /**
  * assignMarketersToAdmin - Assigns one or multiple Marketers to an Admin using unique IDs.
- * Expects in req.body:
- * {
- *   "adminUniqueId": "TARGET_ADMIN_ID",
- *   "marketerUniqueIds": "MARKETER_ID"  // or an array of IDs
- * }
  */
 const assignMarketersToAdmin = async (req, res, next) => {
   try {
-    if (req.user.role !== "MasterAdmin") {
-      return res.status(403).json({ message: "Only a Master Admin can assign marketers to an Admin." });
+    if (req.user.role !== 'MasterAdmin') {
+      return res.status(403).json({ message: 'Only a Master Admin can assign marketers to an Admin.' });
     }
     let { adminUniqueId, marketerUniqueIds } = req.body;
     if (!adminUniqueId || !marketerUniqueIds) {
-      return res.status(400).json({ message: "Both adminUniqueId and marketerUniqueIds are required." });
+      return res.status(400).json({ message: 'Both adminUniqueId and marketerUniqueIds are required.' });
     }
-    // Ensure marketerUniqueIds is an array
-    if (!Array.isArray(marketerUniqueIds)) {
-      marketerUniqueIds = [marketerUniqueIds];
-    }
+    if (!Array.isArray(marketerUniqueIds)) marketerUniqueIds = [marketerUniqueIds];
     if (marketerUniqueIds.length === 0) {
-      return res.status(400).json({ message: "At least one marketer ID must be provided." });
+      return res.status(400).json({ message: 'At least one marketer ID must be provided.' });
     }
-    // Verify that the admin exists and has role "Admin"
+
     const adminCheck = await pool.query(
       "SELECT unique_id FROM users WHERE unique_id = $1 AND role = 'Admin'",
       [adminUniqueId]
     );
     if (adminCheck.rowCount === 0) {
-      return res.status(404).json({ message: "Admin not found." });
+      return res.status(404).json({ message: 'Admin not found.' });
     }
-    // Validate provided marketer IDs.
+
     const marketerCheck = await pool.query(
       "SELECT unique_id FROM users WHERE unique_id = ANY($1::text[]) AND role = 'Marketer'",
       [marketerUniqueIds]
     );
-    const validMarketerUniqueIds = marketerCheck.rows.map(row => row.unique_id);
-    const invalidMarketerIds = marketerUniqueIds.filter(id => !validMarketerUniqueIds.includes(id));
-    if (invalidMarketerIds.length > 0) {
-      return res.status(404).json({ message: `The following IDs are not valid Marketers: ${invalidMarketerIds.join(", ")}` });
+    const validMarketerUniqueIds = marketerCheck.rows.map(r => r.unique_id);
+    const invalidIds = marketerUniqueIds.filter(id => !validMarketerUniqueIds.includes(id));
+    if (invalidIds.length > 0) {
+      return res.status(404).json({ message: `Invalid marketers: ${invalidIds.join(', ')}` });
     }
+
     const query = `
       UPDATE users
-      SET admin_id = (SELECT id FROM users WHERE unique_id = $1),
+      SET admin_id   = (SELECT id FROM users WHERE unique_id = $1),
           updated_at = NOW()
-      WHERE unique_id = ANY($2::text[]) AND role = 'Marketer'
+      WHERE unique_id = ANY($2::text[])
+        AND role = 'Marketer'
       RETURNING *
     `;
-    const values = [adminUniqueId, marketerUniqueIds];
-    const result = await pool.query(query, values);
-    await pool.query(`
-      INSERT INTO activity_logs
-        (actor_id, actor_name, activity_type, entity_type, entity_unique_id)
-      VALUES
-        ($1, $2, 'Assigned to Admin', 'Marketer', $3)
-    `, [
+    const { rows } = await pool.query(query, [adminUniqueId, marketerUniqueIds]);
+
+    await logActivity(
       req.user.id,
       `${req.user.first_name} ${req.user.last_name}`,
-      marketerUniqueIds.join(',')   // or each ID in a loop, as you prefer
-    ]);
+      'Assign Marketers to Admin',
+      'Marketer',
+      marketerUniqueIds.join(',')
+    );
 
     return res.status(200).json({
-      message: "Marketers assigned to Admin successfully.",
-      assignedMarketers: result.rows,
+      message: 'Marketers assigned to Admin successfully.',
+      assignedMarketers: rows
     });
   } catch (error) {
     next(error);
@@ -643,58 +606,60 @@ const assignMarketersToAdmin = async (req, res, next) => {
 
 /**
  * assignAdminToSuperAdmin - Assigns one or multiple Admins to a Super Admin using unique IDs.
- * Expects in req.body:
- * {
- *   "superAdminUniqueId": "TARGET_SUPERADMIN_ID",
- *   "adminUniqueIds": "ADMIN_ID"  // or an array of IDs
- * }
  */
 const assignAdminToSuperAdmin = async (req, res, next) => {
   try {
-    if (req.user.role !== "MasterAdmin") {
-      return res.status(403).json({ message: "Only a Master Admin can assign admins to a Super Admin." });
+    if (req.user.role !== 'MasterAdmin') {
+      return res.status(403).json({ message: 'Only a Master Admin can assign admins to a Super Admin.' });
     }
     let { superAdminUniqueId, adminUniqueIds } = req.body;
     if (!superAdminUniqueId || !adminUniqueIds) {
-      return res.status(400).json({ message: "Both superAdminUniqueId and adminUniqueIds are required." });
+      return res.status(400).json({ message: 'Both superAdminUniqueId and adminUniqueIds are required.' });
     }
-    // Ensure adminUniqueIds is an array
-    if (!Array.isArray(adminUniqueIds)) {
-      adminUniqueIds = [adminUniqueIds];
-    }
+    if (!Array.isArray(adminUniqueIds)) adminUniqueIds = [adminUniqueIds];
     if (adminUniqueIds.length === 0) {
-      return res.status(400).json({ message: "At least one admin ID must be provided." });
+      return res.status(400).json({ message: 'At least one admin ID must be provided.' });
     }
-    // Verify that the Super Admin exists.
+
     const superAdminCheck = await pool.query(
       "SELECT id FROM users WHERE unique_id = $1 AND role = 'SuperAdmin'",
       [superAdminUniqueId]
     );
     if (superAdminCheck.rowCount === 0) {
-      return res.status(404).json({ message: "Super Admin not found." });
+      return res.status(404).json({ message: 'Super Admin not found.' });
     }
-    // Validate provided admin IDs.
+
     const adminCheck = await pool.query(
       "SELECT unique_id FROM users WHERE unique_id = ANY($1::text[]) AND role = 'Admin'",
       [adminUniqueIds]
     );
-    const validAdminUniqueIds = adminCheck.rows.map(row => row.unique_id);
-    const invalidIds = adminUniqueIds.filter(id => !validAdminUniqueIds.includes(id));
+    const validAdminIds = adminCheck.rows.map(r => r.unique_id);
+    const invalidIds = adminUniqueIds.filter(id => !validAdminIds.includes(id));
     if (invalidIds.length > 0) {
-      return res.status(404).json({ message: `The following IDs are not valid Admins: ${invalidIds.join(", ")}` });
+      return res.status(404).json({ message: `Invalid admins: ${invalidIds.join(', ')}` });
     }
+
     const query = `
       UPDATE users
       SET super_admin_id = (SELECT id FROM users WHERE unique_id = $1),
-          updated_at = NOW()
-      WHERE unique_id = ANY($2::text[]) AND role = 'Admin'
+          updated_at     = NOW()
+      WHERE unique_id = ANY($2::text[])
+        AND role = 'Admin'
       RETURNING *
     `;
-    const values = [superAdminUniqueId, adminUniqueIds];
-    const result = await pool.query(query, values);
+    const { rows } = await pool.query(query, [superAdminUniqueId, adminUniqueIds]);
+
+    await logActivity(
+      req.user.id,
+      `${req.user.first_name} ${req.user.last_name}`,
+      'Assign Admins to Super Admin',
+      'Admin',
+      adminUniqueIds.join(',')
+    );
+
     return res.status(200).json({
-      message: "Admins assigned to Super Admin successfully.",
-      assignedAdmins: result.rows,
+      message: 'Admins assigned to Super Admin successfully.',
+      assignedAdmins: rows
     });
   } catch (error) {
     next(error);
@@ -702,55 +667,45 @@ const assignAdminToSuperAdmin = async (req, res, next) => {
 };
 
 /**
- * unassignMarketersFromAdmin - Unassigns one or multiple Marketers from an Admin using unique IDs.
- * Expects in req.body:
- * {
- *   "adminUniqueId": "TARGET_ADMIN_ID",
- *   "marketerUniqueIds": "MARKETER_ID" // or an array of IDs
- * }
+ * unassignMarketersFromAdmin - Unassigns one or multiple Marketers from an Admin.
  */
 const unassignMarketersFromAdmin = async (req, res, next) => {
   try {
     let { adminUniqueId, marketerUniqueIds } = req.body;
     if (!adminUniqueId || !marketerUniqueIds) {
-      return res.status(400).json({ message: "Both adminUniqueId and marketerUniqueIds are required." });
+      return res.status(400).json({ message: 'Both adminUniqueId and marketerUniqueIds are required.' });
     }
-    if (!Array.isArray(marketerUniqueIds)) {
-      marketerUniqueIds = [marketerUniqueIds];
-    }
+    if (!Array.isArray(marketerUniqueIds)) marketerUniqueIds = [marketerUniqueIds];
     if (marketerUniqueIds.length === 0) {
-      return res.status(400).json({ message: "At least one marketer ID must be provided." });
+      return res.status(400).json({ message: 'At least one marketer ID must be provided.' });
     }
+
     const query = `
       UPDATE users
-      SET admin_id = NULL,
+      SET admin_id   = NULL,
           updated_at = NOW()
       WHERE unique_id = ANY($1::text[])
         AND admin_id = (SELECT id FROM users WHERE unique_id = $2)
         AND role = 'Marketer'
       RETURNING *
     `;
-    // Here, $1 is the array of marketer IDs and $2 is the adminUniqueId.
-    const values = [marketerUniqueIds, adminUniqueId];
-    const result = await pool.query(query, values);
-    await pool.query(`
-      INSERT INTO activity_logs
-        (actor_id, actor_name, activity_type, entity_type, entity_unique_id)
-      VALUES
-        ($1, $2, 'Unassigned from Admin', 'Marketer', $3)
-    `, [
+    const { rows, rowCount } = await pool.query(query, [marketerUniqueIds, adminUniqueId]);
+
+    if (rowCount === 0) {
+      return res.status(404).json({ message: 'Marketer(s) not found or already unassigned.' });
+    }
+
+    await logActivity(
       req.user.id,
       `${req.user.first_name} ${req.user.last_name}`,
+      'Unassign Marketers from Admin',
+      'Marketer',
       marketerUniqueIds.join(',')
-    ]);
+    );
 
-    if (result.rowCount === 0) {
-      return res.status(404).json({ message: "Marketer(s) not found or already unassigned." });
-    }
-    
-    res.status(200).json({
-      message: "Marketer(s) unassigned successfully.",
-      unassignedMarketers: result.rows,
+    return res.status(200).json({
+      message: 'Marketer(s) unassigned successfully.',
+      unassignedMarketers: rows
     });
   } catch (error) {
     next(error);
@@ -758,162 +713,137 @@ const unassignMarketersFromAdmin = async (req, res, next) => {
 };
 
 /**
- * unassignAdminsFromSuperadmin - Unassigns one or multiple Admins from a Super Admin using unique IDs.
- * Expects in req.body:
- * {
- *   "superAdminUniqueId": "TARGET_SUPERADMIN_ID",
- *   "adminUniqueIds": "ADMIN_ID" // or an array of IDs
- * }
+ * unassignAdminsFromSuperadmin - Unassigns one or multiple Admins from a Super Admin.
  */
 const unassignAdminsFromSuperadmin = async (req, res, next) => {
   try {
     let { superAdminUniqueId, adminUniqueIds } = req.body;
     if (!superAdminUniqueId || !adminUniqueIds) {
-      return res.status(400).json({ message: "Both superAdminUniqueId and adminUniqueIds are required." });
+      return res.status(400).json({ message: 'Both superAdminUniqueId and adminUniqueIds are required.' });
     }
-    if (!Array.isArray(adminUniqueIds)) {
-      adminUniqueIds = [adminUniqueIds];
-    }
+    if (!Array.isArray(adminUniqueIds)) adminUniqueIds = [adminUniqueIds];
     if (adminUniqueIds.length === 0) {
-      return res.status(400).json({ message: "At least one admin ID must be provided." });
+      return res.status(400).json({ message: 'At least one admin ID must be provided.' });
     }
+
     const query = `
       UPDATE users
       SET super_admin_id = NULL,
-          updated_at = NOW()
+          updated_at     = NOW()
       WHERE unique_id = ANY($1::text[])
         AND super_admin_id = (SELECT id FROM users WHERE unique_id = $2)
         AND role = 'Admin'
       RETURNING *
     `;
-    const values = [adminUniqueIds, superAdminUniqueId];
-    const result = await pool.query(query, values);
-    if (result.rowCount === 0) {
-      return res.status(404).json({ message: "No matching admins found or already unassigned." });
+    const { rows, rowCount } = await pool.query(query, [adminUniqueIds, superAdminUniqueId]);
+
+    if (rowCount === 0) {
+      return res.status(404).json({ message: 'No matching admins found or already unassigned.' });
     }
+
+    await logActivity(
+      req.user.id,
+      `${req.user.first_name} ${req.user.last_name}`,
+      'Unassign Admins from Super Admin',
+      'Admin',
+      adminUniqueIds.join(',')
+    );
+
     return res.status(200).json({
-      message: "Admins unassigned successfully.",
-      unassignedAdmins: result.rows,
+      message: 'Admins unassigned successfully.',
+      unassignedAdmins: rows
     });
   } catch (error) {
     next(error);
   }
 };
 
-
-
 /**
- * listMarketersByAdmin
- * Retrieves a list of Marketers assigned to a given Admin.
- * Expects the admin's unique ID as a route parameter.
+ * listMarketersByAdmin - Retrieves a list of Marketers assigned to a given Admin.
  */
 const listMarketersByAdmin = async (req, res, next) => {
   try {
     const { adminUniqueId } = req.params;
-    // Verify the provided admin exists and has role "Admin".
     const adminResult = await pool.query(
       "SELECT id FROM users WHERE unique_id = $1 AND role = 'Admin'",
       [adminUniqueId]
     );
     if (adminResult.rowCount === 0) {
-      return res.status(404).json({ message: "Admin not found." });
+      return res.status(404).json({ message: 'Admin not found.' });
     }
     const adminId = adminResult.rows[0].id;
 
-    // Retrieve all marketers assigned to that admin.
     const query = `
       SELECT unique_id, first_name, last_name, email, location, admin_id
       FROM users
       WHERE role = 'Marketer' AND admin_id = $1
       ORDER BY first_name, last_name
     `;
-    const result = await pool.query(query, [adminId]);
-    res.status(200).json({ assignedMarketers: result.rows });
+    const { rows } = await pool.query(query, [adminId]);
+    return res.status(200).json({ assignedMarketers: rows });
   } catch (error) {
     next(error);
   }
 };
 
 /**
- * listAdminsBySuperAdmin
- * Retrieves a list of Admins assigned to a given SuperAdmin.
- * Expects the super admin's unique ID as a route parameter.
+ * listAdminsBySuperAdmin - Retrieves a list of Admins assigned to a given SuperAdmin.
  */
 const listAdminsBySuperAdmin = async (req, res, next) => {
   try {
     const { superAdminUniqueId } = req.params;
-    // Verify the provided superadmin exists.
     const superAdminResult = await pool.query(
       "SELECT id FROM users WHERE unique_id = $1 AND role = 'SuperAdmin'",
       [superAdminUniqueId]
     );
     if (superAdminResult.rowCount === 0) {
-      return res.status(404).json({ message: "SuperAdmin not found." });
+      return res.status(404).json({ message: 'SuperAdmin not found.' });
     }
     const superAdminId = superAdminResult.rows[0].id;
 
-    // Retrieve all admins assigned to that superadmin.
     const query = `
       SELECT unique_id, first_name, last_name, email, location, super_admin_id
       FROM users
       WHERE role = 'Admin' AND super_admin_id = $1
       ORDER BY first_name, last_name
     `;
-    const result = await pool.query(query, [superAdminId]);
-    res.status(200).json({ assignedAdmins: result.rows });
+    const { rows } = await pool.query(query, [superAdminId]);
+    return res.status(200).json({ assignedAdmins: rows });
   } catch (error) {
     next(error);
   }
 };
 
 /**
- * getAllAssignments
- * Retrieves all current assignment relationships from the system.
- *
- * - For marketers: Returns all marketers that are assigned to an admin.
- * - For admins: Returns all admins that are assigned to a super admin.
- *
- * The response includes:
- *   - assignedMarketers: Array of objects representing marketer assignments to admins.
- *   - assignedAdmins: Array of objects representing admin assignments to superadmins.
+ * getAllAssignments - Retrieves all current assignment relationships.
  */
 const getAllAssignments = async (req, res, next) => {
   try {
-    // Fetch marketers assigned to an admin.
-    const marketersAssignedResult = await pool.query(
-      `
+    const marketersAssignedResult = await pool.query(`
       SELECT 
         u.unique_id AS marketer_unique_id,
         u.admin_id,
         (SELECT unique_id FROM users WHERE id = u.admin_id) AS admin_unique_id,
-        u.first_name,
-        u.last_name,
-        u.location
+        u.first_name, u.last_name, u.location
       FROM users u
       WHERE u.role = 'Marketer' AND u.admin_id IS NOT NULL
       ORDER BY u.first_name, u.last_name
-      `
-    );
+    `);
 
-    // Fetch admins assigned to a super admin.
-    const adminsAssignedResult = await pool.query(
-      `
+    const adminsAssignedResult = await pool.query(`
       SELECT 
         u.unique_id AS admin_unique_id,
         u.super_admin_id,
         (SELECT unique_id FROM users WHERE id = u.super_admin_id) AS super_admin_unique_id,
-        u.first_name,
-        u.last_name,
-        u.location
+        u.first_name, u.last_name, u.location
       FROM users u
       WHERE u.role = 'Admin' AND u.super_admin_id IS NOT NULL
       ORDER BY u.first_name, u.last_name
-      `
-    );
+    `);
 
-    res.status(200).json({
+    return res.status(200).json({
       assignedMarketers: marketersAssignedResult.rows,
-      assignedAdmins: adminsAssignedResult.rows,
+      assignedAdmins: adminsAssignedResult.rows
     });
   } catch (error) {
     next(error);
@@ -921,49 +851,21 @@ const getAllAssignments = async (req, res, next) => {
 };
 
 /**
- * getAllDealers
- * Returns a list of all dealers from the users table (role = 'Dealer').
+ * getAllDealers - Returns a list of all dealers from the users table.
  */
 const getAllDealers = async (req, res, next) => {
-  const { rows } = await pool.query(
-    `SELECT id, unique_id, business_name FROM users WHERE role = 'Dealer'`
-  );
-  res.json({ dealers: rows });
-};
-/**
- * getDashboardSummary - Provides a summary of the activities on the dashboard overview.
- */
-const getDashboardSummary = async (req, res, next) => {
   try {
-    const totalUsersResult = await pool.query("SELECT COUNT(*) AS total FROM users");
-    const totalOrdersResult = await pool.query("SELECT COUNT(*) AS total FROM orders");
-    const pendingApprovalsResult = await pool.query(
-      "SELECT COUNT(*) AS total FROM users WHERE overall_verification_status = 'pending'"
+    const { rows } = await pool.query(
+      "SELECT id, unique_id, business_name FROM users WHERE role = 'Dealer'"
     );
-    const totalSalesResult = await pool.query(
-      "SELECT COALESCE(SUM(sold_amount), 0) AS total_sales FROM orders"
-    );
-    const activeSessions = 0; // Add your own session tracking logic if needed
-
-    const totalUsers = parseInt(totalUsersResult.rows[0].total, 10);
-    const totalOrders = parseInt(totalOrdersResult.rows[0].total, 10);
-    const pendingApprovals = parseInt(pendingApprovalsResult.rows[0].total, 10);
-    const totalSales = parseFloat(totalSalesResult.rows[0].total_sales) || 0;
-
-    res.status(200).json({
-      totalUsers,
-      totalOrders,
-      pendingApprovals,
-      activeSessions,
-      totalSales,
-    });
+    return res.json({ dealers: rows });
   } catch (error) {
     next(error);
   }
 };
 
 /**
- * getTotalUsers - returns the count of all users
+ * getTotalUsers - returns the count of all users.
  */
 async function getTotalUsers(req, res, next) {
   try {
@@ -972,11 +874,14 @@ async function getTotalUsers(req, res, next) {
       FROM users
     `);
     return res.json({ totalUsers: rows[0].total_users });
-  } catch (err) {
-    next(err);
+  } catch (error) {
+    next(error);
   }
 }
 
+/**
+ * getStats - Provides various platform statistics.
+ */
 async function getStats(req, res, next) {
   try {
     const { rows } = await pool.query(`
@@ -991,9 +896,9 @@ async function getStats(req, res, next) {
         (SELECT COUNT(*) FROM users WHERE overall_verification_status = 'pending') AS "pendingVerification",
         (SELECT COUNT(*) FROM stock_updates WHERE status = 'pending')             AS "totalPickupStocks"
     `);
-    res.json(rows[0]);
-  } catch (err) {
-    next(err);
+    return res.json(rows[0]);
+  } catch (error) {
+    next(error);
   }
 }
 
@@ -1010,9 +915,9 @@ async function getRecentActivity(req, res, next) {
         LIMIT $1`,
       [limit]
     );
-    res.json({ activities: rows });
-  } catch (err) {
-    next(err);
+    return res.json({ activities: rows });
+  } catch (error) {
+    next(error);
   }
 }
 
@@ -1028,16 +933,15 @@ module.exports = {
   getUsers,
   getUserSummary,
   getDashboardSummary,
-  assignMarketersToAdmin, // Multi-assignment for marketers to admin
-  assignAdminToSuperAdmin, // Multi-assignment for admins to super admin
+  assignMarketersToAdmin,
+  assignAdminToSuperAdmin,
   unassignMarketersFromAdmin,
   unassignAdminsFromSuperadmin,
   listMarketersByAdmin,
-  getAllAssignments,
   listAdminsBySuperAdmin,
+  getAllAssignments,
   getAllDealers,
   getTotalUsers,
   getStats,
-  getRecentActivity,
-  
+  getRecentActivity
 };
