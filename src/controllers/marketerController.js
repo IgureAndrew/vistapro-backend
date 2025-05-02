@@ -538,12 +538,17 @@ async function listDealersByState(req, res, next) {
          }
           const myState = me[0].location;
       
-    const { rows } = await pool.query(`
-      SELECT id, unique_id, business_name
-        FROM users
-       WHERE role = 'Dealer' AND location = $1
-       ORDER BY business_name
-    `, [myState]);
+          const { rows } = await pool.query(`
+                  SELECT id
+                       , unique_id
+                       , business_name
+                       , location                         -- <-- added
+                    FROM users
+                   WHERE role = 'Dealer'
+                     AND location = $1
+                   ORDER BY business_name
+                `, [marketerState]);
+            
     res.json({ dealers: rows });
   } catch (err) {
     next(err);
