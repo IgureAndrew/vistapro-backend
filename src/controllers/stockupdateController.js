@@ -311,55 +311,112 @@ async function placeOrder(req, res, next) {
  * 3) requestStockTransfer
  *    Marketer requests to move one of their own 'pending' pickups to another marketer.
  */
+// src/controllers/stockupdateController.js
 async function requestStockTransfer(req, res, next) {
   try {
-    const id = req.params.id;
-    const { targetUniqueId } = req.body;
-    const myUID = req.user.unique_id;
+    const transferId       = parseInt(req.params.id, 10);
+    const { targetIdentifier } = req.body; // either unique_id or full name
+    const currentUID       = req.user.unique_id;
 
-    // verify record
+    // 1) Verify this pickup exists and is still transferrable
     const meQ = await pool.query(
       `SELECT marketer_id, transfer_status
          FROM stock_updates
         WHERE id = $1`,
-      [id]
+      [transferId]
     );
     if (!meQ.rowCount) {
       return res.status(404).json({ message: "Pickup not found." });
     }
-    if (meQ.rows[0].transfer_status !== 'none') {
+    if (meQ.rows[0].transfer_status !== "none") {
       return res.status(400).json({ message: "Transfer already in progress." });
     }
 
-    // resolve target marketer
+    // 2) Resolve target marketer by unique_id OR full name
     const tgtQ = await pool.query(
-      `SELECT id, state_of_residence
+      `SELECT id, unique_id, first_name, last_name, location
          FROM users
-        WHERE unique_id = $1`,
-      [targetUniqueId]
+        WHERE role = 'Marketer'
+          AND (
+            unique_id = $1
+         OR (first_name || ' ' || last_name) ILIKE $1
+          )`,
+      [targetIdentifier]
     );
     if (!tgtQ.rowCount) {
       return res.status(404).json({ message: "Target marketer not found." });
     }
-    if (tgtQ.rows[0].state_of_residence !== req.user.state_of_residence) {
-      return res.status(400).json({ message: "Transfers must stay within same location." });
+    const target = tgtQ.rows[0];
+
+    // 3) Ensure same location
+    const meLocQ = await pool.query(
+      `SELECT location
+         FROM users
+        WHERE unique_id = $1`,
+      [currentUID]
+    );
+    const myLocation = meLocQ.rows[0]?.location;
+    if (target.location !== myLocation) {
+      return res.status(400).json({
+        message: "Transfers must stay within the same location.",
+      });
     }
 
-    // record request
+    // 4) Perform the transfer request
     await pool.query(
       `UPDATE stock_updates
-         SET transfer_to_marketer_id  = $1,
-             transfer_status          = 'pending',
-             transfer_requested_at    = NOW()
+         SET transfer_to_marketer_id = $1,
+             transfer_status         = 'pending',
+             transfer_requested_at   = NOW()
        WHERE id = $2`,
-      [tgtQ.rows[0].id, id]
+      [target.id, transferId]
     );
 
-    res.json({ message: "Transfer request submitted." });
+    // 5) Fetch enriched transfer details for response
+    const detailQ = await pool.query(
+      `SELECT
+          p.device_name,
+          p.device_type,
+          -- source marketer
+          su.marketer_id as from_id,
+          m1.first_name || ' ' || m1.last_name AS from_name,
+          m1.location AS from_location,
+          -- target marketer
+          t2.unique_id    AS to_unique_id,
+          t2.first_name || ' ' || t2.last_name AS to_name,
+          t2.location     AS to_location
+        FROM stock_updates su
+        JOIN products p       ON p.id    = su.product_id
+        JOIN users m1         ON m1.id   = su.marketer_id
+        JOIN users t2         ON t2.id   = su.transfer_to_marketer_id
+       WHERE su.id = $1`,
+      [transferId]
+    );
+
+    const d = detailQ.rows[0];
+    return res.json({
+      message: "Transfer request submitted.",
+      transfer: {
+        from: {
+          name:     d.from_name,
+          location: d.from_location,
+        },
+        to: {
+          unique_id: d.to_unique_id,
+          name:      d.to_name,
+          location:  d.to_location,
+        },
+        device: {
+          name: d.device_name,
+          type: d.device_type,
+        }
+      }
+    });
   } catch (err) {
     next(err);
   }
 }
+
 
 /**
  * 4) approveStockTransfer
