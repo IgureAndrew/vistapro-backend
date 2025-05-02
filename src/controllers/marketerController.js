@@ -527,30 +527,35 @@ async function submitCommitmentForm(req, res, next) {
  */
 async function listDealersByState(req, res, next) {
   try {
-    const { rows: me } = await pool.query(
-            `SELECT location 
-               FROM users 
-              WHERE id = $1`,
-            [req.user.id]
-          );
-          if (!me.length) {
-            return res.status(404).json({ message: "Marketer not found." });
-         }
-          const myState = me[0].location;
-      
-          const { rows } = await pool.query(`
-                  SELECT id
-                       , unique_id
-                       , business_name
-                       , location                         -- <-- added
-                    FROM users
-                   WHERE role = 'Dealer'
-                     AND location = $1
-                   ORDER BY business_name`,
-                 [marketerState]
-                );
-            
-    res.json({ dealers: rows });
+    // 1) Fetch the marketer’s state from the DB
+    const marketerId = req.user.id;
+    const meResult = await pool.query(
+      `SELECT location
+         FROM users
+        WHERE id = $1`,
+      [marketerId]
+    );
+    if (meResult.rowCount === 0) {
+      return res.status(404).json({ message: "Marketer not found." });
+    }
+    const marketerState = meResult.rows[0].location;
+
+    // 2) Now grab all Dealers who share that state
+    const dealersResult = await pool.query(
+      `SELECT
+         id,
+         unique_id,
+         business_name,
+         location
+       FROM users
+      WHERE role = 'Dealer'
+        AND location = $1
+      ORDER BY business_name`,
+      [marketerState]
+    );
+
+    // 3) Return them
+    return res.json({ dealers: dealersResult.rows });
   } catch (err) {
     next(err);
   }
