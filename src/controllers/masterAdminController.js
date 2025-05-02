@@ -460,33 +460,17 @@ const updateUser = async (req, res, next) => {
 
 
 /**
- * deleteUser - Soft‐delete a user by their unique_id
+ * deleteUser - Deletes a user specified by :id.
  */
 const deleteUser = async (req, res, next) => {
   try {
-    const uniqueId = req.params.uniqueId;      // e.g. "DLR00003"
-    const result = await pool.query(
-      `UPDATE users
-          SET deleted_at = NOW()
-        WHERE unique_id = $1
-          AND deleted_at IS NULL
-        RETURNING *`,
-      [uniqueId]
-    );
+    const userId = req.params.id;
+    const query = `DELETE FROM users WHERE id = $1 RETURNING *`;
+    const result = await pool.query(query, [userId]);   
     if (result.rows.length === 0) {
-      // either didn’t exist, or was already deleted
       return res.status(404).json({ message: "User not found" });
     }
-
-    // logActivity stays the same
-    await logActivity(
-      req.user.id,
-      `${req.user.first_name} ${req.user.last_name}`,
-      'Delete User',
-      'User',
-      uniqueId
-    );
-
+    
     return res.status(200).json({
       message: "User deleted successfully",
       user: result.rows[0],
@@ -495,6 +479,7 @@ const deleteUser = async (req, res, next) => {
     next(error);
   }
 };
+
 /**
  * lockUser - Locks a user account (Master Admin only).
  */

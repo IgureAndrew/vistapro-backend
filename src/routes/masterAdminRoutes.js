@@ -94,7 +94,7 @@ router.get(   '/users/summary',   verifyToken, verifyRole(['MasterAdmin']), getU
 
 // NOTE: we use `:uniqueId` here (not `:id`) to match deleteUser / updateUser expectations
 router.put(   '/users/:uniqueId', verifyToken, verifyRole(['MasterAdmin']), updateUser);
-router.delete('/users/:uniqueId', verifyToken, verifyRole(['MasterAdmin']), deleteUser);
+router.delete('/users/:Id', verifyToken, verifyRole(['MasterAdmin']), deleteUser);
 
 // Lock/unlock by internal numeric ID
 router.patch('/users/:id/lock',   verifyToken, verifyRole(['MasterAdmin']), lockUser);
