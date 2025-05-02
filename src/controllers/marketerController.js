@@ -527,7 +527,17 @@ async function submitCommitmentForm(req, res, next) {
  */
 async function listDealersByState(req, res, next) {
   try {
-    const myState = req.user.location;
+    const { rows: me } = await pool.query(
+            `SELECT location 
+               FROM users 
+              WHERE id = $1`,
+            [req.user.id]
+          );
+          if (!me.length) {
+            return res.status(404).json({ message: "Marketer not found." });
+         }
+          const myState = me[0].location;
+      
     const { rows } = await pool.query(`
       SELECT id, unique_id, business_name
         FROM users
