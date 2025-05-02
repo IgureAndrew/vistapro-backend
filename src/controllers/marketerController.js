@@ -557,18 +557,34 @@ async function listDealersByState(req, res, next) {
 async function listDealerProducts(req, res, next) {
   try {
     const { dealerUniqueId } = req.params;
-    const marketerState = req.user.location;
 
-    // ensure dealer is in same state
-    const dealerQ = await pool.query(`
-      SELECT id FROM users
-       WHERE unique_id = $1 AND role = 'Dealer' AND location = $2
-    `, [dealerUniqueId, marketerState]);
+    // 1) look up marketer's state from users table
+    const { rows: me } = await pool.query(
+      `SELECT location
+         FROM users
+        WHERE id = $1`,
+      [req.user.id]
+    );
+    if (!me.length) {
+      return res.status(404).json({ message: "Marketer not found." });
+    }
+    const marketerState = me[0].location;
+
+    // 2) ensure dealer is in that state
+    const dealerQ = await pool.query(
+      `SELECT id
+         FROM users
+        WHERE unique_id = $1
+          AND role = 'Dealer'
+          AND location = $2`,
+      [dealerUniqueId, marketerState]
+    );
     if (!dealerQ.rowCount) {
       return res.status(403).json({ message: "Dealer not in your state." });
     }
     const dealerId = dealerQ.rows[0].id;
 
+    // 3) now fetch only that dealer's available products
     const { rows } = await pool.query(`
       SELECT
         p.id            AS product_id,
@@ -580,18 +596,18 @@ async function listDealerProducts(req, res, next) {
         ARRAY_AGG(i.imei) FILTER (WHERE i.status = 'available')        AS imeis_available
       FROM products p
       JOIN inventory_items i
-        ON i.product_id = p.id AND i.status = 'available'
+        ON i.product_id = p.id
+       AND i.status     = 'available'
       WHERE p.dealer_id = $1
       GROUP BY p.id, p.device_name, p.device_model, p.device_type, p.selling_price
       HAVING COUNT(i.*) FILTER (WHERE i.status = 'available') > 0
     `, [dealerId]);
 
-    res.json({ products: rows });
+    return res.json({ products: rows });
   } catch (err) {
     next(err);
   }
 }
-
 module.exports = {
   getAccountSettings,
   updateAccountSettings,
