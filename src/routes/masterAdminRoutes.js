@@ -2,15 +2,14 @@
 
 const express = require('express');
 const router = express.Router();
-const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
+const multer  = require('multer');
+const path    = require('path');
+const fs      = require('fs');
 
 const { verifyToken } = require('../middlewares/authMiddleware');
-const { verifyRole } = require('../middlewares/roleMiddleware');
-const pool = require('../config/database').pool;
+const { verifyRole  } = require('../middlewares/roleMiddleware');
+const pool            = require('../config/database').pool;
 
-// Import controller functions
 const {
   registerMasterAdmin,
   registerSuperAdmin,
@@ -48,16 +47,21 @@ const storage = multer.diskStorage({
   filename:    (req, file, cb) => cb(null, Date.now() + '-' + file.originalname),
 });
 
-// upload handlers
-const uploadImage = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } });
+// Multer handlers
+const uploadImage = multer({
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 }
+});
+
 const uploadPDF = multer({
   storage,
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     if (file.fieldname === 'registrationCertificate') {
-      return file.mimetype === 'application/pdf'
-        ? cb(null, true)
-        : cb(new Error('Only PDF files allowed'), false);
+      if (file.mimetype === 'application/pdf') {
+        return cb(null, true);
+      }
+      return cb(new Error('Only PDF files allowed for registration certificate'), false);
     }
     cb(null, true);
   }
@@ -66,7 +70,7 @@ const uploadPDF = multer({
 // --- Public ---
 router.post('/register', registerMasterAdmin);
 
-// --- MasterAdmin-only profile ---
+// --- Profile (MasterAdmin only) ---
 router.put(
   '/profile',
   verifyToken,
@@ -81,43 +85,37 @@ router.get(
   (req, res) => res.status(200).json({ user: req.user })
 );
 
-// --- User management ---
-router.get(   '/users',           verifyToken, verifyRole(['MasterAdmin']), getUsers);
-router.post(
-  '/users',
-  verifyToken,
-  verifyRole(['MasterAdmin']),
-  uploadPDF.single('registrationCertificate'),
-  addUser
-);
-router.get(   '/users/summary',   verifyToken, verifyRole(['MasterAdmin']), getUserSummary);
+// --- User Management (MasterAdmin only) ---
+router.get(   '/users',         verifyToken, verifyRole(['MasterAdmin']), getUsers);
+router.post(  '/users',         verifyToken, verifyRole(['MasterAdmin']), uploadPDF.single('registrationCertificate'), addUser);
+router.get(   '/users/summary', verifyToken, verifyRole(['MasterAdmin']), getUserSummary);
 
-// NOTE: we use `:uniqueId` here (not `:id`) to match deleteUser / updateUser expectations
-router.put(   '/users/:uniqueId', verifyToken, verifyRole(['MasterAdmin']), updateUser);
-router.delete('/users/:Id', verifyToken, verifyRole(['MasterAdmin']), deleteUser);
+// Use the numeric `:id` path parameter for update/delete
+router.put(   '/users/:id',     verifyToken, verifyRole(['MasterAdmin']), updateUser);
+router.delete('/users/:id',     verifyToken, verifyRole(['MasterAdmin']), deleteUser);
 
-// Lock/unlock by internal numeric ID
+// Lock / Unlock by numeric ID
 router.patch('/users/:id/lock',   verifyToken, verifyRole(['MasterAdmin']), lockUser);
 router.patch('/users/:id/unlock', verifyToken, verifyRole(['MasterAdmin']), unlockUser);
 
-// --- Dashboard & stats ---
+// --- Dashboard & Stats ---
 router.get('/dashboard-summary', verifyToken, verifyRole(['MasterAdmin']), getDashboardSummary);
 router.get('/total-users',      verifyToken, verifyRole(['MasterAdmin']), getTotalUsers);
 router.get('/stats',            verifyToken, verifyRole(['MasterAdmin']), getStats);
-router.get('/recent-activity',  verifyToken,                              getRecentActivity);
+router.get('/recent-activity',  verifyToken,                               getRecentActivity);
 
-// --- Assignments ---
-router.post('/assign-marketers-to-admin',   verifyToken, verifyRole(['MasterAdmin']), assignMarketersToAdmin);
-router.post('/unassign-marketers-from-admin', verifyToken, verifyRole(['MasterAdmin']), unassignMarketersFromAdmin);
-router.post('/assign-admins-to-superadmin', verifyToken, verifyRole(['MasterAdmin']), assignAdminToSuperAdmin);
+// --- Assignments (MasterAdmin only) ---
+router.post('/assign-marketers-to-admin',    verifyToken, verifyRole(['MasterAdmin']), assignMarketersToAdmin);
+router.post('/unassign-marketers-from-admin',verifyToken, verifyRole(['MasterAdmin']), unassignMarketersFromAdmin);
+router.post('/assign-admins-to-superadmin',  verifyToken, verifyRole(['MasterAdmin']), assignAdminToSuperAdmin);
 router.post('/unassign-admins-from-superadmin', verifyToken, verifyRole(['MasterAdmin']), unassignAdminsFromSuperadmin);
-router.get('/assignments',                  verifyToken, verifyRole(['MasterAdmin']), getAllAssignments);
+router.get( '/assignments',                  verifyToken, verifyRole(['MasterAdmin']), getAllAssignments);
 
-// --- Listing assigned subsets ---
+// --- List subsets ---
 router.get(
   '/marketers/:adminUniqueId',
   verifyToken,
-  verifyRole(['Admin', 'MasterAdmin']),
+  verifyRole(['Admin','MasterAdmin']),
   listMarketersByAdmin
 );
 router.get(
@@ -127,11 +125,11 @@ router.get(
   listAdminsBySuperAdmin
 );
 
-// --- Dealers list for Marketers/Admins ---
+// --- Dealers for Marketers/Admins ---
 router.get(
   '/dealers',
   verifyToken,
-  verifyRole(['Marketer', 'Admin', 'MasterAdmin']),
+  verifyRole(['Marketer','Admin','MasterAdmin']),
   getAllDealers
 );
 
