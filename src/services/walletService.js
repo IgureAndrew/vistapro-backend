@@ -63,7 +63,7 @@ async function creditSplit(userId, orderId, totalCommission, typeTag) {
     INSERT INTO wallet_transactions
       (user_unique_id, amount, transaction_type, meta)
     VALUES
-      ($1, $2, $5::jsonb),
+      ($1, $2, ::jsonb),
       ($1, $3, '${typeTag}_available',  '{}'::jsonb),
       ($1, $4, '${typeTag}_withheld',   '{}'::jsonb)
   `, [
