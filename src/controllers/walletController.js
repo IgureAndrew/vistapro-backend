@@ -111,7 +111,7 @@ async function resetWallets(req, res, next) {
     return res.status(403).json({ message: "Permission denied." });
   }
   try {
-    await walletService.resetAllWallets();
+    await svc.resetWallets();
     res.json({ message: "All wallets and transactions have been reset to zero." });
   } catch (err) {
     next(err);
