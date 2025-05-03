@@ -10,28 +10,29 @@ async function getPendingOrders(req, res, next) {
     const { rows } = await pool.query(`
       SELECT
         o.id,
-        o.number_of_devices    AS qty,
-        o.sold_amount          AS amount,
-        o.sale_date            AS date,
+        o.number_of_devices,
+        o.sold_amount,
+        o.order_date            AS sale_date,       -- <— fix
         o.status,
         p.device_name,
         p.device_model,
-        p.device_type,
+        p.device_type,                             -- <— new
         o.bnpl_platform,
-        u.first_name           AS marketer_name,
-        u.unique_id            AS marketer_unique_id
+        u.first_name     AS marketer_name,
+        u.unique_id      AS marketer_unique_id
       FROM orders o
-      LEFT JOIN products p ON o.product_id = p.id
-      JOIN users u       ON o.marketer_id = u.id
+      LEFT JOIN products p   ON o.product_id       = p.id
+      JOIN users u           ON o.marketer_id      = u.id
       WHERE o.status = 'pending'
         AND u.role   = 'Marketer'
-      ORDER BY o.sale_date DESC
+      ORDER BY o.order_date DESC                   -- or sale_date
     `);
     res.json({ orders: rows });
   } catch (err) {
     next(err);
   }
 }
+
 
 /**
  * confirmOrder - MasterAdmin only
@@ -156,86 +157,85 @@ async function confirmOrderToDealer(req, res, next) {
  */
 async function getOrderHistory(req, res, next) {
   try {
-    const { unique_id: uid, role } = req.user;
+    const { unique_id: userUniqueId, role } = req.user;
     let query, values = [];
 
     if (role === "MasterAdmin") {
       query = `
         SELECT
           o.id,
-          o.number_of_devices AS qty,
-          o.sold_amount       AS amount,
-          o.sale_date         AS date,
+          o.number_of_devices,
+          o.sold_amount,
+          o.order_date         AS sale_date,       -- <— fix
           o.status,
           p.device_name,
           p.device_model,
-          p.device_type,
+          p.device_type,                            -- <— new
           o.bnpl_platform,
-          u.first_name        AS marketer_name,
-          u.unique_id         AS marketer_unique_id
+          u.first_name     AS marketer_name,
+          u.unique_id      AS marketer_unique_id
         FROM orders o
-        LEFT JOIN products p ON o.product_id  = p.id
-        JOIN users u         ON o.marketer_id = u.id
+        LEFT JOIN products p ON o.product_id    = p.id
+        JOIN users u         ON o.marketer_id   = u.id
         WHERE u.role = 'Marketer'
       `;
     } else if (role === "SuperAdmin") {
       query = `
         SELECT
           o.id,
-          o.number_of_devices AS qty,
-          o.sold_amount       AS amount,
-          o.sale_date         AS date,
+          o.number_of_devices,
+          o.sold_amount,
+          o.order_date         AS sale_date,       -- <— fix
           o.status,
           p.device_name,
           p.device_model,
-          p.device_type,
+          p.device_type,                            -- <— new
           o.bnpl_platform,
-          u.first_name        AS marketer_name,
-          u.unique_id         AS marketer_unique_id,
-          a.unique_id         AS admin_unique_id
+          u.first_name     AS marketer_name,
+          u.unique_id      AS marketer_unique_id,
+          a.unique_id      AS admin_unique_id
         FROM orders o
-        LEFT JOIN products p ON o.product_id = p.id
-        JOIN users u         ON o.marketer_id  = u.id
-        JOIN users a         ON u.admin_id     = a.id
+        LEFT JOIN products p ON o.product_id    = p.id
+        JOIN users u         ON o.marketer_id   = u.id
+        JOIN users a         ON u.admin_id      = a.id
         WHERE a.super_admin_id = (
           SELECT id FROM users WHERE unique_id = $1
         )
       `;
-      values = [uid];
+      values = [userUniqueId];
     } else if (role === "Admin") {
       query = `
         SELECT
           o.id,
-          o.number_of_devices AS qty,
-          o.sold_amount       AS amount,
-          o.sale_date         AS date,
+          o.number_of_devices,
+          o.sold_amount,
+          o.order_date         AS sale_date,       -- <— fix
           o.status,
           p.device_name,
           p.device_model,
-          p.device_type,
+          p.device_type,                            -- <— new
           o.bnpl_platform,
-          u.first_name        AS marketer_name,
-          u.unique_id         AS marketer_unique_id
+          u.first_name     AS marketer_name,
+          u.unique_id      AS marketer_unique_id
         FROM orders o
-        LEFT JOIN products p ON o.product_id = p.id
-        JOIN users u         ON o.marketer_id  = u.id
+        LEFT JOIN products p ON o.product_id    = p.id
+        JOIN users u         ON o.marketer_id   = u.id
         WHERE u.admin_id = (
           SELECT id FROM users WHERE unique_id = $1
         )
       `;
-      values = [uid];
+      values = [userUniqueId];
     } else {
       return res.status(403).json({ message: "Permission denied." });
     }
 
-    query += " ORDER BY o.sale_date DESC";
+    query += " ORDER BY o.order_date DESC";         // or sale_date
     const { rows } = await pool.query(query, values);
     return res.json({ orders: rows });
   } catch (err) {
     next(err);
   }
 }
-
 /**
  * updateOrder – MasterAdmin only
  */
