@@ -1,7 +1,8 @@
+// src/routes/manageOrderRoutes.js
 const express = require("express");
 const router  = express.Router();
-const { verifyToken } = require("../middlewares/authMiddleware");
-const { verifyRole  } = require("../middlewares/roleMiddleware");
+const { verifyToken }  = require("../middlewares/authMiddleware");
+const { verifyRole }   = require("../middlewares/roleMiddleware");
 const {
   getPendingOrders,
   confirmOrder,
@@ -10,6 +11,17 @@ const {
   updateOrder,
   deleteOrder,
 } = require("../controllers/manageOrderController");
+
+// ──────────────────────────────────────────────────────────
+// 0) (Optional) GET shortcut—so visiting this URL in browser
+//    will also trigger confirmOrder.
+// ──────────────────────────────────────────────────────────
+router.get(
+  "/orders/:orderId/confirm",
+  verifyToken,
+  verifyRole(["MasterAdmin"]),
+  (req, res, next) => confirmOrder(req, res, next)
+);
 
 // ──────────────────────────────────────────────────────────
 // 1) Pending Orders
