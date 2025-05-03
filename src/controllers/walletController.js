@@ -23,12 +23,29 @@ async function getMyWithdrawals(req, res, next) {
   }
 }
 
-// POST /api/wallets/withdraw
 async function requestWithdrawal(req, res, next) {
   try {
-    const bank   = req.body.bankDetails || {};
-    const { amount } = req.body;
-    const reqRow = await svc.requestWithdrawal(req.user.unique_id, amount, bank);
+    const { amount, account_name, account_number, bank_name } = req.body;
+
+    // 1) Validation:
+    if (!amount || !account_name || !account_number || !bank_name) {
+      return res
+        .status(400)
+        .json({
+          message:
+            "Please provide amount, account_name, account_number and bank_name.",
+        });
+    }
+
+    // 2) Build bankDetails object
+    const bankDetails = { account_name, account_number, bank_name };
+
+    // 3) Service call stays the same
+    const reqRow = await svc.requestWithdrawal(
+      req.user.unique_id,
+      amount,
+      bankDetails
+    );
     res.status(201).json({ request: reqRow });
   } catch (e) {
     next(e);
