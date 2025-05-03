@@ -13,15 +13,15 @@ const {
 } = require("../controllers/manageOrderController");
 
 // ──────────────────────────────────────────────────────────
-// 0) (Optional) GET shortcut—so visiting this URL in browser
-//    will also trigger confirmOrder.
+// 0) Confirm a pending order (shortcut GET for browser + PATCH for API)
+//    GET  /api/manage-orders/orders/:orderId/confirm
+//    PATCH /api/manage-orders/orders/:orderId/confirm
 // ──────────────────────────────────────────────────────────
-router.get(
-  "/orders/:orderId/confirm",
-  verifyToken,
-  verifyRole(["MasterAdmin"]),
-  (req, res, next) => confirmOrder(req, res, next)
-);
+router
+  .route("/orders/:orderId/confirm")
+  .all(verifyToken, verifyRole(["MasterAdmin"]))
+  .get(confirmOrder)
+  .patch(confirmOrder);
 
 // ──────────────────────────────────────────────────────────
 // 1) Pending Orders
@@ -47,18 +47,7 @@ router.get(
 );
 
 // ──────────────────────────────────────────────────────────
-// 3) Confirm a pending order
-//    PATCH /api/manage-orders/orders/:orderId/confirm
-// ──────────────────────────────────────────────────────────
-router.patch(
-  "/orders/:orderId/confirm",
-  verifyToken,
-  verifyRole(["MasterAdmin"]),
-  confirmOrder
-);
-
-// ──────────────────────────────────────────────────────────
-// 4) Confirm to dealer
+// 3) Confirm to dealer
 //    PATCH /api/manage-orders/orders/:orderId/confirm-to-dealer
 // ──────────────────────────────────────────────────────────
 router.patch(
@@ -69,7 +58,7 @@ router.patch(
 );
 
 // ──────────────────────────────────────────────────────────
-// 5) Update an order
+// 4) Update an order
 //    PUT /api/manage-orders/orders/:orderId
 // ──────────────────────────────────────────────────────────
 router.put(
@@ -80,7 +69,7 @@ router.put(
 );
 
 // ──────────────────────────────────────────────────────────
-// 6) Delete an order
+// 5) Delete an order
 //    DELETE /api/manage-orders/orders/:orderId
 // ──────────────────────────────────────────────────────────
 router.delete(
