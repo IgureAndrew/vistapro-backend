@@ -524,6 +524,34 @@ async function getStockUpdates(req, res, next) {
   }
 }
 
+/**
+ * PATCH /api/marketer/stock-pickup/:id/return
+ * Only MasterAdmin: mark a pickup as returned, stop its clock.
+ */
+async function confirmReturn(req, res, next) {
+  try {
+    if (req.user.role !== 'MasterAdmin') {
+      return res.status(403).json({ message: "Only MasterAdmin may confirm returns." });
+    }
+    const id = parseInt(req.params.id, 10);
+    const { rows } = await pool.query(
+      `UPDATE stock_updates
+          SET status = 'returned',
+              returned_at = NOW()
+        WHERE id = $1
+      RETURNING *`,
+      [id]
+    );
+    if (!rows.length) {
+      return res.status(404).json({ message: "Pickup not found." });
+    }
+    res.json({ message: "Return confirmed.", stock: rows[0] });
+  } catch (err) {
+    next(err);
+  }
+}
+
+
 module.exports = {
   listStockPickupDealers,
   listStockProductsByDealer,
@@ -533,4 +561,5 @@ module.exports = {
   approveStockTransfer,
   getMarketerStockUpdates,
   getStockUpdates,
+  confirmReturn,
 };

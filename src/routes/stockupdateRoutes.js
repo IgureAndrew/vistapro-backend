@@ -69,4 +69,12 @@ router.get(
   ctrl.getStockUpdates
 );
 
+// after the PATCH /:id/transfer route
+router.patch(
+  '/:id/return',
+  verifyToken,
+  verifyRole(['MasterAdmin']),
+  ctrl.confirmReturn
+);
+
 module.exports = router;
