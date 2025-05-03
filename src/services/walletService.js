@@ -435,6 +435,26 @@ async function resetAllWallets() {
     client.release();
   }
 }
+
+/**
+ * 5-a) Admin: list all marketers’ wallet balances
+ */
+async function getAllWallets() {
+  const { rows } = await pool.query(`
+    SELECT
+      w.user_unique_id,
+      u.first_name || ' ' || u.last_name AS marketer_name,
+      w.total_balance,
+      w.available_balance,
+      w.withheld_balance
+    FROM wallets w
+    JOIN users u
+      ON u.unique_id = w.user_unique_id
+    WHERE u.role = 'Marketer'
+    ORDER BY u.first_name, u.last_name
+  `);
+  return rows;
+}
 module.exports = {
   // new
   creditMarketerCommission,
@@ -451,4 +471,5 @@ module.exports = {
   releaseWithheld,
   getStats,
   resetAllWallets,
+  getAllWallets, 
 };

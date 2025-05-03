@@ -117,6 +117,16 @@ async function resetWallets(req, res, next) {
     next(err);
   }
 }
+
+async function getAllWallets(req, res, next) {
+  try {
+    const wallets = await svc.getAllWallets();
+    res.json({ wallets });
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   // marketer
   getMyWallet,
@@ -129,4 +139,5 @@ module.exports = {
   reviewRequest,
   releaseWithheld,
   resetWallets,
+  getMyWallet,
 };
