@@ -408,7 +408,33 @@ async function getStats(userId, from, to) {
     commission: Number(rows[0].total_commission)
   };
 }
-
+/**
+ * RESET EVERYTHING
+ * — Deletes every wallet transaction
+ * — Resets all wallet balances to zero
+ */
+async function resetAllWallets() {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    // 1) delete every transaction
+    await client.query(`DELETE FROM wallet_transactions`);
+    // 2) zero out every wallet
+    await client.query(`
+      UPDATE wallets
+         SET total_balance     = 0
+           , available_balance = 0
+           , withheld_balance  = 0
+           , updated_at        = NOW()
+    `);
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
 module.exports = {
   // new
   creditMarketerCommission,
@@ -424,4 +450,5 @@ module.exports = {
   reviewRequest,
   releaseWithheld,
   getStats,
+  resetAllWallets,
 };

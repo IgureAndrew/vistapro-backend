@@ -102,6 +102,21 @@ async function getWalletStats(req, res, next) {
   }
 }
 
+/**
+ * POST /api/wallets/master-admin/reset
+ * Only MasterAdmin can call this
+ */
+async function resetWallets(req, res, next) {
+  if (req.user.role !== "MasterAdmin") {
+    return res.status(403).json({ message: "Permission denied." });
+  }
+  try {
+    await walletService.resetAllWallets();
+    res.json({ message: "All wallets and transactions have been reset to zero." });
+  } catch (err) {
+    next(err);
+  }
+}
 module.exports = {
   // marketer
   getMyWallet,
@@ -113,4 +128,5 @@ module.exports = {
   listPendingRequests,
   reviewRequest,
   releaseWithheld,
+  resetWallets,
 };

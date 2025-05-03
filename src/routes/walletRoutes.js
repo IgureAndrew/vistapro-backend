@@ -22,13 +22,6 @@ router.get(
 );
 
 router.get(
-  '/stats',
-  verifyToken,
-  verifyRole(['Marketer']),
-  wc.getWalletStats
-);
-
-router.get(
   '/withdrawals',
   verifyToken,
   verifyRole(['Marketer']),
@@ -67,14 +60,20 @@ router.patch(
   wc.reviewRequest
 );
 
-// release all withheld balances to available
+// release all withheld balances to available for a single user
 router.post(
-  '/master/:userId/release-withheld',
+  '/master-admin/:userId/release-withheld',
   verifyToken,
   verifyRole(['MasterAdmin']),
   wc.releaseWithheld
 );
 
-
+// **NEW**: zero‐out every wallet & delete all transactions
+router.post(
+  '/master-admin/reset',
+  verifyToken,
+  verifyRole(['MasterAdmin']),
+  wc.resetWallets
+);
 
 module.exports = router;
