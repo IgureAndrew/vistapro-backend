@@ -9,17 +9,17 @@ async function getPendingOrders(req, res, next) {
   try {
     const { rows } = await pool.query(`
       SELECT
-        o.id,
-        o.number_of_devices,
-        o.sold_amount,
-        o.order_date            AS sale_date,       -- <— fix
-        o.status,
-        p.device_name,
-        p.device_model,
-        p.device_type,                             -- <— new
-        o.bnpl_platform,
-        u.first_name     AS marketer_name,
-        u.unique_id      AS marketer_unique_id
+  o.id,
+  o.number_of_devices,
+  o.sold_amount,
+  o.sale_date      AS sale_date,
+  o.status,
+  p.device_name,
+  p.device_model,
+  p.device_type,              -- ← add this
+  o.bnpl_platform,
+  u.first_name     AS marketer_name,
+  u.unique_id      AS marketer_unique_id
       FROM orders o
       LEFT JOIN products p   ON o.product_id       = p.id
       JOIN users u           ON o.marketer_id      = u.id
