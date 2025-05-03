@@ -268,21 +268,24 @@ async function listProducts(req, res, next) {
 }
 
 
-// GET /api/products
 async function getAllProducts(req, res, next) {
   try {
     const { rows } = await pool.query(`
       SELECT 
         p.id,
+        u.business_name   AS dealer_business_name,
+        u.location        AS dealer_location,
+        p.device_type,
         p.device_name,
         p.device_model,
-        p.device_type,
+        p.cost_price,
         p.selling_price,
-        u.business_name   AS dealer_business_name,
-        u.location        AS dealer_location
+        (p.selling_price - p.cost_price) AS profit,       -- ← here
+        COALESCE(i.qty_available, 0) AS qty_available,
+        …
       FROM products p
-      JOIN users u
-        ON p.dealer_id = u.id
+      JOIN users u ON p.dealer_id = u.id
+      LEFT JOIN ( … ) i ON p.id = i.product_id
       ORDER BY p.device_name, p.device_model
     `);
     res.json({ products: rows });

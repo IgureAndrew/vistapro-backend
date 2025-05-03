@@ -3,6 +3,12 @@
 const bcrypt = require('bcrypt');
 const { pool } = require('../config/database');
 const { createUser } = require('../models/userModel'); // if needed elsewhere
+const {
+  creditMarketerCommission,
+  creditAdminCommission,
+  creditSuperAdminCommission
+} = require('../services/walletService');
+
 
 // Commission rates per device
 const COMMISSION_RATES = {
@@ -194,6 +200,7 @@ async function getPlaceOrderData(req, res, next) {
  */
 async function createOrder(req, res, next) {
   const marketerId = req.user.id;
+  const marketerUid = req.user.unique_id;
   const {
     stock_update_id,
     product_id,
@@ -206,7 +213,9 @@ async function createOrder(req, res, next) {
   } = req.body;
 
   try {
-    // 1) Look up device_type so we know the per-device commission
+    // 1) Look up device_type + cost_price & selling_price so we can compute:
+    //    • Profit per device
+    //    • Which commission rate to use for marketer split
     const table = stock_update_id
       ? 'stock_updates su JOIN products p ON su.product_id = p.id'
       : 'products p';
@@ -214,20 +223,22 @@ async function createOrder(req, res, next) {
       ? 'su.id = $1'
       : 'p.id = $1';
 
-    const { rows: info } = await pool.query(
-      `SELECT p.device_type
-         FROM ${table}
-        WHERE ${where}`,
-      [ stock_update_id || product_id ]
-    );
+    const { rows: info } = await pool.query(`
+      SELECT p.device_type,
+             p.cost_price,
+             p.selling_price
+        FROM ${table}
+       WHERE ${where}
+    `, [ stock_update_id || product_id ]);
+
     if (!info.length) {
       return res.status(400).json({ message: "Product/stock not found." });
     }
 
-    const devTypeKey = info[0].device_type.toLowerCase();
-    const earnings_per_device = COMMISSION_RATES[devTypeKey] || 0;
+    const { device_type, cost_price, selling_price } = info[0];
+    const profitPerDevice = Number(selling_price) - Number(cost_price);
 
-    // 2) Insert the order, including earnings_per_device
+    // 2) Insert the order, including earnings_per_device = profit
     const { rows } = await pool.query(`
       INSERT INTO orders (
         marketer_id,
@@ -256,8 +267,9 @@ async function createOrder(req, res, next) {
       customer_phone,
       customer_address,
       bnpl_platform     || null,
-      earnings_per_device
+      profitPerDevice
     ]);
+
     const order = rows[0];
 
     // 3) If this was a stock pickup, mark that fulfilled
@@ -268,6 +280,16 @@ async function createOrder(req, res, next) {
       );
     }
 
+    // 4) Credit commissions
+    //    • Marketer: split 40/60 on profit
+    await creditMarketerCommission(marketerUid, order.id, device_type, number_of_devices);
+
+    //    • Admin: flat ₦1,500 per device
+    await creditAdminCommission(marketerUid, order.id, number_of_devices);
+
+    //    • SuperAdmin: flat ₦1,000 per device
+    await creditSuperAdminCommission(marketerUid, order.id, number_of_devices);
+
     res.status(201).json({
       message: "Order placed successfully.",
       order
@@ -276,6 +298,7 @@ async function createOrder(req, res, next) {
     next(err);
   }
 }
+
 
 
 /**

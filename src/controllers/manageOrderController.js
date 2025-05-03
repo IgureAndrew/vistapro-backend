@@ -10,18 +10,19 @@ async function getPendingOrders(req, res, next) {
     const { rows } = await pool.query(`
       SELECT
         o.id,
-        o.number_of_devices,
-        o.sold_amount,
-        o.sale_date,
+        o.number_of_devices    AS qty,
+        o.sold_amount          AS amount,
+        o.sale_date            AS date,
         o.status,
         p.device_name,
         p.device_model,
+        p.device_type,
         o.bnpl_platform,
-        u.first_name     AS marketer_name,
-        u.unique_id      AS marketer_unique_id
+        u.first_name           AS marketer_name,
+        u.unique_id            AS marketer_unique_id
       FROM orders o
-      LEFT JOIN products p   ON o.product_id       = p.id
-      JOIN users u           ON o.marketer_id      = u.id
+      LEFT JOIN products p ON o.product_id = p.id
+      JOIN users u       ON o.marketer_id = u.id
       WHERE o.status = 'pending'
         AND u.role   = 'Marketer'
       ORDER BY o.sale_date DESC
@@ -36,7 +37,6 @@ async function getPendingOrders(req, res, next) {
  * confirmOrder - MasterAdmin only
  * PATCH /api/manage-orders/orders/:orderId/confirm
  */
-// fixed rates per device-type
 const COMMISSION_RATES = {
   android: 10000,
   iphone:  15000,
@@ -50,7 +50,7 @@ async function confirmOrder(req, res, next) {
   try {
     await client.query("BEGIN");
 
-    // 1) Lock the order row and fetch commission_paid, qty & device_type
+    // 1) Lock & fetch
     const { rows } = await client.query(
       `
       SELECT
@@ -60,8 +60,7 @@ async function confirmOrder(req, res, next) {
         o.commission_paid,
         p.device_type
       FROM orders o
-      JOIN products p
-        ON o.product_id = p.id
+      JOIN products p ON o.product_id = p.id
       WHERE o.id = $1
       FOR UPDATE
       `,
@@ -73,21 +72,18 @@ async function confirmOrder(req, res, next) {
     }
     const order = rows[0];
 
-    // 2) Prevent double‐paying
     if (order.commission_paid) {
       await client.query("ROLLBACK");
-      return res.status(400).json({ message: "Commission already paid for this order." });
+      return res.status(400).json({ message: "Commission already paid." });
     }
 
-    // 3) Compute commission from fixed rates (case‐insensitive)
-    const dt   = (order.device_type || "").trim().toLowerCase();
+    // 2) Compute commission
+    const dt   = (order.device_type || "").toLowerCase();
     const rate = COMMISSION_RATES[dt];
-    if (!rate) {
-      throw new Error(`Unsupported device type: ${order.device_type}`);
-    }
+    if (!rate) throw new Error(`Unsupported device type: ${order.device_type}`);
     const commission = rate * order.number_of_devices;
 
-    // 4) Mark order confirmed & flag commission as paid
+    // 3) Confirm order
     const confirmRes = await client.query(
       `
       UPDATE orders
@@ -103,17 +99,14 @@ async function confirmOrder(req, res, next) {
     );
     const updatedOrder = confirmRes.rows[0];
 
-    // 5) Fetch marketer’s unique_id
+    // 4) Credit commission
     const userRes = await client.query(
       `SELECT unique_id FROM users WHERE id = $1`,
       [order.marketer_id]
     );
-    if (!userRes.rows.length) {
-      throw new Error("Marketer not found.");
-    }
+    if (!userRes.rows.length) throw new Error("Marketer not found.");
     const marketerUniqueId = userRes.rows[0].unique_id;
 
-    // 6) Credit the commission (40% available, 60% withheld)
     const { available, withheld } = await walletService.creditCommissionFromAmount(
       marketerUniqueId,
       orderId,
@@ -127,7 +120,6 @@ async function confirmOrder(req, res, next) {
       order: updatedOrder,
       commissionBreakdown: { commission, available, withheld }
     });
-
   } catch (err) {
     await client.query("ROLLBACK");
     next(err);
@@ -164,71 +156,74 @@ async function confirmOrderToDealer(req, res, next) {
  */
 async function getOrderHistory(req, res, next) {
   try {
-    const { unique_id: userUniqueId, role } = req.user;
+    const { unique_id: uid, role } = req.user;
     let query, values = [];
 
     if (role === "MasterAdmin") {
       query = `
         SELECT
           o.id,
-          o.number_of_devices,
-          o.sold_amount,
-          o.sale_date,
+          o.number_of_devices AS qty,
+          o.sold_amount       AS amount,
+          o.sale_date         AS date,
           o.status,
           p.device_name,
           p.device_model,
+          p.device_type,
           o.bnpl_platform,
-          u.first_name     AS marketer_name,
-          u.unique_id      AS marketer_unique_id
+          u.first_name        AS marketer_name,
+          u.unique_id         AS marketer_unique_id
         FROM orders o
-        LEFT JOIN products p ON o.product_id    = p.id
-        JOIN users u         ON o.marketer_id   = u.id
+        LEFT JOIN products p ON o.product_id  = p.id
+        JOIN users u         ON o.marketer_id = u.id
         WHERE u.role = 'Marketer'
       `;
     } else if (role === "SuperAdmin") {
       query = `
         SELECT
           o.id,
-          o.number_of_devices,
-          o.sold_amount,
-          o.sale_date,
+          o.number_of_devices AS qty,
+          o.sold_amount       AS amount,
+          o.sale_date         AS date,
           o.status,
           p.device_name,
           p.device_model,
+          p.device_type,
           o.bnpl_platform,
-          u.first_name     AS marketer_name,
-          u.unique_id      AS marketer_unique_id,
-          a.unique_id      AS admin_unique_id
+          u.first_name        AS marketer_name,
+          u.unique_id         AS marketer_unique_id,
+          a.unique_id         AS admin_unique_id
         FROM orders o
-        LEFT JOIN products p ON o.product_id    = p.id
-        JOIN users u         ON o.marketer_id   = u.id
-        JOIN users a         ON u.admin_id      = a.id
+        LEFT JOIN products p ON o.product_id = p.id
+        JOIN users u         ON o.marketer_id  = u.id
+        JOIN users a         ON u.admin_id     = a.id
         WHERE a.super_admin_id = (
           SELECT id FROM users WHERE unique_id = $1
         )
       `;
-      values = [userUniqueId];
+      values = [uid];
     } else if (role === "Admin") {
       query = `
         SELECT
           o.id,
-          o.number_of_devices,
-          o.sold_amount,
-          o.sale_date,
+          o.number_of_devices AS qty,
+          o.sold_amount       AS amount,
+          o.sale_date         AS date,
           o.status,
           p.device_name,
           p.device_model,
+          p.device_type,
           o.bnpl_platform,
-          u.first_name     AS marketer_name,
-          u.unique_id      AS marketer_unique_id
+          u.first_name        AS marketer_name,
+          u.unique_id         AS marketer_unique_id
         FROM orders o
-        LEFT JOIN products p ON o.product_id    = p.id
-        JOIN users u         ON o.marketer_id   = u.id
+        LEFT JOIN products p ON o.product_id = p.id
+        JOIN users u         ON o.marketer_id  = u.id
         WHERE u.admin_id = (
           SELECT id FROM users WHERE unique_id = $1
         )
       `;
-      values = [userUniqueId];
+      values = [uid];
     } else {
       return res.status(403).json({ message: "Permission denied." });
     }
@@ -254,14 +249,7 @@ async function updateOrder(req, res, next) {
       return res.status(400).json({ message: "orderId and updatedData are required." });
     }
 
-    // whitelist updatable fields
-    const allowed = [
-      "status",
-      "sold_amount",
-      "number_of_devices",
-      "bnpl_platform"
-    ];
-
+    const allowed = ["status","sold_amount","number_of_devices","bnpl_platform"];
     const setClauses = [];
     const values = [];
     let idx = 1;
