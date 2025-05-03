@@ -186,15 +186,17 @@ async function creditCommissionFromAmount(userId, orderId, commission) {
  * 2) Fetch marketer’s wallet summary + last 20 transactions
  */
 async function getMyWallet(userId) {
-  // ensure a row
-  await pool.query(`
-    INSERT INTO wallets(user_unique_id)
-      VALUES ($1)
-    ON CONFLICT (user_unique_id) DO NOTHING
-  `, [userId]);
+  // make sure the row exists
+  await pool.query(
+    `INSERT INTO wallets(user_unique_id)
+       VALUES ($1)
+     ON CONFLICT (user_unique_id) DO NOTHING`,
+    [userId]
+  );
 
-  // now pull in the three new columns
-  const { rows: [wallet] } = await pool.query(`
+  // now pull *all* the wallet columns, including bank details
+  const { rows: [wallet] } = await pool.query(
+    `
     SELECT
       total_balance,
       available_balance,
@@ -204,15 +206,20 @@ async function getMyWallet(userId) {
       bank_name
     FROM wallets
     WHERE user_unique_id = $1
-  `, [userId]);
+    `,
+    [userId]
+  );
 
-  const { rows: transactions } = await pool.query(`
+  const { rows: transactions } = await pool.query(
+    `
     SELECT id, transaction_type, amount, created_at
       FROM wallet_transactions
      WHERE user_unique_id = $1
      ORDER BY created_at DESC
      LIMIT 20
-  `, [userId]);
+    `,
+    [userId]
+  );
 
   return { wallet, transactions };
 }
@@ -222,77 +229,74 @@ async function getMyWallet(userId) {
  */
 async function requestWithdrawal(userId, amount, bankDetails) {
   const FEE = 100;
-
-  // 1) Check available balance
-  const { rows: [w] } = await pool.query(`
-    SELECT available_balance
-      FROM wallets
-     WHERE user_unique_id = $1
-  `, [userId]);
-
+  const { rows: [w] } = await pool.query(
+    `SELECT available_balance
+       FROM wallets
+      WHERE user_unique_id = $1`,
+    [userId]
+  );
   if (!w || w.available_balance < amount + FEE) {
     throw new Error("Insufficient available balance (including ₦100 fee)");
   }
 
   const net = amount + FEE;
 
-  // 2) Update wallet: deduct from available, add to withheld, AND persist bank details
-  await pool.query(`
+  // **NEW**: persist their latest bank details into the wallet row
+  await pool.query(
+    `
     UPDATE wallets
-       SET available_balance = available_balance - $1,
-           withheld_balance  = withheld_balance  + $1,
-           account_name      = $2,
-           account_number    = $3,
-           bank_name         = $4,
+       SET account_name    = $2,
+           account_number  = $3,
+           bank_name       = $4,
+           available_balance = available_balance - $5,
+           withheld_balance  = withheld_balance + $5,
            updated_at        = NOW()
-     WHERE user_unique_id = $5
-  `, [
-    net,
-    bankDetails.account_name,
-    bankDetails.account_number,
-    bankDetails.bank_name,
-    userId
-  ]);
+     WHERE user_unique_id = $1
+    `,
+    [
+      userId,
+      bankDetails.account_name,
+      bankDetails.account_number,
+      bankDetails.bank_name,
+      net
+    ]
+  );
 
-  // 3) Insert the withdrawal request
-  const { rows: [req] } = await pool.query(`
+  // log the withdrawal request
+  const { rows: [req] } = await pool.query(
+    `
     INSERT INTO withdrawal_requests
-      (user_unique_id,
-       amount_requested,
-       fee,
-       net_amount,
-       status,
-       account_name,
-       account_number,
-       bank_name,
-       requested_at)
+      (user_unique_id, amount_requested, fee, net_amount,
+       status, account_name, account_number, bank_name, requested_at)
     VALUES
       ($1, $2, $3, $4, 'pending', $5, $6, $7, NOW())
     RETURNING *
-  `, [
-    userId,
-    amount,
-    FEE,
-    net,
-    bankDetails.account_name,
-    bankDetails.account_number,
-    bankDetails.bank_name,
-  ]);
+    `,
+    [
+      userId,
+      amount,
+      FEE,
+      net,
+      bankDetails.account_name,
+      bankDetails.account_number,
+      bankDetails.bank_name,
+    ]
+  );
 
-  // 4) Log the withdrawal‐request transaction
-  await pool.query(`
+  // log the wallet transaction
+  await pool.query(
+    `
     INSERT INTO wallet_transactions
       (user_unique_id, amount, transaction_type, meta)
     VALUES
       ($1, -$2, 'withdraw_request', $3::jsonb)
-  `, [
-    userId,
-    net,
-    JSON.stringify({ reqId: req.id })
-  ]);
+    `,
+    [userId, net, JSON.stringify({ reqId: req.id })]
+  );
 
   return req;
 }
+
 /**
  * 4) Marketer: list their own withdrawal requests
  */

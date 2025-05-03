@@ -1,12 +1,15 @@
 // src/controllers/walletController.js
 const svc = require("../services/walletService");
 
-/** MARKETER endpoints **/
+/** ─── MARKETER ENDPOINTS ─────────────────────────────────────── **/
 
 // GET  /api/wallets
+// Returns { wallet: { total_balance, available_balance, withheld_balance, account_name, account_number, bank_name }, transactions: [...] }
 async function getMyWallet(req, res, next) {
   try {
+    // svc.getMyWallet now SELECTs account_name, account_number, bank_name
     const { wallet, transactions } = await svc.getMyWallet(req.user.unique_id);
+
     res.json({
       wallet: {
         total_balance:     wallet.total_balance,
@@ -26,36 +29,42 @@ async function getMyWallet(req, res, next) {
 // GET  /api/wallets/withdrawals
 async function getMyWithdrawals(req, res, next) {
   try {
-    const requests = await svc.getMyWithdrawals(req.user.unique_id);
-    res.json({ requests });
+    const rows = await svc.getMyWithdrawals(req.user.unique_id);
+    res.json({ requests: rows });
   } catch (err) {
     next(err);
   }
 }
 
 // POST /api/wallets/withdraw
+// Expects { amount, account_name, account_number, bank_name }
 async function requestWithdrawal(req, res, next) {
   try {
     const { amount, account_name, account_number, bank_name } = req.body;
+
+    // basic validation
     if (!amount || !account_name || !account_number || !bank_name) {
-      return res.status(400).json({
-        message:
-          "Please provide amount, account_name, account_number and bank_name.",
-      });
+      return res
+        .status(400)
+        .json({
+          message:
+            "Please provide amount, account_name, account_number and bank_name.",
+        });
     }
+
     const bankDetails = { account_name, account_number, bank_name };
-    const request = await svc.requestWithdrawal(
+    const reqRow = await svc.requestWithdrawal(
       req.user.unique_id,
       amount,
       bankDetails
     );
-    res.status(201).json({ request });
+    res.status(201).json({ request: reqRow });
   } catch (err) {
     next(err);
   }
 }
 
-// GET  /api/wallets/stats
+// GET  /api/wallets/stats?from=YYYY-MM-DD&to=YYYY-MM-DD
 async function getWalletStats(req, res, next) {
   try {
     const { from, to } = req.query;
@@ -66,8 +75,7 @@ async function getWalletStats(req, res, next) {
   }
 }
 
-
-/** ADMIN / MASTER-ADMIN endpoints **/
+/** ─── ADMIN / MASTER-ADMIN ENDPOINTS ───────────────────────── **/
 
 // GET  /api/wallets/master-admin/wallets
 async function getAllWallets(req, res, next) {
@@ -89,11 +97,11 @@ async function listPendingRequests(req, res, next) {
   }
 }
 
-// PATCH /api/wallets/master-admin/requests/:reqId
+// PATCH /api/wallets/master-admin/requests/:reqId { action: 'approve' | 'reject' }
 async function reviewRequest(req, res, next) {
   try {
     const reqId  = Number(req.params.reqId);
-    const action = req.body.action;       // 'approve' or 'reject'
+    const action = req.body.action;
     await svc.reviewRequest(reqId, action, req.user.unique_id);
     res.json({ message: `Withdrawal ${action}d.` });
   } catch (err) {
@@ -104,38 +112,35 @@ async function reviewRequest(req, res, next) {
 // POST  /api/wallets/master-admin/release-withheld
 async function releaseWithheld(req, res, next) {
   try {
-    if (req.user.role !== "MasterAdmin") {
-      return res.sendStatus(403);
-    }
-    // call with no args, since service zeroes *all* wallets
+    if (req.user.role !== "MasterAdmin") return res.sendStatus(403);
     await svc.releaseWithheld();
-    res.json({ message: "All withheld balances have been released." });
+    res.json({ message: "All withheld balances released." });
   } catch (err) {
     next(err);
   }
 }
 
-// POST /api/wallets/master-admin/reset
+// POST  /api/wallets/master-admin/reset
 async function resetWallets(req, res, next) {
+  if (req.user.role !== "MasterAdmin") {
+    return res.status(403).json({ message: "Permission denied." });
+  }
   try {
-    if (req.user.role !== "MasterAdmin") {
-      return res.status(403).json({ message: "Permission denied." });
-    }
     await svc.resetWallets();
-    res.json({ message: "All wallets and transactions have been reset to zero." });
+    res.json({ message: "All wallets and transactions have been reset." });
   } catch (err) {
     next(err);
   }
 }
 
 module.exports = {
-  // Marketer
+  // marketer
   getMyWallet,
   getMyWithdrawals,
   requestWithdrawal,
   getWalletStats,
 
-  // Admin & MasterAdmin
+  // admin & master-admin
   getAllWallets,
   listPendingRequests,
   reviewRequest,
