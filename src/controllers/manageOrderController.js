@@ -9,30 +9,29 @@ async function getPendingOrders(req, res, next) {
   try {
     const { rows } = await pool.query(`
       SELECT
-  o.id,
-  o.number_of_devices,
-  o.sold_amount,
-  o.sale_date      AS sale_date,
-  o.status,
-  p.device_name,
-  p.device_model,
-  p.device_type,              -- ← add this
-  o.bnpl_platform,
-  u.first_name     AS marketer_name,
-  u.unique_id      AS marketer_unique_id
+        o.id,
+        o.number_of_devices,
+        o.sold_amount,
+        o.sale_date        AS sale_date,      -- use sale_date
+        o.status,
+        p.device_name,
+        p.device_model,
+        p.device_type,
+        o.bnpl_platform,
+        u.first_name      AS marketer_name,
+        u.unique_id       AS marketer_unique_id
       FROM orders o
-      LEFT JOIN products p   ON o.product_id       = p.id
-      JOIN users u           ON o.marketer_id      = u.id
+      LEFT JOIN products p ON o.product_id = p.id
+      JOIN users u         ON o.marketer_id = u.id
       WHERE o.status = 'pending'
         AND u.role   = 'Marketer'
-      ORDER BY o.order_date DESC                   -- or sale_date
+      ORDER BY o.sale_date DESC              -- sort by sale_date
     `);
     res.json({ orders: rows });
   } catch (err) {
     next(err);
   }
 }
-
 
 /**
  * confirmOrder - MasterAdmin only
