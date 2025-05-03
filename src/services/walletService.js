@@ -214,6 +214,8 @@ async function getMyWallet(userId) {
  */
 async function requestWithdrawal(userId, amount, bankDetails) {
   const FEE = 100;
+
+  // 1) Check available balance
   const { rows: [w] } = await pool.query(`
     SELECT available_balance
       FROM wallets
@@ -225,19 +227,39 @@ async function requestWithdrawal(userId, amount, bankDetails) {
   }
 
   const net = amount + FEE;
+
+  // 2) Update wallet: deduct from available, add to withheld, AND persist bank details
   await pool.query(`
     UPDATE wallets
        SET available_balance = available_balance - $1,
            withheld_balance  = withheld_balance  + $1,
+           account_name      = $2,
+           account_number    = $3,
+           bank_name         = $4,
            updated_at        = NOW()
-     WHERE user_unique_id = $2
-  `, [net, userId]);
+     WHERE user_unique_id = $5
+  `, [
+    net,
+    bankDetails.account_name,
+    bankDetails.account_number,
+    bankDetails.bank_name,
+    userId
+  ]);
 
+  // 3) Insert the withdrawal request
   const { rows: [req] } = await pool.query(`
     INSERT INTO withdrawal_requests
-      (user_unique_id, amount_requested, fee, net_amount,
-       status, account_name, account_number, bank_name, requested_at)
-    VALUES ($1, $2, $3, $4, 'pending', $5, $6, $7, NOW())
+      (user_unique_id,
+       amount_requested,
+       fee,
+       net_amount,
+       status,
+       account_name,
+       account_number,
+       bank_name,
+       requested_at)
+    VALUES
+      ($1, $2, $3, $4, 'pending', $5, $6, $7, NOW())
     RETURNING *
   `, [
     userId,
@@ -249,15 +271,20 @@ async function requestWithdrawal(userId, amount, bankDetails) {
     bankDetails.bank_name,
   ]);
 
+  // 4) Log the withdrawal‐request transaction
   await pool.query(`
     INSERT INTO wallet_transactions
       (user_unique_id, amount, transaction_type, meta)
-    VALUES ($1, -$2, 'withdraw_request', $3::jsonb)
-  `, [userId, net, JSON.stringify({ reqId: req.id })]);
+    VALUES
+      ($1, -$2, 'withdraw_request', $3::jsonb)
+  `, [
+    userId,
+    net,
+    JSON.stringify({ reqId: req.id })
+  ]);
 
   return req;
 }
-
 /**
  * 4) Marketer: list their own withdrawal requests
  */

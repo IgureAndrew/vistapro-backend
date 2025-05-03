@@ -6,49 +6,52 @@ const svc = require("../services/walletService");
 // GET  /api/wallets
 async function getMyWallet(req, res, next) {
   try {
-    const data = await svc.getMyWallet(req.user.unique_id);
-    res.json(data);
-  } catch (e) {
-    next(e);
+    const { wallet, transactions } = await svc.getMyWallet(req.user.unique_id);
+    res.json({
+      wallet: {
+        total_balance:     wallet.total_balance,
+        available_balance: wallet.available_balance,
+        withheld_balance:  wallet.withheld_balance,
+        account_name:      wallet.account_name   || null,
+        account_number:    wallet.account_number || null,
+        bank_name:         wallet.bank_name      || null,
+      },
+      transactions
+    });
+  } catch (err) {
+    next(err);
   }
 }
 
 // GET  /api/wallets/withdrawals
 async function getMyWithdrawals(req, res, next) {
   try {
-    const rows = await svc.getMyWithdrawals(req.user.unique_id);
-    res.json({ requests: rows });
-  } catch (e) {
-    next(e);
+    const requests = await svc.getMyWithdrawals(req.user.unique_id);
+    res.json({ requests });
+  } catch (err) {
+    next(err);
   }
 }
 
+// POST /api/wallets/withdraw
 async function requestWithdrawal(req, res, next) {
   try {
     const { amount, account_name, account_number, bank_name } = req.body;
-
-    // 1) Validation:
     if (!amount || !account_name || !account_number || !bank_name) {
-      return res
-        .status(400)
-        .json({
-          message:
-            "Please provide amount, account_name, account_number and bank_name.",
-        });
+      return res.status(400).json({
+        message:
+          "Please provide amount, account_name, account_number and bank_name.",
+      });
     }
-
-    // 2) Build bankDetails object
     const bankDetails = { account_name, account_number, bank_name };
-
-    // 3) Service call stays the same
-    const reqRow = await svc.requestWithdrawal(
+    const request = await svc.requestWithdrawal(
       req.user.unique_id,
       amount,
       bankDetails
     );
-    res.status(201).json({ request: reqRow });
-  } catch (e) {
-    next(e);
+    res.status(201).json({ request });
+  } catch (err) {
+    next(err);
   }
 }
 
@@ -101,33 +104,23 @@ async function reviewRequest(req, res, next) {
 // POST  /api/wallets/master-admin/release-withheld
 async function releaseWithheld(req, res, next) {
   try {
-    if (req.user.role !== "MasterAdmin") return res.sendStatus(403);
-    const { released } = await svc.releaseWithheld(req.params.userId);
-    res.json({ message: `Released ₦${released.toLocaleString()}`, released });
+    if (req.user.role !== "MasterAdmin") {
+      return res.sendStatus(403);
+    }
+    // call with no args, since service zeroes *all* wallets
+    await svc.releaseWithheld();
+    res.json({ message: "All withheld balances have been released." });
   } catch (err) {
     next(err);
   }
 }
 
-async function getWalletStats(req, res, next) {
-  try {
-    const { from, to } = req.query;
-    const stats = await svc.getStats(req.user.unique_id, from, to);
-    res.json(stats);
-  } catch (err) {
-    next(err);
-  }
-}
-
-/**
- * POST /api/wallets/master-admin/reset
- * Only MasterAdmin can call this
- */
+// POST /api/wallets/master-admin/reset
 async function resetWallets(req, res, next) {
-  if (req.user.role !== "MasterAdmin") {
-    return res.status(403).json({ message: "Permission denied." });
-  }
   try {
+    if (req.user.role !== "MasterAdmin") {
+      return res.status(403).json({ message: "Permission denied." });
+    }
     await svc.resetWallets();
     res.json({ message: "All wallets and transactions have been reset to zero." });
   } catch (err) {
@@ -135,26 +128,17 @@ async function resetWallets(req, res, next) {
   }
 }
 
-async function getAllWallets(req, res, next) {
-  try {
-    const wallets = await svc.getAllWallets();
-    res.json({ wallets });
-  } catch (err) {
-    next(err);
-  }
-}
-
 module.exports = {
-  // marketer
+  // Marketer
   getMyWallet,
   getMyWithdrawals,
   requestWithdrawal,
   getWalletStats,
-  // admin & master-admin
+
+  // Admin & MasterAdmin
   getAllWallets,
   listPendingRequests,
   reviewRequest,
   releaseWithheld,
   resetWallets,
-  getMyWallet,
 };
