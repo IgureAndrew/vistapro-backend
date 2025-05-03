@@ -186,16 +186,24 @@ async function creditCommissionFromAmount(userId, orderId, commission) {
  * 2) Fetch marketer’s wallet summary + last 20 transactions
  */
 async function getMyWallet(userId) {
+  // ensure a row
   await pool.query(`
     INSERT INTO wallets(user_unique_id)
       VALUES ($1)
     ON CONFLICT (user_unique_id) DO NOTHING
   `, [userId]);
 
+  // now pull in the three new columns
   const { rows: [wallet] } = await pool.query(`
-    SELECT total_balance, available_balance, withheld_balance
-      FROM wallets
-     WHERE user_unique_id = $1
+    SELECT
+      total_balance,
+      available_balance,
+      withheld_balance,
+      account_name,
+      account_number,
+      bank_name
+    FROM wallets
+    WHERE user_unique_id = $1
   `, [userId]);
 
   const { rows: transactions } = await pool.query(`
