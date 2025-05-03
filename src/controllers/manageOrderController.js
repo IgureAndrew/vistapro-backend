@@ -166,11 +166,11 @@ async function getOrderHistory(req, res, next) {
           o.id,
           o.number_of_devices,
           o.sold_amount,
-          o.order_date         AS sale_date,       -- <— fix
+          o.sale_date         AS sale_date,       -- use sale_date
           o.status,
           p.device_name,
           p.device_model,
-          p.device_type,                            -- <— new
+          p.device_type,
           o.bnpl_platform,
           u.first_name     AS marketer_name,
           u.unique_id      AS marketer_unique_id
@@ -185,11 +185,11 @@ async function getOrderHistory(req, res, next) {
           o.id,
           o.number_of_devices,
           o.sold_amount,
-          o.order_date         AS sale_date,       -- <— fix
+          o.sale_date         AS sale_date,       -- use sale_date
           o.status,
           p.device_name,
           p.device_model,
-          p.device_type,                            -- <— new
+          p.device_type,
           o.bnpl_platform,
           u.first_name     AS marketer_name,
           u.unique_id      AS marketer_unique_id,
@@ -209,11 +209,11 @@ async function getOrderHistory(req, res, next) {
           o.id,
           o.number_of_devices,
           o.sold_amount,
-          o.order_date         AS sale_date,       -- <— fix
+          o.sale_date         AS sale_date,       -- use sale_date
           o.status,
           p.device_name,
           p.device_model,
-          p.device_type,                            -- <— new
+          p.device_type,
           o.bnpl_platform,
           u.first_name     AS marketer_name,
           u.unique_id      AS marketer_unique_id
@@ -229,7 +229,8 @@ async function getOrderHistory(req, res, next) {
       return res.status(403).json({ message: "Permission denied." });
     }
 
-    query += " ORDER BY o.order_date DESC";         // or sale_date
+    // **Sort by sale_date**
+    query += " ORDER BY o.sale_date DESC";
     const { rows } = await pool.query(query, values);
     return res.json({ orders: rows });
   } catch (err) {
