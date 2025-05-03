@@ -61,20 +61,23 @@ async function confirmOrder(req, res, next) {
 
     // 1) Lock & fetch
     const { rows } = await client.query(
-      `
-      SELECT
-        o.id,
-        o.marketer_id,
-        o.number_of_devices,
-        o.commission_paid,
-        p.device_type
-      FROM orders o
-      JOIN products p ON o.product_id = p.id
-      WHERE o.id = $1
-      FOR UPDATE
-      `,
-      [orderId]
-    );
+            `
+            SELECT
+              o.id,
+              o.marketer_id,
+              o.number_of_devices,
+              o.commission_paid,
+              p.device_type
+          FROM orders o
+            LEFT JOIN stock_updates su
+              ON o.stock_update_id = su.id
+            LEFT JOIN products p
+              ON p.id = COALESCE(o.product_id, su.product_id)
+            WHERE o.id = $1
+            FOR UPDATE
+            `,
+            [orderId]
+          );
     if (!rows.length) {
       await client.query("ROLLBACK");
       return res.status(404).json({ message: "Order not found." });
