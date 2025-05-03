@@ -413,20 +413,20 @@ async function getStats(userId, from, to) {
  * — Deletes every wallet transaction
  * — Resets all wallet balances to zero
  */
-async function resetAllWallets() {
+async function resetWallets() {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    // 1) delete every transaction
-    await client.query(`DELETE FROM wallet_transactions`);
-    // 2) zero out every wallet
+    // zero out all balances
     await client.query(`
       UPDATE wallets
-         SET total_balance     = 0
-           , available_balance = 0
-           , withheld_balance  = 0
-           , updated_at        = NOW()
+         SET total_balance     = 0,
+             available_balance = 0,
+             withheld_balance  = 0,
+             updated_at        = NOW()
     `);
+    // delete all history
+    await client.query(`DELETE FROM wallet_transactions`);
     await client.query("COMMIT");
   } catch (err) {
     await client.query("ROLLBACK");
@@ -470,6 +470,6 @@ module.exports = {
   reviewRequest,
   releaseWithheld,
   getStats,
-  resetAllWallets,
+  resetWallets,
   getAllWallets, 
 };
