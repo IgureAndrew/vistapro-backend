@@ -59,62 +59,67 @@ async function confirmOrder(req, res, next) {
   try {
     await client.query("BEGIN");
 
-    // 1) Lock & fetch
-    const { rows } = await client.query(
-            `
-            SELECT
-              o.id,
-              o.marketer_id,
-              o.number_of_devices,
-              o.commission_paid,
-              p.device_type
-          FROM orders o
-            LEFT JOIN stock_updates su
-              ON o.stock_update_id = su.id
-            LEFT JOIN products p
-              ON p.id = COALESCE(o.product_id, su.product_id)
-            WHERE o.id = $1
-            FOR UPDATE
-            `,
-            [orderId]
-          );
-    if (!rows.length) {
+    // 1) Lock just the orders row
+    const lockRes = await client.query(
+      `SELECT id, marketer_id, number_of_devices, commission_paid
+         FROM orders
+        WHERE id = $1
+        FOR UPDATE`,
+      [orderId]
+    );
+    if (!lockRes.rows.length) {
       await client.query("ROLLBACK");
       return res.status(404).json({ message: "Order not found." });
     }
-    const order = rows[0];
-
-    if (order.commission_paid) {
+    const orderMeta = lockRes.rows[0];
+    if (orderMeta.commission_paid) {
       await client.query("ROLLBACK");
       return res.status(400).json({ message: "Commission already paid." });
     }
 
-    // 2) Compute commission
-    const dt   = (order.device_type || "").toLowerCase();
-    const rate = COMMISSION_RATES[dt];
-    if (!rate) throw new Error(`Unsupported device type: ${order.device_type}`);
-    const commission = rate * order.number_of_devices;
-
-    // 3) Confirm order
-    const confirmRes = await client.query(
+    // 2) Pull device_type via COALESCE on either product_id or stock_update_id
+    const { rows } = await client.query(
       `
-      UPDATE orders
-         SET status          = 'confirmed',
-             confirmed_by    = $2,
-             confirmed_at    = NOW(),
-             commission_paid = TRUE,
-             updated_at      = NOW()
-       WHERE id = $1
-       RETURNING *
+      SELECT
+        p.device_type
+      FROM orders o
+      LEFT JOIN stock_updates su
+        ON o.stock_update_id = su.id
+      LEFT JOIN products p
+        ON p.id = COALESCE(o.product_id, su.product_id)
+      WHERE o.id = $1
       `,
+      [orderId]
+    );
+    if (!rows.length || !rows[0].device_type) {
+      throw new Error("Product or stock not found for that order");
+    }
+    const deviceType = rows[0].device_type.toLowerCase();
+
+    // 3) Compute the commission
+    const COMMISSION_RATES = { android: 10000, iphone: 15000 };
+    const rate = COMMISSION_RATES[deviceType];
+    if (!rate) throw new Error(`Unsupported device type: ${deviceType}`);
+    const commission = rate * orderMeta.number_of_devices;
+
+    // 4) Mark order confirmed & commission_paid
+    const upd = await client.query(
+      `UPDATE orders
+          SET status          = 'confirmed',
+              confirmed_by    = $2,
+              confirmed_at    = NOW(),
+              commission_paid = TRUE,
+              updated_at      = NOW()
+        WHERE id = $1
+        RETURNING *`,
       [orderId, adminUniqueId]
     );
-    const updatedOrder = confirmRes.rows[0];
+    const updatedOrder = upd.rows[0];
 
-    // 4) Credit commission
+    // 5) Credit into the marketer’s wallet
     const userRes = await client.query(
       `SELECT unique_id FROM users WHERE id = $1`,
-      [order.marketer_id]
+      [orderMeta.marketer_id]
     );
     if (!userRes.rows.length) throw new Error("Marketer not found.");
     const marketerUniqueId = userRes.rows[0].unique_id;
@@ -126,12 +131,12 @@ async function confirmOrder(req, res, next) {
     );
 
     await client.query("COMMIT");
-
-    res.json({
+    return res.json({
       message: "Order confirmed and commission credited.",
       order: updatedOrder,
       commissionBreakdown: { commission, available, withheld }
     });
+
   } catch (err) {
     await client.query("ROLLBACK");
     next(err);
