@@ -121,10 +121,10 @@ async function updateAccountSettings(req, res, next) {
  *   • else → mode:'free' + products[]
  */
 async function getPlaceOrderData(req, res, next) {
-  try {
-    const marketerId = req.user.id;
+  const marketerId = req.user.id;
 
-    // 0) look up marketer’s state
+  try {
+    // 0) fetch marketer's own location
     const { rows: me } = await pool.query(
       `SELECT location FROM users WHERE id = $1`,
       [marketerId]
@@ -134,7 +134,7 @@ async function getPlaceOrderData(req, res, next) {
     }
     const marketerLocation = me[0].location;
 
-    // 1) pending stock‐pickups (unchanged)
+    // 1) pending stock-pickups
     const { rows: pending } = await pool.query(`
       SELECT
         su.id                       AS stock_update_id,
@@ -169,7 +169,7 @@ async function getPlaceOrderData(req, res, next) {
       return res.json({ mode: 'stock', pending });
     }
 
-    // 2) free‐order products, but ONLY those whose dealer is in marketerLocation
+    // 2) free-order products, FILTERED by marketer's location
     const { rows: products } = await pool.query(`
       SELECT
         p.id                            AS product_id,
@@ -186,20 +186,21 @@ async function getPlaceOrderData(req, res, next) {
         ON p.dealer_id = u.id
       LEFT JOIN inventory_items i
         ON i.product_id = p.id
-      WHERE u.location = $2
+      WHERE u.location = $1
       GROUP BY
         p.id, p.device_name, p.device_model,
         p.device_type, p.selling_price,
         u.business_name, u.location
       HAVING COUNT(i.*) FILTER (WHERE i.status = 'available') > 0
       ORDER BY p.device_name
-    `, [marketerId, marketerLocation]);
+    `, [marketerLocation]);
 
     return res.json({ mode: 'free', products });
   } catch (err) {
     next(err);
   }
 }
+
 
 
 /**
