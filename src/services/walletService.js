@@ -56,22 +56,33 @@ async function creditSplit(userId, orderId, totalCommission, typeTag) {
            withheld_balance  = withheld_balance  + $3,
            updated_at        = NOW()
      WHERE user_unique_id = $4
-  `, [ totalCommission, available, withheld, userId ]);
+  `, [totalCommission, available, withheld, userId]);
 
   // 2) log three transactions
+  //
+  //    we need four columns: user_unique_id, amount,
+  //    transaction_type, meta
+  //
+  //    so the first row must supply a $3 for transaction_type
+  //    and a $4 for the JSONB meta.  Then we append
+  //    the two split rows.
   await pool.query(`
     INSERT INTO wallet_transactions
       (user_unique_id, amount, transaction_type, meta)
     VALUES
-      ($1, $2, ::jsonb),
-      ($1, $3, '${typeTag}_available',  '{}'::jsonb),
-      ($1, $4, '${typeTag}_withheld',   '{}'::jsonb)
+      -- full commission
+      ($1, $2,        $3,              $4::jsonb),
+      -- available split
+      ($1, $5,        $3 || '_available', '{}'::jsonb),
+      -- withheld split
+      ($1, $6,        $3 || '_withheld',  '{}'::jsonb)
   `, [
     userId,
     totalCommission,
+    typeTag,
+    JSON.stringify({ orderId }),
     available,
-    withheld,
-    JSON.stringify({ orderId })
+    withheld
   ]);
 }
 
