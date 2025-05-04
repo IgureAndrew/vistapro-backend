@@ -7,8 +7,9 @@ function initSocket(server) {
   io = new Server(server, {
     cors: {
       origin: [
-        'https://www.vistapro.ng',  // production UI
-        'http://localhost:5173'      // local dev
+        'https://vistapro.ng',      // your production frontend (no www)
+        'https://www.vistapro.ng',  // keep if you also host with www
+        'http://localhost:5173'     // local dev
       ],
       methods: ['GET', 'POST', 'OPTIONS'],
       credentials: true
