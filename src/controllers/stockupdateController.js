@@ -314,102 +314,75 @@ async function placeOrder(req, res, next) {
 // src/controllers/stockupdateController.js
 async function requestStockTransfer(req, res, next) {
   try {
-    const transferId       = parseInt(req.params.id, 10);
-    const { targetIdentifier } = req.body; // either unique_id or full name
-    const currentUID       = req.user.unique_id;
+    const stockUpdateId     = parseInt(req.params.id, 10);
+    const { targetIdentifier } = req.body;        // unique_id or "First Last"
+    const currentMarketerId = req.user.id;
 
-    // 1) Verify this pickup exists and is still transferrable
-    const meQ = await pool.query(
-      `SELECT marketer_id, transfer_status
-         FROM stock_updates
-        WHERE id = $1`,
-      [transferId]
-    );
-    if (!meQ.rowCount) {
-      return res.status(404).json({ message: "Pickup not found." });
+    // 1) Verify this pickup exists, belongs to current user, and is transferable
+    const { rows: suRows } = await pool.query(`
+      SELECT marketer_id, transfer_status
+        FROM stock_updates
+       WHERE id = $1
+    `, [stockUpdateId]);
+
+    if (!suRows.length) {
+      return res.status(404).json({ message: "Stock pickup not found." });
     }
-    if (meQ.rows[0].transfer_status !== "none") {
-      return res.status(400).json({ message: "Transfer already in progress." });
+    const su = suRows[0];
+    if (su.marketer_id !== currentMarketerId) {
+      return res.status(403).json({ message: "Not your stock pickup." });
+    }
+    if (su.transfer_status !== 'none') {
+      return res.status(400).json({ message: "This pickup is already in transfer or completed." });
     }
 
-    // 2) Resolve target marketer by unique_id OR full name
-    const tgtQ = await pool.query(
-      `SELECT id, unique_id, first_name, last_name, location
-         FROM users
-        WHERE role = 'Marketer'
-          AND (
-            unique_id = $1
-         OR (first_name || ' ' || last_name) ILIKE $1
-          )`,
-      [targetIdentifier]
-    );
-    if (!tgtQ.rowCount) {
+    // 2) Resolve the target marketer
+    const { rows: tgtRows } = await pool.query(`
+      SELECT id, unique_id, first_name, last_name, location
+        FROM users
+       WHERE role = 'Marketer'
+         AND (
+           unique_id = $1
+        OR (first_name || ' ' || last_name) ILIKE $1
+         )
+    `, [targetIdentifier]);
+    if (!tgtRows.length) {
       return res.status(404).json({ message: "Target marketer not found." });
     }
-    const target = tgtQ.rows[0];
+    const target = tgtRows[0];
 
-    // 3) Ensure same location
-    const meLocQ = await pool.query(
-      `SELECT location
-         FROM users
-        WHERE unique_id = $1`,
-      [currentUID]
-    );
-    const myLocation = meLocQ.rows[0]?.location;
-    if (target.location !== myLocation) {
-      return res.status(400).json({
-        message: "Transfers must stay within the same location.",
-      });
+    // 3) Ensure they’re in the same location
+    const { rows: meRows } = await pool.query(`
+      SELECT location
+        FROM users
+       WHERE id = $1
+    `, [currentMarketerId]);
+    const myLoc = meRows[0].location;
+    if (target.location !== myLoc) {
+      return res.status(400).json({ message: "Transfers must stay within the same location." });
     }
 
-    // 4) Perform the transfer request
-    await pool.query(
-      `UPDATE stock_updates
+    // 4) Mark this pickup as transfer_pending
+    await pool.query(`
+      UPDATE stock_updates
          SET transfer_to_marketer_id = $1,
-             transfer_status         = 'pending',
-             transfer_requested_at   = NOW()
-       WHERE id = $2`,
-      [target.id, transferId]
-    );
+             transfer_status         = 'transfer_pending',
+             transfer_requested_at   = NOW(),
+             updated_at              = NOW()
+       WHERE id = $2
+    `, [target.id, stockUpdateId]);
 
-    // 5) Fetch enriched transfer details for response
-    const detailQ = await pool.query(
-      `SELECT
-          p.device_name,
-          p.device_type,
-          -- source marketer
-          su.marketer_id as from_id,
-          m1.first_name || ' ' || m1.last_name AS from_name,
-          m1.location AS from_location,
-          -- target marketer
-          t2.unique_id    AS to_unique_id,
-          t2.first_name || ' ' || t2.last_name AS to_name,
-          t2.location     AS to_location
-        FROM stock_updates su
-        JOIN products p       ON p.id    = su.product_id
-        JOIN users m1         ON m1.id   = su.marketer_id
-        JOIN users t2         ON t2.id   = su.transfer_to_marketer_id
-       WHERE su.id = $1`,
-      [transferId]
-    );
-
-    const d = detailQ.rows[0];
-    return res.json({
-      message: "Transfer request submitted.",
+    // 5) Return a minimal transfer record
+    res.json({
+      message: "Transfer requested.",
       transfer: {
-        from: {
-          name:     d.from_name,
-          location: d.from_location,
-        },
+        stock_update_id: stockUpdateId,
         to: {
-          unique_id: d.to_unique_id,
-          name:      d.to_name,
-          location:  d.to_location,
+          unique_id: target.unique_id,
+          name:      `${target.first_name} ${target.last_name}`,
+          location:  target.location
         },
-        device: {
-          name: d.device_name,
-          type: d.device_type,
-        }
+        status: 'transfer_pending'
       }
     });
   } catch (err) {
@@ -551,6 +524,29 @@ async function confirmReturn(req, res, next) {
   }
 }
 
+async function reviewStockTransfer(req, res, next) {
+  const transferId = Number(req.params.id);
+  const { action } = req.body; // 'approve' or 'reject'
+  if (action === 'approve') {
+    await pool.query(`
+      UPDATE stock_updates
+         SET marketer_id            = transfer_to_marketer_id,
+             transfer_status        = 'pending',
+             transfer_approved_at   = NOW(),
+             transfer_to_marketer_id = NULL
+       WHERE id = $1
+    `, [transferId]);
+    res.json({ message: 'Transfer approved.' });
+  } else {
+    await pool.query(`
+      UPDATE stock_updates
+         SET transfer_status = 'none',
+             transfer_to_marketer_id = NULL
+       WHERE id = $1
+    `, [transferId]);
+    res.json({ message: 'Transfer rejected.' });
+  }
+}
 
 module.exports = {
   listStockPickupDealers,
@@ -562,4 +558,5 @@ module.exports = {
   getMarketerStockUpdates,
   getStockUpdates,
   confirmReturn,
+  reviewStockTransfer,
 };

@@ -1,11 +1,11 @@
 // src/routes/stockupdateRoutes.js
 const express = require('express');
-const router = express.Router();
-const { verifyToken } = require('../middlewares/authMiddleware');
-const { verifyRole }  = require('../middlewares/roleMiddleware');
-const ctrl = require('../controllers/stockupdateController');
+const router  = express.Router();
+const { verifyToken }   = require('../middlewares/authMiddleware');
+const { verifyRole }    = require('../middlewares/roleMiddleware');
+const ctrl              = require('../controllers/stockupdateController');
 
-// --- new: list dealers for stock pickup in marketer's state ---
+// 1) List dealers in marketer’s state for stock pickup
 router.get(
   '/pickup/dealers',
   verifyToken,
@@ -13,7 +13,7 @@ router.get(
   ctrl.listStockPickupDealers
 );
 
-// --- new: list available products for a given dealer (same state only) ---
+// 2) List available products for a dealer (same state only)
 router.get(
   '/pickup/dealers/:dealerUniqueId/products',
   verifyToken,
@@ -21,7 +21,7 @@ router.get(
   ctrl.listStockProductsByDealer
 );
 
-// 1. Marketer picks up stock
+// 3) Marketer picks up stock
 router.post(
   '/',
   verifyToken,
@@ -29,7 +29,7 @@ router.post(
   ctrl.createStockUpdate
 );
 
-// 2. Marketer places order (uses pending pickup or free-order)
+// 4) Marketer places order (uses pending pickup or free-order)
 router.post(
   '/order',
   verifyToken,
@@ -37,7 +37,7 @@ router.post(
   ctrl.placeOrder
 );
 
-// 3. Marketer requests to transfer a pending pickup
+// 5) Marketer requests to transfer a pending pickup
 router.post(
   '/:id/transfer',
   verifyToken,
@@ -45,15 +45,15 @@ router.post(
   ctrl.requestStockTransfer
 );
 
-// 4. MasterAdmin approves/rejects transfers
+// 6) MasterAdmin approves or rejects a transfer
 router.patch(
   '/:id/transfer',
   verifyToken,
   verifyRole(['MasterAdmin']),
-  ctrl.approveStockTransfer
+  ctrl.reviewStockTransfer
 );
 
-// 5. List my pickups
+// 7) List my pickups
 router.get(
   '/marketer',
   verifyToken,
@@ -61,7 +61,7 @@ router.get(
   ctrl.getMarketerStockUpdates
 );
 
-// 6. List all pickups (Master/Admin/SuperAdmin)
+// 8) List all pickups (Master/Admin/SuperAdmin)
 router.get(
   '/',
   verifyToken,
@@ -69,7 +69,7 @@ router.get(
   ctrl.getStockUpdates
 );
 
-// after the PATCH /:id/transfer route
+// 9) MasterAdmin confirms a return on a pickup
 router.patch(
   '/:id/return',
   verifyToken,

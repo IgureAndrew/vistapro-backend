@@ -156,7 +156,7 @@ async function getPlaceOrderData(req, res, next) {
         ON i.stock_update_id = su.id
        AND i.status            = 'reserved'
       WHERE su.marketer_id = $1
-        AND su.status       = 'pending'
+        AND su.transfer_status = 'pending'
         AND su.deadline > NOW()
       GROUP BY
         su.id, p.id, p.device_name, p.device_model,
@@ -204,15 +204,15 @@ async function getPlaceOrderData(req, res, next) {
 
 
 /**
- * createOrder
  * POST /api/marketer/orders
  * • accepts either stock_update_id or product_id
- * • calculates earnings_per_device
+ * • decrements reserved or available inventory_items
  * • inserts into orders
  * • marks stock_updates completed if used
+ * • credits marketer, admin, superadmin commissions
  */
 async function createOrder(req, res, next) {
-  const marketerId = req.user.id;
+  const marketerId  = req.user.id;
   const marketerUid = req.user.unique_id;
   const {
     stock_update_id,
@@ -226,9 +226,7 @@ async function createOrder(req, res, next) {
   } = req.body;
 
   try {
-    // 1) Look up device_type + cost_price & selling_price so we can compute:
-    //    • Profit per device
-    //    • Which commission rate to use for marketer split
+    // 1) Look up product info to compute profit per device
     const table = stock_update_id
       ? 'stock_updates su JOIN products p ON su.product_id = p.id'
       : 'products p';
@@ -247,11 +245,61 @@ async function createOrder(req, res, next) {
     if (!info.length) {
       return res.status(400).json({ message: "Product/stock not found." });
     }
-
     const { device_type, cost_price, selling_price } = info[0];
     const profitPerDevice = Number(selling_price) - Number(cost_price);
 
-    // 2) Insert the order, including earnings_per_device = profit
+    // 2) Decrement inventory
+    if (stock_update_id) {
+      // consume one reserved IMEI
+      const { rowCount } = await pool.query(`
+        UPDATE inventory_items
+           SET status = 'sold'
+         WHERE id IN (
+           SELECT id
+             FROM inventory_items
+            WHERE stock_update_id = $1
+              AND status = 'reserved'
+            LIMIT 1
+         )
+      `, [stock_update_id]);
+
+      if (!rowCount) {
+        return res.status(400).json({ message: "No reserved IMEI left for that stock pickup." });
+      }
+      // complete the pickup if none remain reserved
+      await pool.query(`
+        UPDATE stock_updates
+           SET status = 'completed'
+         WHERE id = $1
+           AND NOT EXISTS (
+             SELECT 1 FROM inventory_items
+              WHERE stock_update_id = $1
+                AND status = 'reserved'
+           )
+      `, [stock_update_id]);
+
+    } else {
+      // free-mode: grab N available IMEIs
+      const { rows: items } = await pool.query(`
+        SELECT id
+          FROM inventory_items
+         WHERE product_id = $1
+           AND status     = 'available'
+         LIMIT $2
+      `, [product_id, number_of_devices]);
+
+      if (items.length < number_of_devices) {
+        return res.status(400).json({ message: "Not enough inventory available." });
+      }
+      const ids = items.map(r => r.id);
+      await pool.query(`
+        UPDATE inventory_items
+           SET status = 'sold'
+         WHERE id = ANY($1)
+      `, [ids]);
+    }
+
+    // 3) Insert the order
     const { rows } = await pool.query(`
       INSERT INTO orders (
         marketer_id,
@@ -272,46 +320,29 @@ async function createOrder(req, res, next) {
       RETURNING *
     `, [
       marketerId,
-      product_id        || null,
+      product_id       || null,
       stock_update_id  || null,
       number_of_devices,
       sold_amount,
       customer_name,
       customer_phone,
       customer_address,
-      bnpl_platform     || null,
+      bnpl_platform    || null,
       profitPerDevice
     ]);
-
     const order = rows[0];
 
-    // 3) If this was a stock pickup, mark that fulfilled
-    if (stock_update_id) {
-      await pool.query(
-        `UPDATE stock_updates SET status = 'completed' WHERE id = $1`,
-        [stock_update_id]
-      );
-    }
-
     // 4) Credit commissions
-    //    • Marketer: split 40/60 on profit
     await creditMarketerCommission(marketerUid, order.id, device_type, number_of_devices);
-
-    //    • Admin: flat ₦1,500 per device
-    await creditAdminCommission(marketerUid, order.id, number_of_devices);
-
-    //    • SuperAdmin: flat ₦1,000 per device
+    await creditAdminCommission   (marketerUid, order.id, number_of_devices);
     await creditSuperAdminCommission(marketerUid, order.id, number_of_devices);
 
-    res.status(201).json({
-      message: "Order placed successfully.",
-      order
-    });
+    res.status(201).json({ message: "Order placed successfully.", order });
+
   } catch (err) {
     next(err);
   }
 }
-
 
 
 /**

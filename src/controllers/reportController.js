@@ -1,226 +1,233 @@
 // src/controllers/reportController.js
-// Controller functions for generating various reports
-
 const { pool } = require('../config/database');
 
 /**
- * calculatorModule - Calculates dealers' receivables by summing the purchase prices
- * from orders, grouped by dealer.
+ * Helper to pick the right date_trunc clause for intervals.
  */
-const calculatorModule = async (req, res, next) => {
-  try {
-    const query = `
-      SELECT dealer_id, SUM(price) as total_receivables 
-      FROM orders 
-      GROUP BY dealer_id
-    `;
-    const result = await pool.query(query);
-    return res.status(200).json({
-      message: "Calculator report retrieved successfully.",
-      data: result.rows,
-    });
-  } catch (error) {
-    next(error);
+function getTrunc(interval) {
+  switch ((interval||'daily').toLowerCase()) {
+    case 'weekly':    return "date_trunc('week', o.sale_date)";
+    case 'monthly':   return "date_trunc('month', o.sale_date)";
+    case 'quarterly': return "date_trunc('quarter', o.sale_date)";
+    case 'yearly':    return "date_trunc('year', o.sale_date)";
+    case 'daily':
+    default:          return "date_trunc('day', o.sale_date)";
   }
-};
+}
 
 /**
- * salesReport - Retrieves sales reports. Optionally, you can filter by a date range.
- * Query parameters: startDate and endDate.
+ * GET /reports/profit?interval=daily|weekly|monthly|quarterly|yearly
+ * Returns raw profit, commissions and net profit per period.
  */
-const salesReport = async (req, res, next) => {
+async function getTotalProfitReport(req, res, next) {
   try {
-    const { startDate, endDate } = req.query;
-    let query = `SELECT * FROM orders WHERE status = 'released_confirmed'`;
-    const values = [];
-    if (startDate && endDate) {
-      query += ` AND created_at BETWEEN $1 AND $2`;
-      values.push(startDate, endDate);
-    }
-    const result = await pool.query(query, values);
-    return res.status(200).json({
-      message: "Sales report retrieved successfully.",
-      data: result.rows,
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-/**
- * dailySalesProfitAnalysis - Computes daily profit using the formula:
- * Gross Profit = SUM(dealer_cost_price) - SUM(marketer_selling_price)
- * (Assumes orders table contains dealer_cost_price and marketer_selling_price columns)
- */
-const dailySalesProfitAnalysis = async (req, res, next) => {
-  try {
-    const query = `
-      SELECT date_trunc('day', created_at) as day, 
-             COALESCE(SUM(dealer_cost_price), 0) as total_dealer_cost, 
-             COALESCE(SUM(marketer_selling_price), 0) as total_marketer_selling
-      FROM orders 
-      WHERE status = 'released_confirmed'
-      GROUP BY day
-      ORDER BY day DESC
-    `;
-    const result = await pool.query(query);
-    const profitData = result.rows.map(row => ({
-      day: row.day,
-      totalDealerCost: row.total_dealer_cost,
-      totalMarketerSelling: row.total_marketer_selling,
-      grossProfit: row.total_dealer_cost - row.total_marketer_selling
-    }));
-    return res.status(200).json({
-      message: "Daily profit report retrieved successfully.",
-      data: profitData,
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-/**
- * getDeviceSalesReport - Retrieves a report on device sales, aggregated by device category
- * and grouped over a specified interval (daily, weekly, monthly, or yearly).
- * Query parameter: interval (defaults to daily)
- */
-const getDeviceSalesReport = async (req, res, next) => {
-  try {
-    const { interval } = req.query; // e.g., daily, weekly, monthly, yearly
-    let groupByClause;
-    switch (interval) {
-      case "weekly":
-        groupByClause = "date_trunc('week', created_at)";
-        break;
-      case "monthly":
-        groupByClause = "date_trunc('month', created_at)";
-        break;
-      case "yearly":
-        groupByClause = "date_trunc('year', created_at)";
-        break;
-      case "daily":
-      default:
-        groupByClause = "date_trunc('day', created_at)";
-    }
-    const query = `
-      SELECT ${groupByClause} AS period, device_category, COUNT(*) AS devices_sold
-      FROM orders
-      WHERE status = 'released_confirmed'
-      GROUP BY period, device_category
+    const trunc = getTrunc(req.query.interval);
+    const sql = `
+      SELECT
+        ${trunc}                                       AS period,
+        COALESCE(SUM(o.earnings_per_device*o.number_of_devices),0) AS raw_profit,
+        COALESCE(SUM(
+          CASE p.device_type
+            WHEN 'android' THEN 10000
+            WHEN 'iphone'  THEN 15000
+            ELSE 0
+          END * o.number_of_devices
+        ),0) AS marketer_commission,
+        COALESCE(SUM(1500 * o.number_of_devices),0)      AS admin_commission,
+        COALESCE(SUM(1000 * o.number_of_devices),0)      AS superadmin_commission,
+        -- net = raw - all commissions
+        COALESCE(SUM(o.earnings_per_device*o.number_of_devices),0)
+        - COALESCE(SUM(
+            CASE p.device_type
+              WHEN 'android' THEN 10000
+              WHEN 'iphone'  THEN 15000
+              ELSE 0
+            END * o.number_of_devices
+          ),0)
+        - COALESCE(SUM(1500 * o.number_of_devices),0)
+        - COALESCE(SUM(1000 * o.number_of_devices),0)
+        AS net_profit
+      FROM orders o
+      JOIN products p ON p.id = o.product_id
+      WHERE o.status = 'released_confirmed'
+      GROUP BY period
       ORDER BY period DESC
     `;
-    const result = await pool.query(query);
-    return res.status(200).json({
-      message: "Device sales report retrieved successfully.",
-      data: result.rows,
-    });
-  } catch (error) {
-    next(error);
+    const { rows } = await pool.query(sql);
+    res.json({ message: 'Total profit report', data: rows });
+  } catch (err) {
+    next(err);
   }
-};
+}
 
 /**
- * dealersPaymentHistory - Retrieves the payment history for dealers.
- * Assumes there is a table "dealer_payments" with a column "payment_date".
+ * GET /reports/sales/marketer?interval=…
+ * Returns total sales per marketer per period.
  */
-const dealersPaymentHistory = async (req, res, next) => {
+async function getSalesByMarketerReport(req, res, next) {
   try {
-    const query = `
-      SELECT * FROM dealer_payments
-      ORDER BY payment_date DESC
+    const trunc = getTrunc(req.query.interval);
+    const sql = `
+      SELECT
+        ${trunc}                                       AS period,
+        m.unique_id                                   AS marketer_id,
+        m.first_name||' '||m.last_name                AS marketer_name,
+        COALESCE(SUM(o.sold_amount),0)                AS total_sales
+      FROM orders o
+      JOIN users m  ON o.marketer_id = m.id
+      WHERE o.status = 'released_confirmed'
+      GROUP BY period, m.unique_id, marketer_name
+      ORDER BY period DESC, total_sales DESC
     `;
-    const result = await pool.query(query);
-    return res.status(200).json({
-      message: "Dealer payment history retrieved successfully.",
-      data: result.rows,
-    });
-  } catch (error) {
-    next(error);
+    const { rows } = await pool.query(sql);
+    res.json({ message: 'Sales by marketer', data: rows });
+  } catch (err) {
+    next(err);
   }
-};
+}
 
 /**
- * marketersPaymentHistory - Retrieves the payment history for marketers.
- * Assumes there is a table "marketer_payments" with a column "payment_date".
+ * GET /reports/sales/admin?interval=…
+ * Returns total sales by all marketers under each Admin.
  */
-const marketersPaymentHistory = async (req, res, next) => {
+async function getSalesByAdminReport(req, res, next) {
   try {
-    const query = `
-      SELECT * FROM marketer_payments
-      ORDER BY payment_date DESC
+    const trunc = getTrunc(req.query.interval);
+    const sql = `
+      SELECT
+        ${trunc}                                       AS period,
+        a.unique_id                                   AS admin_id,
+        a.first_name||' '||a.last_name                AS admin_name,
+        COALESCE(SUM(o.sold_amount),0)                AS total_sales
+      FROM orders o
+      JOIN users m  ON o.marketer_id = m.id
+      JOIN users a  ON m.admin_id     = a.id
+      WHERE o.status = 'released_confirmed'
+      GROUP BY period, a.unique_id, admin_name
+      ORDER BY period DESC, total_sales DESC
     `;
-    const result = await pool.query(query);
-    return res.status(200).json({
-      message: "Marketer payment history retrieved successfully.",
-      data: result.rows,
-    });
-  } catch (error) {
-    next(error);
+    const { rows } = await pool.query(sql);
+    res.json({ message: 'Sales by admin', data: rows });
+  } catch (err) {
+    next(err);
   }
-};
+}
 
 /**
- * generalExpenses - Retrieves general expenses.
- * Assumes there is a table "general_expenses" with a column "expense_date".
+ * GET /reports/sales/superadmin?interval=…
+ * Returns total sales by all marketers under each SuperAdmin.
  */
-const generalExpenses = async (req, res, next) => {
+async function getSalesBySuperAdminReport(req, res, next) {
   try {
-    const query = `
-      SELECT * FROM general_expenses
-      ORDER BY expense_date DESC
+    const trunc = getTrunc(req.query.interval);
+    const sql = `
+      SELECT
+        ${trunc}                                       AS period,
+        su.unique_id                                  AS superadmin_id,
+        su.first_name||' '||su.last_name              AS superadmin_name,
+        COALESCE(SUM(o.sold_amount),0)                AS total_sales
+      FROM orders o
+      JOIN users m  ON o.marketer_id = m.id
+      JOIN users a  ON m.admin_id     = a.id
+      JOIN users su ON a.admin_id     = su.id
+      WHERE o.status = 'released_confirmed'
+      GROUP BY period, su.unique_id, superadmin_name
+      ORDER BY period DESC, total_sales DESC
     `;
-    const result = await pool.query(query);
-    return res.status(200).json({
-      message: "General expenses retrieved successfully.",
-      data: result.rows,
-    });
-  } catch (error) {
-    next(error);
+    const { rows } = await pool.query(sql);
+    res.json({ message: 'Sales by superadmin', data: rows });
+  } catch (err) {
+    next(err);
   }
-};
+}
 
 /**
- * getSalesReport - Returns aggregated sales data.
- * This example aggregates orders by day, week, and month.
+ * GET /reports/commission/admin?interval=…
+ * Total commission (₦1,500×devices) earned by each Admin.
  */
-const getSalesReport = async (req, res, next) => {
+async function getCommissionByAdminReport(req, res, next) {
   try {
-    // Daily report: orders and total sales for today
-    const dailyRes = await pool.query(`
-      SELECT COUNT(*) AS order_count, COALESCE(SUM(price), 0) AS total_sales 
-      FROM orders 
-      WHERE DATE(created_at) = CURRENT_DATE
-    `);
-    // Weekly report: orders and total sales for the last 7 days
-    const weeklyRes = await pool.query(`
-      SELECT COUNT(*) AS order_count, COALESCE(SUM(price), 0) AS total_sales 
-      FROM orders 
-      WHERE created_at >= CURRENT_DATE - INTERVAL '7 days'
-    `);
-    // Monthly report: orders and total sales for the current month
-    const monthlyRes = await pool.query(`
-      SELECT COUNT(*) AS order_count, COALESCE(SUM(price), 0) AS total_sales 
-      FROM orders 
-      WHERE DATE_TRUNC('month', created_at) = DATE_TRUNC('month', CURRENT_DATE)
-    `);
-
-    res.status(200).json({
-      daily: dailyRes.rows[0],
-      weekly: weeklyRes.rows[0],
-      monthly: monthlyRes.rows[0],
-    });
-  } catch (error) {
-    next(error);
+    const trunc = getTrunc(req.query.interval);
+    const sql = `
+      SELECT
+        ${trunc}                                       AS period,
+        a.unique_id                                   AS admin_id,
+        a.first_name||' '||a.last_name                AS admin_name,
+        COALESCE(SUM(1500 * o.number_of_devices),0)    AS admin_commission
+      FROM orders o
+      JOIN users m  ON o.marketer_id = m.id
+      JOIN users a  ON m.admin_id     = a.id
+      WHERE o.status = 'released_confirmed'
+      GROUP BY period, a.unique_id, admin_name
+      ORDER BY period DESC, admin_commission DESC
+    `;
+    const { rows } = await pool.query(sql);
+    res.json({ message: 'Admin commission report', data: rows });
+  } catch (err) {
+    next(err);
   }
-};
+}
+
+/**
+ * GET /reports/commission/superadmin?interval=…
+ * Total commission (₦1,000×devices) earned by each SuperAdmin.
+ */
+async function getCommissionBySuperAdminReport(req, res, next) {
+  try {
+    const trunc = getTrunc(req.query.interval);
+    const sql = `
+      SELECT
+        ${trunc}                                       AS period,
+        su.unique_id                                  AS superadmin_id,
+        su.first_name||' '||su.last_name              AS superadmin_name,
+        COALESCE(SUM(1000 * o.number_of_devices),0)    AS superadmin_commission
+      FROM orders o
+      JOIN users m  ON o.marketer_id = m.id
+      JOIN users a  ON m.admin_id     = a.id
+      JOIN users su ON a.admin_id     = su.id
+      WHERE o.status = 'released_confirmed'
+      GROUP BY period, su.unique_id, superadmin_name
+      ORDER BY period DESC, superadmin_commission DESC
+    `;
+    const { rows } = await pool.query(sql);
+    res.json({ message: 'SuperAdmin commission report', data: rows });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * GET /reports/device-sales?interval=…
+ * Total units sold per device_name/type per period.
+ */
+async function getDeviceSalesReport(req, res, next) {
+  try {
+    const trunc = getTrunc(req.query.interval);
+    const sql = `
+      SELECT
+        ${trunc}                                       AS period,
+        p.device_name,
+        p.device_type,
+        COALESCE(SUM(o.number_of_devices),0)           AS units_sold
+      FROM orders o
+      JOIN products p ON p.id = o.product_id
+      WHERE o.status = 'released_confirmed'
+      GROUP BY period, p.device_name, p.device_type
+      ORDER BY period DESC, units_sold DESC
+    `;
+    const { rows } = await pool.query(sql);
+    res.json({ message: 'Device sales report', data: rows });
+  } catch (err) {
+    next(err);
+  }
+}
 
 module.exports = {
-  calculatorModule,
-  salesReport,
-  dailySalesProfitAnalysis,
+  getTotalProfitReport,
+  getSalesByMarketerReport,
+  getSalesByAdminReport,
+  getSalesBySuperAdminReport,
+  getCommissionByAdminReport,
+  getCommissionBySuperAdminReport,
   getDeviceSalesReport,
-  dealersPaymentHistory,
-  marketersPaymentHistory,
-  generalExpenses,
-  getSalesReport
 };
