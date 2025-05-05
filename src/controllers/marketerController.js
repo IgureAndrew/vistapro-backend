@@ -148,16 +148,14 @@ async function getPlaceOrderData(req, res, next) {
         su.quantity                 AS qty_reserved,
         ARRAY_AGG(i.imei)           AS imeis_reserved
       FROM stock_updates su
-      JOIN products p
-        ON su.product_id = p.id
-      JOIN users u
-        ON p.dealer_id = u.id
+      JOIN products p  ON su.product_id = p.id
+      JOIN users u     ON p.dealer_id = u.id
       JOIN inventory_items i
         ON i.stock_update_id = su.id
-       AND i.status            = 'reserved'
-      WHERE su.marketer_id = $1
-        AND su.transfer_status = 'pending'
-        AND su.deadline > NOW()
+       AND i.status          = 'reserved'
+      WHERE su.marketer_id     = $1
+        AND su.transfer_status = 'none'
+        AND su.deadline       > NOW()
       GROUP BY
         su.id, p.id, p.device_name, p.device_model,
         p.device_type, p.selling_price,
