@@ -151,10 +151,7 @@ async function getPlaceOrderData(req, res, next) {
         su.quantity                 AS qty_reserved,
 
         -- join only reserved items, then aggregate
-        COALESCE(
-          ARRAY_AGG(i.imei) FILTER (WHERE i.imei IS NOT NULL),
-          ARRAY[]::text[]
-        ) AS imeis_reserved
+          ARRAY_AGG(i.imei) FILTER (WHERE i.status = 'reserved') AS imeis_reserved
 
       FROM stock_updates su
       JOIN products p
