@@ -237,14 +237,14 @@ async function placeOrder(req, res, next) {
     const uid = req.user.unique_id;
 
     // fetch live pending pickups
-    const { rows: pending } = await pool.query(
-      `SELECT id, product_id
-         FROM stock_updates
-        WHERE marketer_id = (SELECT id FROM users WHERE unique_id = $1)
-          AND status = 'pending'
-          AND deadline > NOW()`,
-      [uid]
-    );
+    const { rows: pending } = await pool.query(`
+      SELECT id, product_id
+        FROM stock_updates
+       WHERE marketer_id       = …
+         AND transfer_status   = 'none'         -- not in transfer
+         AND completed_at IS NULL               -- not yet sold or returned
+         AND deadline > NOW()
+    `, [uid]);
 
     let productId;
     let stockUpdateId = null;
@@ -476,8 +476,10 @@ async function getStockUpdates(req, res, next) {
         su.quantity,
         su.pickup_date,
         su.deadline,
-        su.status,
         su.transfer_status,
+        su.transfer_requested_at,
+        su.transfer_approved_at,
+        su.returned_at,
         m.first_name || ' ' || m.last_name AS marketer_name,
         m.unique_id                       AS marketer_unique_id,
         -- New fields for transfer target:
@@ -506,18 +508,32 @@ async function confirmReturn(req, res, next) {
     if (req.user.role !== 'MasterAdmin') {
       return res.status(403).json({ message: "Only MasterAdmin may confirm returns." });
     }
+
     const id = parseInt(req.params.id, 10);
     const { rows } = await pool.query(
-      `UPDATE stock_updates
-          SET status = 'returned',
-              returned_at = NOW()
-        WHERE id = $1
-      RETURNING *`,
+      `
+      UPDATE stock_updates
+         SET returned_at = NOW()
+       WHERE id = $1
+     RETURNING
+       id,
+       marketer_id,
+       product_id,
+       quantity,
+       pickup_date,
+       deadline,
+       transfer_status,
+       transfer_requested_at,
+       transfer_approved_at,
+       returned_at
+      `,
       [id]
     );
+
     if (!rows.length) {
       return res.status(404).json({ message: "Pickup not found." });
     }
+
     res.json({ message: "Return confirmed.", stock: rows[0] });
   } catch (err) {
     next(err);
