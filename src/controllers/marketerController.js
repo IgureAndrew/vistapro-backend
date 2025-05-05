@@ -120,39 +120,43 @@ async function updateAccountSettings(req, res, next) {
  *   • if any live pending pickups exist → mode:'stock' + pending[]
  *   • else → mode:'free' + products[]
  */
-/**
- * GET /api/marketer/orders
- * • if any live, non-transferred pickups exist → mode:'stock' + pending[]
- * • else → mode:'free' + products[]
- */
+
 async function getPlaceOrderData(req, res, next) {
   const marketerId = req.user.id;
+
   try {
-    // 0) marketer’s state
+    // 0) fetch marketer’s location
     const { rows: me } = await pool.query(
-      `SELECT location FROM users WHERE id = $1`, [marketerId]
+      `SELECT location FROM users WHERE id = $1`,
+      [marketerId]
     );
-    if (!me.length) return res.status(404).json({ message: "Marketer not found." });
+    if (!me.length) {
+      return res.status(404).json({ message: "Marketer not found." });
+    }
     const marketerLocation = me[0].location;
 
-    // 1) pending stock‐pickups
-    const { rows: pending } = await pool.query(`
+    // 1) pending stock‐pickups (with reserved IMEIs)
+    const { rows: pending } = await pool.query(
+      `
       SELECT
-        su.id                       AS stock_update_id,
-        p.id                        AS product_id,
+        su.id                           AS stock_update_id,
+        p.id                            AS product_id,
         p.device_name,
         p.device_model,
         p.device_type,
         p.selling_price,
-        u.business_name             AS dealer_name,
-        u.location                  AS dealer_location,
-        su.quantity                 AS qty_reserved,
-        ARRAY_AGG(i.imei) FILTER (WHERE i.status = 'reserved') AS imeis_reserved
+        u.business_name                 AS dealer_name,
+        u.location                      AS dealer_location,
+        su.quantity                     AS qty_reserved,
+        ARRAY_AGG(i.imei)               AS imeis_reserved
       FROM stock_updates su
-      JOIN products p ON p.id = su.product_id
-      JOIN users u    ON u.id = p.dealer_id
+      JOIN products p
+        ON p.id = su.product_id
+      JOIN users u
+        ON u.id = p.dealer_id
       LEFT JOIN inventory_items i
         ON i.stock_update_id = su.id
+       AND i.status          = 'reserved'
       WHERE su.marketer_id     = $1
         AND su.status          = 'pending'
         AND su.transfer_status = 'none'
@@ -163,26 +167,32 @@ async function getPlaceOrderData(req, res, next) {
         u.business_name, u.location,
         su.quantity
       ORDER BY su.deadline
-    `, [marketerId]);
+      `,
+      [marketerId]
+    );
 
     if (pending.length) {
+      // as long as there's a pending pickup,
+      // we force stock mode on the front‐end
       return res.json({ mode: 'stock', pending });
     }
 
-    // 2) free-order products
-    const { rows: products } = await pool.query(`
+    // 2) free‐mode: only show dealers in my state and available inventory
+    const { rows: products } = await pool.query(
+      `
       SELECT
-        p.id                            AS product_id,
+        p.id                                    AS product_id,
         p.device_name,
         p.device_model,
         p.device_type,
         p.selling_price,
-        u.business_name                 AS dealer_name,
-        u.location                      AS dealer_location,
-        COUNT(i.*) FILTER (WHERE i.status = 'available')       AS qty_available,
-        ARRAY_AGG(i.imei) FILTER (WHERE i.status = 'available') AS imeis_available
+        u.business_name                         AS dealer_name,
+        u.location                              AS dealer_location,
+        COUNT(i.*) FILTER (WHERE i.status='available')        AS qty_available,
+        ARRAY_AGG(i.imei) FILTER (WHERE i.status='available') AS imeis_available
       FROM products p
-      JOIN users u    ON u.id = p.dealer_id
+      JOIN users u
+        ON u.id = p.dealer_id
       LEFT JOIN inventory_items i
         ON i.product_id = p.id
       WHERE u.location = $1
@@ -190,9 +200,11 @@ async function getPlaceOrderData(req, res, next) {
         p.id, p.device_name, p.device_model,
         p.device_type, p.selling_price,
         u.business_name, u.location
-      HAVING COUNT(i.*) FILTER (WHERE i.status = 'available') > 0
+      HAVING COUNT(i.*) FILTER (WHERE i.status='available') > 0
       ORDER BY p.device_name
-    `, [marketerLocation]);
+      `,
+      [marketerLocation]
+    );
 
     return res.json({ mode: 'free', products });
   } catch (err) {
