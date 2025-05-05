@@ -471,32 +471,32 @@ async function getStockUpdates(req, res, next) {
         su.id,
         p.device_name,
         p.device_model,
-        d.business_name          AS dealer_name,
-        d.location               AS dealer_location,
+        d.business_name        AS dealer_name,
+        d.location             AS dealer_location,
         su.quantity,
         su.pickup_date,
         su.deadline,
+        su.status,              -- your TEXT status
         su.transfer_status,
         su.transfer_requested_at,
         su.transfer_approved_at,
+        su.returned_at,
         m.first_name || ' ' || m.last_name AS marketer_name,
         m.unique_id                       AS marketer_unique_id,
         tgt.first_name || ' ' || tgt.last_name AS transfer_to_name,
         tgt.unique_id                           AS transfer_to_uid
       FROM stock_updates su
       JOIN products p    ON p.id = su.product_id
-      JOIN users   d     ON d.id = p.dealer_id
-      JOIN users   m     ON m.id = su.marketer_id
+      JOIN users d       ON d.id = p.dealer_id
+      JOIN users m       ON m.id = su.marketer_id
       LEFT JOIN users tgt ON tgt.id = su.transfer_to_marketer_id
       ORDER BY su.pickup_date DESC
     `);
-
-    return res.status(200).json({ data: rows });
+    res.status(200).json({ data: rows });
   } catch (err) {
     next(err);
   }
 }
-
 /**
  * PATCH /api/marketer/stock-pickup/:id/return
  * Only MasterAdmin: mark a pickup as returned, stop its clock.
@@ -506,32 +506,17 @@ async function confirmReturn(req, res, next) {
     if (req.user.role !== 'MasterAdmin') {
       return res.status(403).json({ message: "Only MasterAdmin may confirm returns." });
     }
-
     const id = parseInt(req.params.id, 10);
-    const { rows } = await pool.query(
-      `
+    const { rows } = await pool.query(`
       UPDATE stock_updates
-         SET returned_at = NOW()
+         SET status = 'returned',
+             returned_at = NOW()
        WHERE id = $1
-     RETURNING
-       id,
-       marketer_id,
-       product_id,
-       quantity,
-       pickup_date,
-       deadline,
-       transfer_status,
-       transfer_requested_at,
-       transfer_approved_at,
-       returned_at
-      `,
-      [id]
-    );
-
+      RETURNING *
+    `, [id]);
     if (!rows.length) {
       return res.status(404).json({ message: "Pickup not found." });
     }
-
     res.json({ message: "Return confirmed.", stock: rows[0] });
   } catch (err) {
     next(err);
