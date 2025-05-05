@@ -479,16 +479,14 @@ async function getStockUpdates(req, res, next) {
         su.transfer_status,
         su.transfer_requested_at,
         su.transfer_approved_at,
-        su.returned_at,
         m.first_name || ' ' || m.last_name AS marketer_name,
         m.unique_id                       AS marketer_unique_id,
-        -- New fields for transfer target:
         tgt.first_name || ' ' || tgt.last_name AS transfer_to_name,
         tgt.unique_id                           AS transfer_to_uid
       FROM stock_updates su
-      JOIN products p   ON p.id = su.product_id
-      JOIN users   d    ON d.id = p.dealer_id
-      JOIN users   m    ON m.id = su.marketer_id
+      JOIN products p    ON p.id = su.product_id
+      JOIN users   d     ON d.id = p.dealer_id
+      JOIN users   m     ON m.id = su.marketer_id
       LEFT JOIN users tgt ON tgt.id = su.transfer_to_marketer_id
       ORDER BY su.pickup_date DESC
     `);
