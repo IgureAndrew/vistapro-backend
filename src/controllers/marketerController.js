@@ -150,10 +150,10 @@ async function getPlaceOrderData(req, res, next) {
         u.location                  AS dealer_location,
         su.quantity                 AS qty_reserved,
 
-        -- only grab reserved IMEIs, and strip out NULLs
-        ARRAY_REMOVE(
-          ARRAY_AGG(i.imei) FILTER (WHERE i.status = 'reserved'),
-          NULL
+        -- join only reserved items, then aggregate
+        COALESCE(
+          ARRAY_AGG(i.imei) FILTER (WHERE i.imei IS NOT NULL),
+          ARRAY[]::text[]
         ) AS imeis_reserved
 
       FROM stock_updates su
@@ -162,9 +162,10 @@ async function getPlaceOrderData(req, res, next) {
       JOIN users u
         ON u.id = p.dealer_id
 
-      -- LEFT JOIN to preserve the row even if no reserved IMEIs exist
+      -- only bring in the reserved IMEIs
       LEFT JOIN inventory_items i
         ON i.stock_update_id = su.id
+       AND i.status          = 'reserved'
 
       WHERE su.marketer_id     = $1
         AND su.status          = 'pending'
@@ -184,7 +185,7 @@ async function getPlaceOrderData(req, res, next) {
       return res.json({ mode: 'stock', pending });
     }
 
-    // … your “free” lookup …
+    // … your “free” mode lookup …
   } catch (err) {
     next(err);
   }
