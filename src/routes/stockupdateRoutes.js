@@ -45,13 +45,13 @@ router.post(
   ctrl.requestStockTransfer
 );
 
-// 6) MasterAdmin approves or rejects a transfer
-router.patch(
-  '/:id/transfer',
-  verifyToken,
-  verifyRole(['MasterAdmin']),
-  ctrl.reviewStockTransfer
-);
+// 4. MasterAdmin approves/rejects transfers
+   router.patch(
+    '/:id/transfer',
+    verifyToken,
+    verifyRole(['MasterAdmin']),
+    ctrl.reviewStockTransfer    // <— new unified handler
+  );
 
 // 7) List my pickups
 router.get(

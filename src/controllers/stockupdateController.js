@@ -7,18 +7,16 @@ const { pool } = require('../config/database');
  */
 async function listStockPickupDealers(req, res, next) {
   try {
-    // 1) Fetch marketer’s state
     const marketerId = req.user.id;
-    const { rows: meRows } = await pool.query(
+    const { rows: me } = await pool.query(
       `SELECT location FROM users WHERE id = $1`,
       [marketerId]
     );
-    if (!meRows.length) {
+    if (!me.length) {
       return res.status(404).json({ message: "Marketer not found." });
     }
-    const state = meRows[0].location;
+    const state = me[0].location;
 
-    // 2) Return all dealers in that state
     const { rows: dealers } = await pool.query(
       `SELECT unique_id, business_name, location
          FROM users
@@ -36,39 +34,34 @@ async function listStockPickupDealers(req, res, next) {
 
 /**
  * GET /api/marketer/stock-pickup/dealers/:dealerUniqueId/products
- * Returns all available products for that dealer,
- * only if the dealer is in the same state as the marketer.
+ * Returns all available products for that dealer (same state only).
  */
 async function listStockProductsByDealer(req, res, next) {
   try {
-    const marketerId     = req.user.id;
+    const marketerId = req.user.id;
     const { dealerUniqueId } = req.params;
 
-    // 1) Fetch marketer’s state
-    const { rows: meRows } = await pool.query(
+    const { rows: me } = await pool.query(
       `SELECT location FROM users WHERE id = $1`,
       [marketerId]
     );
-    if (!meRows.length) {
+    if (!me.length) {
       return res.status(404).json({ message: "Marketer not found." });
     }
-    const state = meRows[0].location;
+    const state = me[0].location;
 
-    // 2) Verify dealer is in same state
-    const { rows: dqRows } = await pool.query(
-      `SELECT id
-         FROM users
-        WHERE unique_id = $1
-          AND role      = 'Dealer'
-          AND location  = $2`,
+    const { rows: dq } = await pool.query(
+      `SELECT id FROM users
+         WHERE unique_id = $1
+           AND role      = 'Dealer'
+           AND location  = $2`,
       [dealerUniqueId, state]
     );
-    if (!dqRows.length) {
+    if (!dq.length) {
       return res.status(403).json({ message: "Dealer not in your location." });
     }
-    const dealerId = dqRows[0].id;
+    const dealerId = dq[0].id;
 
-    // 3) Fetch available products
     const { rows: products } = await pool.query(
       `SELECT
          p.id               AS product_id,
@@ -83,8 +76,7 @@ async function listStockProductsByDealer(req, res, next) {
          ON i.product_id = p.id
         AND i.status     = 'available'
       WHERE p.dealer_id = $1
-      GROUP BY
-         p.id, p.device_name, p.device_model, p.device_type, p.selling_price
+      GROUP BY p.id, p.device_name, p.device_model, p.device_type, p.selling_price
       HAVING COUNT(i.*) FILTER (WHERE i.status = 'available') > 0`,
       [dealerId]
     );
@@ -96,105 +88,96 @@ async function listStockProductsByDealer(req, res, next) {
 }
 
 /**
- * 1) createStockUpdate
- *    Marketer picks up stock → creates a pending record.
- *    Only from dealers in the same state as the marketer.
- *    Deadline is 48 hrs from pickup.
+ * POST /api/marketer/stock-pickup
+ * Create a new stock pickup (status = 'pending', reserves inventory_items).
  */
-const createStockUpdate = async (req, res, next) => {
+async function createStockUpdate(req, res, next) {
   const client = await pool.connect();
   try {
     const { product_id, quantity } = req.body;
     const marketerUID = req.user.unique_id;
+    const qty = parseInt(quantity, 10) || 1;
     if (!product_id) {
       return res.status(400).json({ message: "Missing product_id" });
     }
-    const qty = parseInt(quantity, 10) || 1;
 
     await client.query('BEGIN');
 
-    // --- Verify same-location constraint ---
-    // a) marketer's state
-    const { rows: meRows } = await client.query(
+    // a) verify marketer’s location
+    const { rows: me } = await client.query(
       `SELECT location FROM users WHERE unique_id = $1`,
       [marketerUID]
     );
-    if (!meRows.length) {
+    if (!me.length) {
       await client.query('ROLLBACK');
       return res.status(404).json({ message: "Marketer not found." });
     }
-    const marketerState = meRows[0].location;
+    const marketerState = me[0].location;
 
-    // b) product's dealer & its state
-    const { rows: pdRows } = await client.query(
+    // b) verify dealer’s location
+    const { rows: pd } = await client.query(
       `SELECT u.location
          FROM products p
          JOIN users u ON p.dealer_id = u.id
         WHERE p.id = $1`,
       [product_id]
     );
-    if (!pdRows.length || pdRows[0].location !== marketerState) {
+    if (!pd.length || pd[0].location !== marketerState) {
       await client.query('ROLLBACK');
       return res.status(403).json({
         message: "Cannot pick up from a dealer outside your location."
       });
     }
-    // -----------------------------------------
 
-    // 1) count available items
-    const { rows: cntRows } = await client.query(
+    // check available inventory
+    const { rows: cnt } = await client.query(
       `SELECT COUNT(*)::int AS cnt
          FROM inventory_items
         WHERE product_id = $1
           AND status = 'available'`,
       [product_id]
     );
-    const cnt = cntRows[0].cnt;
-    if (cnt < qty) {
+    if (cnt[0].cnt < qty) {
       await client.query('ROLLBACK');
       return res.status(400).json({ message: "Not enough stock available" });
     }
 
-    // 2) insert pickup record
-    const insertQ = `
-      INSERT INTO stock_updates
-        ( marketer_id, product_id, quantity, pickup_date, deadline, transfer_status )
-      VALUES (
-        (SELECT id FROM users WHERE unique_id = $1),
+    // insert pickup record using unified `status`
+    const { rows: su } = await client.query(
+      `INSERT INTO stock_updates
+         (marketer_id, product_id, quantity, pickup_date, deadline, status)
+       VALUES (
+         (SELECT id FROM users WHERE unique_id = $1),
          $2, $3,
          NOW(),
          NOW() + INTERVAL '48 hours',
-         'none'
-      )
-      RETURNING id, marketer_id, product_id, quantity, pickup_date, deadline, transfer_status
-    `;
-    const { rows: suRows } = await client.query(insertQ, [
-      marketerUID,
-      product_id,
-      qty
-    ]);
-    const stock = suRows[0];
+         'pending'
+       )
+       RETURNING id, marketer_id, product_id, quantity, pickup_date, deadline, status`,
+      [marketerUID, product_id, qty]
+    );
+    const stock = su[0];
 
-    // 3) reserve exactly `qty` units
-    const { rows: itemsToReserve } = await client.query(
+    // reserve exactly qty items
+    const { rows: toReserve } = await client.query(
       `SELECT id
          FROM inventory_items
         WHERE product_id = $1
-          AND status = 'available'
+          AND status     = 'available'
         LIMIT $2
         FOR UPDATE SKIP LOCKED`,
       [product_id, qty]
     );
-    const itemIds = itemsToReserve.map(r => r.id);
+    const ids = toReserve.map(r => r.id);
     await client.query(
       `UPDATE inventory_items
-          SET status = 'reserved',
-              stock_update_id = $1
-        WHERE id = ANY($2::int[])`,
-      [stock.id, itemIds]
+         SET status = 'reserved',
+             stock_update_id = $1
+       WHERE id = ANY($2::int[])`,
+      [stock.id, ids]
     );
 
-    // 4) notify admin
+    // notify admin
     const { rows: adminQ } = await client.query(
       `SELECT u2.unique_id
          FROM users u
@@ -202,13 +185,12 @@ const createStockUpdate = async (req, res, next) => {
         WHERE u.unique_id = $1`,
       [marketerUID]
     );
-    const adminUniqueId = adminQ[0]?.unique_id;
-    if (adminUniqueId) {
+    if (adminQ.length) {
       await client.query(
         `INSERT INTO notifications (user_unique_id, message, created_at)
          VALUES ($1, $2, NOW())`,
         [
-          adminUniqueId,
+          adminQ[0].unique_id,
           `Marketer ${marketerUID} picked up ${qty} unit(s) of product ${product_id}.`
         ]
       );
@@ -225,31 +207,28 @@ const createStockUpdate = async (req, res, next) => {
   } finally {
     client.release();
   }
-};
+}
 
 /**
- * 2) placeOrder
- *    - If marketer has any live ('pending' & before deadline) pickups, must supply stock_update_id.
- *    - Otherwise may free-order by product_id.
+ * POST /api/marketer/stock-pickup/order
+ * Place an order, preferring a pending pickup over free mode.
  */
 async function placeOrder(req, res, next) {
   try {
     const uid = req.user.unique_id;
 
-    // fetch live pending pickups
-    const { rows: pending } = await pool.query(`
-      SELECT id, product_id
-        FROM stock_updates
-       WHERE marketer_id       = …
-         AND transfer_status   = 'none'         -- not in transfer
-         AND completed_at IS NULL               -- not yet sold or returned
-         AND deadline > NOW()
-    `, [uid]);
+    // fetch truly pending pickups (status = 'pending')
+    const { rows: pending } = await pool.query(
+      `SELECT id, product_id
+         FROM stock_updates
+        WHERE marketer_id = (SELECT id FROM users WHERE unique_id = $1)
+          AND status        = 'pending'
+          AND deadline > NOW()`,
+      [uid]
+    );
 
-    let productId;
-    let stockUpdateId = null;
-
-    if (pending.length > 0) {
+    let productId, stockUpdateId = null;
+    if (pending.length) {
       stockUpdateId = req.body.stock_update_id;
       if (!stockUpdateId) {
         return res.status(400).json({
@@ -270,37 +249,36 @@ async function placeOrder(req, res, next) {
       }
     }
 
-    // insert order
     const marketerId = (await pool.query(
       `SELECT id FROM users WHERE unique_id = $1`, [uid]
     )).rows[0].id;
 
-    const orderQ = await pool.query(
+    const { rows: orderRows } = await pool.query(
       `INSERT INTO orders
-         ( marketer_id,
-           product_id,
-           stock_update_id,
-           order_date
-         )
-       VALUES
-         ($1, $2, $3, NOW())
+         (marketer_id, product_id, stock_update_id, order_date)
+       VALUES ($1,$2,$3,NOW())
        RETURNING *`,
       [marketerId, productId, stockUpdateId]
     );
 
-    // mark pickup consumed
+    // if used a pickup, mark it sold when no more reserved items
     if (stockUpdateId) {
       await pool.query(
         `UPDATE stock_updates
-           SET status = 'completed'
-         WHERE id = $1`,
+           SET status = 'sold'
+         WHERE id = $1
+           AND NOT EXISTS (
+             SELECT 1 FROM inventory_items
+              WHERE stock_update_id = $1
+                AND status = 'reserved'
+           )`,
         [stockUpdateId]
       );
     }
 
     res.status(201).json({
       message: "Order placed successfully.",
-      order: orderQ.rows[0]
+      order: orderRows[0]
     });
   } catch (err) {
     next(err);
@@ -308,23 +286,25 @@ async function placeOrder(req, res, next) {
 }
 
 /**
+ * POST /api/marketer/stock-pickup/:id/transfer
+ * Request a transfer – only if status = 'pending'
+ */
+/**
  * 3) requestStockTransfer
  *    Marketer requests to move one of their own 'pending' pickups to another marketer.
  */
-// src/controllers/stockupdateController.js
 async function requestStockTransfer(req, res, next) {
   try {
     const stockUpdateId     = parseInt(req.params.id, 10);
     const { targetIdentifier } = req.body;        // unique_id or "First Last"
     const currentMarketerId = req.user.id;
 
-    // 1) Verify this pickup exists, belongs to current user, and is transferable
+    // 1) Verify this pickup exists, belongs to current user, and is still pending
     const { rows: suRows } = await pool.query(`
-      SELECT marketer_id, transfer_status
+      SELECT marketer_id, status
         FROM stock_updates
        WHERE id = $1
     `, [stockUpdateId]);
-
     if (!suRows.length) {
       return res.status(404).json({ message: "Stock pickup not found." });
     }
@@ -332,8 +312,8 @@ async function requestStockTransfer(req, res, next) {
     if (su.marketer_id !== currentMarketerId) {
       return res.status(403).json({ message: "Not your stock pickup." });
     }
-    if (su.transfer_status !== 'none') {
-      return res.status(400).json({ message: "This pickup is already in transfer or completed." });
+    if (su.status !== 'pending') {
+      return res.status(400).json({ message: "Only pending pickups can be transferred." });
     }
 
     // 2) Resolve the target marketer
@@ -362,17 +342,29 @@ async function requestStockTransfer(req, res, next) {
       return res.status(400).json({ message: "Transfers must stay within the same location." });
     }
 
-    // 4) Mark this pickup as transfer_pending
+    // 4) Ensure target has no live pickups
+    const { rows: active } = await pool.query(`
+      SELECT 1
+        FROM stock_updates
+       WHERE marketer_id = $1
+         AND status IN ('pending','transfer_pending')
+       LIMIT 1
+    `, [ target.id ]);
+    if (active.length) {
+      return res.status(400).json({
+        message: "Target marketer already has an active pickup—cannot transfer."
+      });
+    }
+
+    // 5) Mark this pickup as transfer_pending
     await pool.query(`
       UPDATE stock_updates
-         SET transfer_to_marketer_id = $1,
-             transfer_status         = 'transfer_pending',
-             transfer_requested_at   = NOW(),
-             updated_at              = NOW()
+         SET status          = 'transfer_pending',
+             transfer_to_marketer_id = $1,
+             updated_at       = NOW()
        WHERE id = $2
-    `, [target.id, stockUpdateId]);
+    `, [ target.id, stockUpdateId ]);
 
-    // 5) Return a minimal transfer record
     res.json({
       message: "Transfer requested.",
       transfer: {
@@ -390,7 +382,6 @@ async function requestStockTransfer(req, res, next) {
   }
 }
 
-
 /**
  * 4) approveStockTransfer
  *    MasterAdmin approves or rejects pending transfers.
@@ -400,36 +391,45 @@ async function approveStockTransfer(req, res, next) {
     if (req.user.role !== 'MasterAdmin') {
       return res.status(403).json({ message: "Only MasterAdmin may approve or reject." });
     }
-    const id = req.params.id;
+    const id = parseInt(req.params.id, 10);
     const { action } = req.body; // 'approve' or 'reject'
     if (!['approve','reject'].includes(action)) {
       return res.status(400).json({ message: "Invalid action." });
     }
 
-    let q;
+    let result;
     if (action === 'approve') {
-      q = `
+      // FINALIZE transfer: mark as 'transfer_approved' (a terminal state)
+      const { rows } = await pool.query(`
         UPDATE stock_updates
-           SET marketer_id             = transfer_to_marketer_id,
-               transfer_status         = 'approved',
-               transfer_approved_at    = NOW()
+           SET marketer_id      = transfer_to_marketer_id,
+               transfer_to_marketer_id = NULL,
+               status           = 'transfer_approved',
+               transfer_approved_at   = NOW(),
+               updated_at       = NOW()
          WHERE id = $1
-         RETURNING *`;
+         RETURNING *
+      `, [id]);
+      result = rows;
     } else {
-      q = `
+      // reject transfer: back to 'pending'
+      const { rows } = await pool.query(`
         UPDATE stock_updates
-           SET transfer_status = 'rejected'
+           SET transfer_to_marketer_id = NULL,
+               status           = 'pending',
+               updated_at       = NOW()
          WHERE id = $1
-         RETURNING *`;
+         RETURNING *
+      `, [id]);
+      result = rows;
     }
 
-    const { rows } = await pool.query(q, [id]);
-    if (!rows.length) {
+    if (!result.length) {
       return res.status(404).json({ message: "Transfer record not found." });
     }
     res.json({
       message: `Transfer ${action}d successfully.`,
-      stock: rows[0]
+      stock: result[0]
     });
   } catch (err) {
     next(err);
@@ -437,22 +437,22 @@ async function approveStockTransfer(req, res, next) {
 }
 
 /**
- * 5) getMarketerStockUpdates
- *    List this marketer’s pickups.
+ * GET /api/marketer/stock-pickup/marketer
+ * List this marketer’s pickups.
  */
 async function getMarketerStockUpdates(req, res, next) {
   try {
     const uid = req.user.unique_id;
     const { rows } = await pool.query(
-      `SELECT su.*,
-              p.device_name,
-              p.device_model,
-              p.dealer_business_name
-         FROM stock_updates AS su
-         JOIN products AS p
-           ON su.product_id = p.id
-        WHERE su.marketer_id = (SELECT id FROM users WHERE unique_id = $1)
-        ORDER BY su.pickup_date DESC`,
+      `SELECT
+         su.id, su.product_id, su.quantity,
+         su.pickup_date, su.deadline, su.status,
+         p.device_name, p.device_model
+       FROM stock_updates su
+       JOIN products p
+         ON su.product_id = p.id
+      WHERE su.marketer_id = (SELECT id FROM users WHERE unique_id = $1)
+      ORDER BY su.pickup_date DESC`,
       [uid]
     );
     res.json({ data: rows });
@@ -462,22 +462,22 @@ async function getMarketerStockUpdates(req, res, next) {
 }
 
 /**
- * 6) getStockUpdates – Master/Admin: list all pickups
+ * GET /api/marketer/stock-pickup
+ * (Master/Admin) list all pickups.
  */
 async function getStockUpdates(req, res, next) {
   try {
     const { rows } = await pool.query(`
-      SELECT 
+      SELECT
         su.id,
         p.device_name,
         p.device_model,
-        d.business_name        AS dealer_name,
-        d.location             AS dealer_location,
+        d.business_name   AS dealer_name,
+        d.location        AS dealer_location,
         su.quantity,
         su.pickup_date,
         su.deadline,
-        su.status,              -- your TEXT status
-        su.transfer_status,
+        su.status,
         su.transfer_requested_at,
         su.transfer_approved_at,
         su.returned_at,
@@ -492,14 +492,15 @@ async function getStockUpdates(req, res, next) {
       LEFT JOIN users tgt ON tgt.id = su.transfer_to_marketer_id
       ORDER BY su.pickup_date DESC
     `);
-    res.status(200).json({ data: rows });
+    res.json({ data: rows });
   } catch (err) {
     next(err);
   }
 }
+
 /**
  * PATCH /api/marketer/stock-pickup/:id/return
- * Only MasterAdmin: mark a pickup as returned, stop its clock.
+ * Mark a pickup as returned (MasterAdmin only).
  */
 async function confirmReturn(req, res, next) {
   try {
@@ -507,13 +508,14 @@ async function confirmReturn(req, res, next) {
       return res.status(403).json({ message: "Only MasterAdmin may confirm returns." });
     }
     const id = parseInt(req.params.id, 10);
-    const { rows } = await pool.query(`
-      UPDATE stock_updates
+    const { rows } = await pool.query(
+      `UPDATE stock_updates
          SET status = 'returned',
              returned_at = NOW()
        WHERE id = $1
-      RETURNING *
-    `, [id]);
+      RETURNING *`,
+      [id]
+    );
     if (!rows.length) {
       return res.status(404).json({ message: "Pickup not found." });
     }
@@ -523,30 +525,61 @@ async function confirmReturn(req, res, next) {
   }
 }
 
+/**
+ * PATCH /api/marketer/stock-pickup/:id/transfer
+ * MasterAdmin only: approve or reject a pending transfer
+ */
 async function reviewStockTransfer(req, res, next) {
-  const transferId = Number(req.params.id);
-  const { action } = req.body; // 'approve' or 'reject'
-  if (action === 'approve') {
-    await pool.query(`
-      UPDATE stock_updates
-         SET marketer_id            = transfer_to_marketer_id,
-             transfer_status        = 'pending',
-             transfer_approved_at   = NOW(),
-             transfer_to_marketer_id = NULL
-       WHERE id = $1
-    `, [transferId]);
-    res.json({ message: 'Transfer approved.' });
-  } else {
-    await pool.query(`
-      UPDATE stock_updates
-         SET transfer_status = 'none',
-             transfer_to_marketer_id = NULL
-       WHERE id = $1
-    `, [transferId]);
-    res.json({ message: 'Transfer rejected.' });
+  try {
+    if (req.user.role !== 'MasterAdmin') {
+      return res.status(403).json({ message: "Only MasterAdmin may approve or reject transfers." });
+    }
+
+    const transferId = Number(req.params.id);
+    const { action } = req.body; // 'approve' or 'reject'
+    if (!['approve','reject'].includes(action)) {
+      return res.status(400).json({ message: "Invalid action. Must be 'approve' or 'reject'." });
+    }
+
+    let query, params = [transferId];
+
+    if (action === 'approve') {
+      // move the stock to the new marketer, mark transfer approved
+      query = `
+        UPDATE stock_updates
+           SET marketer_id             = transfer_to_marketer_id,
+               transfer_to_marketer_id = NULL,
+               status                   = 'transfer_approved',
+               transfer_approved_at    = NOW(),
+               updated_at              = NOW()
+         WHERE id = $1
+         RETURNING *
+      `;
+    } else {
+      // clear the pending transfer, mark transfer rejected
+      query = `
+        UPDATE stock_updates
+           SET transfer_to_marketer_id = NULL,
+               status                   = 'transfer_rejected',
+               updated_at              = NOW()
+         WHERE id = $1
+         RETURNING *
+      `;
+    }
+
+    const { rows } = await pool.query(query, params);
+    if (!rows.length) {
+      return res.status(404).json({ message: "Transfer record not found." });
+    }
+
+    return res.json({
+      message: `Transfer ${action}d successfully.`,
+      stock: rows[0]
+    });
+  } catch (err) {
+    next(err);
   }
 }
-
 module.exports = {
   listStockPickupDealers,
   listStockProductsByDealer,

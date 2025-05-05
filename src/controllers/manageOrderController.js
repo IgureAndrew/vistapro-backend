@@ -51,90 +51,124 @@ const COMMISSION_RATES = {
   iphone:  15000,
 };
 
+// src/controllers/manageOrderController.js
+const { pool } = require("../config/database");
+const {
+  creditMarketerCommission,
+  creditAdminCommission,
+  creditSuperAdminCommission
+} = require("../services/walletService");
+
 async function confirmOrder(req, res, next) {
-  const { orderId }   = req.params;
-  const adminUniqueId = req.user.unique_id;
+  const orderId       = parseInt(req.params.orderId, 10);
+  const masterAdminId = req.user.unique_id;
   const client        = await pool.connect();
 
   try {
     await client.query("BEGIN");
 
-    // 1) Lock just the orders row
-    const lockRes = await client.query(
-      `SELECT id, marketer_id, number_of_devices, commission_paid
-         FROM orders
-        WHERE id = $1
-        FOR UPDATE`,
-      [orderId]
-    );
-    if (!lockRes.rows.length) {
+    // 1) Lock & fetch the order
+    const { rows: [orderMeta] } = await client.query(`
+      SELECT 
+        o.id,
+        o.marketer_id,
+        o.number_of_devices,
+        o.stock_update_id,
+        o.commission_paid
+      FROM orders o
+      WHERE o.id = $1
+      FOR UPDATE
+    `, [orderId]);
+
+    if (!orderMeta) {
       await client.query("ROLLBACK");
       return res.status(404).json({ message: "Order not found." });
     }
-    const orderMeta = lockRes.rows[0];
     if (orderMeta.commission_paid) {
       await client.query("ROLLBACK");
       return res.status(400).json({ message: "Commission already paid." });
     }
 
-    // 2) Pull device_type via COALESCE on either product_id or stock_update_id
-    const { rows } = await client.query(
-      `
+    // 2) Pull device_type for commission rate
+    const { rows: [prod] } = await client.query(`
       SELECT
         p.device_type
       FROM orders o
-      LEFT JOIN stock_updates su
-        ON o.stock_update_id = su.id
-      LEFT JOIN products p
-        ON p.id = COALESCE(o.product_id, su.product_id)
+      LEFT JOIN stock_updates su ON o.stock_update_id = su.id
+      LEFT JOIN products p       ON p.id = COALESCE(o.product_id, su.product_id)
       WHERE o.id = $1
-      `,
-      [orderId]
-    );
-    if (!rows.length || !rows[0].device_type) {
-      throw new Error("Product or stock not found for that order");
+    `, [orderId]);
+
+    if (!prod || !prod.device_type) {
+      throw new Error("Could not determine device type for commission.");
     }
-    const deviceType = rows[0].device_type.toLowerCase();
+    const deviceType = prod.device_type.toLowerCase();
 
-    // 3) Compute the commission
-    const COMMISSION_RATES = { android: 10000, iphone: 15000 };
-    const rate = COMMISSION_RATES[deviceType];
-    if (!rate) throw new Error(`Unsupported device type: ${deviceType}`);
-    const commission = rate * orderMeta.number_of_devices;
+    // 3) Update order → confirmed + mark commission_paid
+    const { rows: [updatedOrder] } = await client.query(`
+      UPDATE orders
+         SET status          = 'confirmed',
+             confirmed_by    = $2,
+             confirmed_at    = NOW(),
+             commission_paid = TRUE,
+             updated_at      = NOW()
+       WHERE id = $1
+       RETURNING *
+    `, [orderId, masterAdminId]);
 
-    // 4) Mark order confirmed & commission_paid
-    const upd = await client.query(
-      `UPDATE orders
-          SET status          = 'confirmed',
-              confirmed_by    = $2,
-              confirmed_at    = NOW(),
-              commission_paid = TRUE,
-              updated_at      = NOW()
-        WHERE id = $1
-        RETURNING *`,
-      [orderId, adminUniqueId]
-    );
-    const updatedOrder = upd.rows[0];
+    // 4) If this was from a stock pickup, move its IMEIs → sold & finish it
+    if (orderMeta.stock_update_id) {
+      // a) mark reserved IMEIs as sold
+      await client.query(`
+        UPDATE inventory_items
+           SET status = 'sold'
+         WHERE stock_update_id = $1
+           AND status          = 'reserved'
+      `, [orderMeta.stock_update_id]);
 
-    // 5) Credit into the marketer’s wallet
-    const userRes = await client.query(
-      `SELECT unique_id FROM users WHERE id = $1`,
-      [orderMeta.marketer_id]
-    );
-    if (!userRes.rows.length) throw new Error("Marketer not found.");
-    const marketerUniqueId = userRes.rows[0].unique_id;
+      // b) complete the stock_update
+      await client.query(`
+        UPDATE stock_updates
+           SET status       = 'completed',
+               updated_at   = NOW()
+         WHERE id = $1
+      `, [orderMeta.stock_update_id]);
+    }
 
-    const { available, withheld } = await walletService.creditCommissionFromAmount(
-      marketerUniqueId,
+    // 5) Pay out commissions
+    //    • Marketer: per-device
+    await creditMarketerCommission(
+      /* marketerUid */ (await client.query(
+          `SELECT unique_id FROM users WHERE id = $1`, 
+          [orderMeta.marketer_id]
+        )).rows[0].unique_id,
       orderId,
-      commission
+      deviceType,
+      orderMeta.number_of_devices
+    );
+
+    //    • Admin & SuperAdmin
+    await creditAdminCommission(
+      (await client.query(
+          `SELECT unique_id FROM users WHERE id = $1`,
+          [orderMeta.marketer_id]
+        )).rows[0].unique_id,
+      orderId,
+      orderMeta.number_of_devices
+    );
+    await creditSuperAdminCommission(
+      (await client.query(
+          `SELECT unique_id FROM users WHERE id = $1`,
+          [orderMeta.marketer_id]
+        )).rows[0].unique_id,
+      orderId,
+      orderMeta.number_of_devices
     );
 
     await client.query("COMMIT");
-    return res.json({
-      message: "Order confirmed and commission credited.",
-      order: updatedOrder,
-      commissionBreakdown: { commission, available, withheld }
+    res.json({
+      message: "Order confirmed; inventory updated; commissions paid.",
+      order: updatedOrder
     });
 
   } catch (err) {
@@ -144,6 +178,8 @@ async function confirmOrder(req, res, next) {
     client.release();
   }
 }
+
+
 
 /**
  * confirmOrderToDealer - MasterAdmin only
