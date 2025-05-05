@@ -121,11 +121,13 @@ async function updateAccountSettings(req, res, next) {
  *   • else → mode:'free' + products[]
  */
 
+// src/controllers/marketerController.js
+
 async function getPlaceOrderData(req, res, next) {
   const marketerId = req.user.id;
 
   try {
-    // 0) fetch marketer’s location
+    // 0) marketer’s location
     const { rows: me } = await pool.query(
       `SELECT location FROM users WHERE id = $1`,
       [marketerId]
@@ -135,7 +137,7 @@ async function getPlaceOrderData(req, res, next) {
     }
     const marketerLocation = me[0].location;
 
-    // 1) pending stock‐pickups (with reserved IMEIs)
+    // 1) pending stock-pickups with properly cleaned IMEI arrays
     const { rows: pending } = await pool.query(
       `
       SELECT
@@ -148,7 +150,11 @@ async function getPlaceOrderData(req, res, next) {
         u.business_name                 AS dealer_name,
         u.location                      AS dealer_location,
         su.quantity                     AS qty_reserved,
-        ARRAY_AGG(i.imei)               AS imeis_reserved
+        -- aggregate only non-null IMEIs
+        ARRAY_REMOVE(
+          ARRAY_AGG(i.imei) FILTER (WHERE i.status  = 'reserved'),
+          NULL
+        )                               AS imeis_reserved
       FROM stock_updates su
       JOIN products p
         ON p.id = su.product_id
@@ -172,12 +178,10 @@ async function getPlaceOrderData(req, res, next) {
     );
 
     if (pending.length) {
-      // as long as there's a pending pickup,
-      // we force stock mode on the front‐end
       return res.json({ mode: 'stock', pending });
     }
 
-    // 2) free‐mode: only show dealers in my state and available inventory
+    // 2) free-mode (unchanged) …
     const { rows: products } = await pool.query(
       `
       SELECT
@@ -211,6 +215,7 @@ async function getPlaceOrderData(req, res, next) {
     next(err);
   }
 }
+
 
 /**
  * POST /api/marketer/orders
