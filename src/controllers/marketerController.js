@@ -127,7 +127,7 @@ async function getPlaceOrderData(req, res, next) {
   const marketerId = req.user.id;
 
   try {
-    // 0) marketer’s location
+    // 0) fetch marketer’s location
     const { rows: me } = await pool.query(
       `SELECT location FROM users WHERE id = $1`,
       [marketerId]
@@ -137,7 +137,7 @@ async function getPlaceOrderData(req, res, next) {
     }
     const marketerLocation = me[0].location;
 
-    // 1) pending stock-pickups with properly cleaned IMEI arrays
+    // 1) pending stock‐pickups
     const { rows: pending } = await pool.query(`
       SELECT
         su.id                       AS stock_update_id,
@@ -149,32 +149,23 @@ async function getPlaceOrderData(req, res, next) {
         u.business_name             AS dealer_name,
         u.location                  AS dealer_location,
         su.quantity                 AS qty_reserved,
-
-        -- join only reserved items, then aggregate
-          ARRAY_AGG(i.imei) FILTER (WHERE i.status = 'reserved') AS imeis_reserved
-
+        ARRAY_AGG(i.imei) FILTER (WHERE i.status = 'reserved') AS imeis_reserved
       FROM stock_updates su
       JOIN products p
         ON p.id = su.product_id
       JOIN users u
         ON u.id = p.dealer_id
-
-      -- only bring in the reserved IMEIs
       LEFT JOIN inventory_items i
         ON i.stock_update_id = su.id
        AND i.status          = 'reserved'
-
-      WHERE su.marketer_id     = $1
-        AND su.status          = 'pending'
-        AND su.transfer_status = 'none'
-        AND su.deadline       > NOW()
-
+      WHERE su.marketer_id = $1
+        AND su.status        = 'pending'   -- only truly “live” pickups
+        AND su.deadline > NOW()
       GROUP BY
         su.id, p.id, p.device_name, p.device_model,
         p.device_type, p.selling_price,
         u.business_name, u.location,
         su.quantity
-
       ORDER BY su.deadline
     `, [marketerId]);
 
@@ -182,7 +173,33 @@ async function getPlaceOrderData(req, res, next) {
       return res.json({ mode: 'stock', pending });
     }
 
-    // … your “free” mode lookup …
+    // 2) free‐mode products
+    const { rows: products } = await pool.query(`
+      SELECT
+        p.id                            AS product_id,
+        p.device_name,
+        p.device_model,
+        p.device_type,
+        p.selling_price,
+        u.business_name                 AS dealer_name,
+        u.location                      AS dealer_location,
+        COUNT(i.*) FILTER (WHERE i.status = 'available')       AS qty_available,
+        ARRAY_AGG(i.imei) FILTER (WHERE i.status = 'available') AS imeis_available
+      FROM products p
+      JOIN users u
+        ON p.dealer_id = u.id
+      LEFT JOIN inventory_items i
+        ON i.product_id = p.id
+      WHERE u.location = $1
+      GROUP BY
+        p.id, p.device_name, p.device_model,
+        p.device_type, p.selling_price,
+        u.business_name, u.location
+      HAVING COUNT(i.*) FILTER (WHERE i.status = 'available') > 0
+      ORDER BY p.device_name
+    `, [marketerLocation]);
+
+    return res.json({ mode: 'free', products });
   } catch (err) {
     next(err);
   }
