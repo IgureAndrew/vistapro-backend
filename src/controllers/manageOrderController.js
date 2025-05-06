@@ -43,88 +43,87 @@ async function getPendingOrders(req, res, next) {
  * MasterAdmin confirms an order (stock or free).
  */
 async function confirmOrder(req, res, next) {
-  const { orderId }       = req.params;
-  const adminUniqueId     = req.user.unique_id;
-  const client            = await pool.connect();
+  const { orderId }   = req.params;
+  const adminUid      = req.user.unique_id;
+  const client        = await pool.connect();
 
   try {
     await client.query("BEGIN");
 
-    // 1) Lock the order row
-    const { rows: lock } = await client.query(
-      `SELECT id, marketer_id, number_of_devices, commission_paid, stock_update_id
-         FROM orders
-        WHERE id = $1
-        FOR UPDATE`,
-      [orderId]
-    );
-    if (!lock.length) {
+    // 1) Lock and pull stock_update_id
+    const { rows: lockRows } = await client.query(`
+      SELECT id,
+             marketer_id,
+             number_of_devices,
+             commission_paid,
+             stock_update_id
+        FROM orders
+       WHERE id = $1
+       FOR UPDATE
+    `, [orderId]);
+
+    if (!lockRows.length) {
       await client.query("ROLLBACK");
       return res.status(404).json({ message: "Order not found." });
     }
-    const orderMeta = lock[0];
+    const orderMeta = lockRows[0];
     if (orderMeta.commission_paid) {
       await client.query("ROLLBACK");
       return res.status(400).json({ message: "Commission already paid." });
     }
 
-    // 2) Figure out device_type
-    const { rows: info } = await client.query(
-      `SELECT p.device_type
-         FROM orders o
-         LEFT JOIN stock_updates su ON o.stock_update_id = su.id
-         LEFT JOIN products p      ON p.id = COALESCE(o.product_id, su.product_id)
-        WHERE o.id = $1`,
-      [orderId]
-    );
-    if (!info.length || !info[0].device_type) {
+    // 2) Look up device_type
+    const { rows: infoRows } = await client.query(`
+      SELECT p.device_type
+        FROM orders o
+   LEFT JOIN stock_updates su ON o.stock_update_id = su.id
+   LEFT JOIN products p      ON p.id = COALESCE(o.product_id, su.product_id)
+       WHERE o.id = $1
+    `, [orderId]);
+
+    if (!infoRows.length || !infoRows[0].device_type) {
       throw new Error("Product not found for that order");
     }
-    const deviceType = info[0].device_type.toLowerCase();
+    const deviceType = infoRows[0].device_type.toLowerCase();
 
-    // 3) Compute commission with ios instead of “iphone”
-    const COMMISSION_RATES = {
-      android: 10000,
-      ios:     15000
-    };
+    // 3) Compute commission (now using ios)
+    const COMMISSION_RATES = { android: 10000, ios: 15000 };
     const rate = COMMISSION_RATES[deviceType];
     if (!rate) throw new Error(`Unsupported device type: ${deviceType}`);
     const commission = rate * orderMeta.number_of_devices;
 
-    // 4) Mark order confirmed & commission_paid
-    const { rows: updatedRows } = await client.query(
-      `UPDATE orders
-          SET status          = 'confirmed',
-              confirmed_by    = $2,
-              confirmed_at    = NOW(),
-              commission_paid = TRUE,
-              updated_at      = NOW()
-        WHERE id = $1
-        RETURNING *`,
-      [orderId, adminUniqueId]
-    );
+    // 4) Mark the order confirmed
+    const { rows: updatedRows } = await client.query(`
+      UPDATE orders
+         SET status          = 'confirmed',
+             confirmed_by    = $2,
+             confirmed_at    = NOW(),
+             commission_paid = TRUE,
+             updated_at      = NOW()
+       WHERE id = $1
+       RETURNING *
+    `, [ orderId, adminUid ]);
     const updatedOrder = updatedRows[0];
 
-    // 4.1) If this was a stock-pickup order, mark that pickup “sold”
+    // 4a) If this was a stock pickup, mark it sold
     if (orderMeta.stock_update_id) {
-      await client.query(
-        `UPDATE stock_updates
-            SET status = 'sold'
-          WHERE id = $1`,
-        [orderMeta.stock_update_id]
-      );
+      await client.query(`
+        UPDATE stock_updates
+           SET status     = 'sold',
+               updated_at = NOW()
+         WHERE id = $1
+      `, [ orderMeta.stock_update_id ]);
     }
 
-    // 5) Credit marketer’s commission into wallet
-    const { rows: userRow } = await client.query(
-      `SELECT unique_id FROM users WHERE id = $1`,
-      [orderMeta.marketer_id]
-    );
-    if (!userRow.length) throw new Error("Marketer not found");
-    const marketerUniqueId = userRow[0].unique_id;
+    // 5) Credit the marketer’s wallet
+    const { rows: userRows } = await client.query(`
+      SELECT unique_id FROM users WHERE id = $1
+    `, [ orderMeta.marketer_id ]);
+    if (!userRows.length) throw new Error("Marketer not found");
+    const marketerUid = userRows[0].unique_id;
 
     const { available, withheld } = await walletService.creditCommissionFromAmount(
-      marketerUniqueId,
+      marketerUid,
       orderId,
       commission
     );
@@ -132,11 +131,10 @@ async function confirmOrder(req, res, next) {
     await client.query("COMMIT");
 
     return res.json({
-      message: "Order confirmed, pickup marked sold, and commission credited.",
+      message: "Order confirmed, pickup marked sold, and commission paid.",
       order: updatedOrder,
       commissionBreakdown: { commission, available, withheld }
     });
-
   } catch (err) {
     await client.query("ROLLBACK");
     next(err);
