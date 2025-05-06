@@ -229,7 +229,7 @@ async function createOrder(req, res, next) {
   } = req.body;
 
   try {
-    // 1) Look up product/stock for profit calculation
+    // 1) Look up cost & selling_price for commission/profit.
     const table = stock_update_id
       ? 'stock_updates su JOIN products p ON su.product_id = p.id'
       : 'products p';
@@ -244,13 +244,15 @@ async function createOrder(req, res, next) {
     `, [ stock_update_id || product_id ]);
 
     if (!info.length) {
-      return res.status(400).json({ message: "Product or stock pickup not found." });
+      return res
+        .status(400)
+        .json({ message: "Product or stock pickup not found." });
     }
     const { device_type, cost_price, selling_price } = info[0];
     const profitPerDevice = Number(selling_price) - Number(cost_price);
 
-    // 2) Insert a pending order — now including sale_date & created_at!
-    const insertOrderSQL = `
+    // 2) Insert into orders — we leave the inventory status & pickup status alone for now.
+    const insertSQL = `
       INSERT INTO orders (
         marketer_id,
         product_id,
@@ -272,7 +274,7 @@ async function createOrder(req, res, next) {
       RETURNING *
     `;
 
-    const { rows } = await pool.query(insertOrderSQL, [
+    const { rows } = await pool.query(insertSQL, [
       marketerId,
       product_id       || null,
       stock_update_id  || null,
@@ -286,13 +288,13 @@ async function createOrder(req, res, next) {
     ]);
     const order = rows[0];
 
-    // 3) Queue commission credits (still pending until MasterAdmin confirms)
+    // 3) Credit marketer/admin/superadmin commissions (they'll be *paid out* on confirm)
     await creditMarketerCommission(  marketerUid, order.id, device_type, number_of_devices);
     await creditAdminCommission(      marketerUid, order.id, number_of_devices);
     await creditSuperAdminCommission( marketerUid, order.id, number_of_devices);
 
     res.status(201).json({
-      message: "Order placed successfully and awaiting confirmation.",
+      message: "Order placed successfully and awaiting master-admin confirmation.",
       order
     });
   } catch (err) {
