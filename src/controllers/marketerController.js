@@ -215,7 +215,8 @@ async function getPlaceOrderData(req, res, next) {
  */
 // src/controllers/marketerController.js
 async function createOrder(req, res, next) {
-  const marketerId      = req.user.id;
+  const marketerId  = req.user.id;
+  const marketerUid = req.user.unique_id;
   const {
     stock_update_id,
     product_id,
@@ -224,91 +225,80 @@ async function createOrder(req, res, next) {
     customer_name,
     customer_phone,
     customer_address,
-    bnpl_platform
+    bnpl_platform,
   } = req.body;
 
   try {
-    // 1) Figure out which mode we're in and validate it
-    let pkCondition, params;
-    if (stock_update_id) {
-      // Must have a live pickup to use
-      pkCondition = `
-        SELECT id, product_id
-          FROM stock_updates
-         WHERE id = $1
-           AND marketer_id = $2
-           AND status = 'pending'
-           AND deadline > NOW()
-      `;
-      params = [stock_update_id, marketerId];
-    } else {
-      // Free mode: no held stock, must pass product_id + enough available
-      pkCondition = `
-        SELECT p.id
-          FROM products p
-          JOIN inventory_items i ON i.product_id = p.id
-         WHERE p.id = $1
-           AND i.status = 'available'
-        GROUP BY p.id
-       HAVING COUNT(*) >= $2
-      `;
-      params = [product_id, number_of_devices];
-    }
+    // 1) Look up product/stock for profit calculation
+    const table = stock_update_id
+      ? 'stock_updates su JOIN products p ON su.product_id = p.id'
+      : 'products p';
+    const where = stock_update_id
+      ? 'su.id = $1'
+      : 'p.id = $1';
 
-    const { rows: pkRows } = await pool.query(pkCondition, params);
-    if (!pkRows.length) {
-      return res.status(400).json({
-        message: stock_update_id
-          ? "Invalid or expired stock pickup."
-          : "Not enough free stock to place that order."
-      });
-    }
-    // decide the product we're selling
-    const finalProductId = stock_update_id
-      ? pkRows[0].product_id
-      : product_id;
+    const { rows: info } = await pool.query(`
+      SELECT p.device_type, p.cost_price, p.selling_price
+        FROM ${table}
+       WHERE ${where}
+    `, [ stock_update_id || product_id ]);
 
-    // 2) Insert the order in PENDING state
-    const { rows } = await pool.query(
-      `INSERT INTO orders (
-         marketer_id,
-         product_id,
-         stock_update_id,
-         number_of_devices,
-         sold_amount,
-         customer_name,
-         customer_phone,
-         customer_address,
-         bnpl_platform,
-         status,
-         created_at
-       ) VALUES (
-         $1, $2, $3, $4, $5, $6, $7, $8, $9,
-         'pending', NOW()
-       )
-       RETURNING *`,
-      [
-        marketerId,
-        finalProductId,
-        stock_update_id || null,
+    if (!info.length) {
+      return res.status(400).json({ message: "Product or stock pickup not found." });
+    }
+    const { device_type, cost_price, selling_price } = info[0];
+    const profitPerDevice = Number(selling_price) - Number(cost_price);
+
+    // 2) Insert a pending order — now including sale_date & created_at!
+    const insertOrderSQL = `
+      INSERT INTO orders (
+        marketer_id,
+        product_id,
+        stock_update_id,
         number_of_devices,
         sold_amount,
         customer_name,
         customer_phone,
         customer_address,
-        bnpl_platform || null
-      ]
-    );
+        bnpl_platform,
+        earnings_per_device,
+        sale_date,
+        created_at
+      ) VALUES (
+        $1, $2, $3, $4, $5,
+        $6, $7, $8, $9, $10,
+        NOW(), NOW()
+      )
+      RETURNING *
+    `;
 
-    return res.status(201).json({
-      message: "Order placed successfully (pending admin confirmation).",
-      order: rows[0]
+    const { rows } = await pool.query(insertOrderSQL, [
+      marketerId,
+      product_id       || null,
+      stock_update_id  || null,
+      number_of_devices,
+      sold_amount,
+      customer_name,
+      customer_phone,
+      customer_address,
+      bnpl_platform    || null,
+      profitPerDevice
+    ]);
+    const order = rows[0];
+
+    // 3) Queue commission credits (still pending until MasterAdmin confirms)
+    await creditMarketerCommission(  marketerUid, order.id, device_type, number_of_devices);
+    await creditAdminCommission(      marketerUid, order.id, number_of_devices);
+    await creditSuperAdminCommission( marketerUid, order.id, number_of_devices);
+
+    res.status(201).json({
+      message: "Order placed successfully and awaiting confirmation.",
+      order
     });
   } catch (err) {
     next(err);
   }
 }
-
 
 /**
  * getOrderHistory
