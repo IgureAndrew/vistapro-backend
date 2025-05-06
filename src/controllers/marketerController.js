@@ -215,8 +215,7 @@ async function getPlaceOrderData(req, res, next) {
  */
 // src/controllers/marketerController.js
 async function createOrder(req, res, next) {
-  const marketerId  = req.user.id;
-  const marketerUid = req.user.unique_id;
+  const marketerId      = req.user.id;
   const {
     stock_update_id,
     product_id,
@@ -225,114 +224,91 @@ async function createOrder(req, res, next) {
     customer_name,
     customer_phone,
     customer_address,
-    bnpl_platform,
+    bnpl_platform
   } = req.body;
 
   try {
-    // 1) look up cost & selling_price …
-    const table = stock_update_id
-      ? 'stock_updates su JOIN products p ON su.product_id = p.id'
-      : 'products p';
-    const where = stock_update_id
-      ? 'su.id = $1'
-      : 'p.id = $1';
-
-    const { rows: info } = await pool.query(`
-      SELECT p.device_type, p.cost_price, p.selling_price
-      FROM ${table}
-      WHERE ${where}
-    `, [ stock_update_id || product_id ]);
-    if (!info.length) return res.status(400).json({ message: "Product/stock not found." });
-
-    const { device_type, cost_price, selling_price } = info[0];
-    const profitPerDevice = Number(selling_price) - Number(cost_price);
-
-    // 2a) If using a pickup, consume one reserved IMEI…
+    // 1) Figure out which mode we're in and validate it
+    let pkCondition, params;
     if (stock_update_id) {
-      const { rowCount } = await pool.query(`
-        UPDATE inventory_items
-           SET status = 'sold'
-         WHERE id IN (
-           SELECT id
-             FROM inventory_items
-            WHERE stock_update_id = $1
-              AND status          = 'reserved'
-            LIMIT 1
-         )
-      `, [stock_update_id]);
-      if (!rowCount) {
-        return res.status(400).json({ message: "No reserved IMEI left to sell." });
-      }
-
-      // if that was the last reserved, mark the pickup itself COMPLETE
-      await pool.query(`
-        UPDATE stock_updates
-           SET status = 'completed'
+      // Must have a live pickup to use
+      pkCondition = `
+        SELECT id, product_id
+          FROM stock_updates
          WHERE id = $1
-           AND NOT EXISTS (
-             SELECT 1
-               FROM inventory_items
-              WHERE stock_update_id = $1
-                AND status          = 'reserved'
-           )
-      `, [stock_update_id]);
-
-    // 2b) else “free” mode: grab N available IMEIs
+           AND marketer_id = $2
+           AND status = 'pending'
+           AND deadline > NOW()
+      `;
+      params = [stock_update_id, marketerId];
     } else {
-      const { rows: items } = await pool.query(`
-        SELECT id
-          FROM inventory_items
-         WHERE product_id = $1
-           AND status     = 'available'
-         LIMIT $2
-      `, [product_id, number_of_devices]);
-      if (items.length < number_of_devices) {
-        return res.status(400).json({ message: "Not enough inventory available." });
-      }
-      const ids = items.map(r => r.id);
-      await pool.query(`
-        UPDATE inventory_items
-           SET status = 'sold'
-         WHERE id = ANY($1)
-      `, [ids]);
+      // Free mode: no held stock, must pass product_id + enough available
+      pkCondition = `
+        SELECT p.id
+          FROM products p
+          JOIN inventory_items i ON i.product_id = p.id
+         WHERE p.id = $1
+           AND i.status = 'available'
+        GROUP BY p.id
+       HAVING COUNT(*) >= $2
+      `;
+      params = [product_id, number_of_devices];
     }
 
-    // 3) insert into orders …
-    const { rows } = await pool.query(`
-      INSERT INTO orders (
-        marketer_id, product_id, stock_update_id,
-        number_of_devices, sold_amount,
-        customer_name, customer_phone, customer_address,
-        bnpl_platform, earnings_per_device,
-        sale_date, created_at
-      ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), NOW()
-      )
-      RETURNING *
-    `, [
-      marketerId,
-      product_id       || null,
-      stock_update_id  || null,
-      number_of_devices,
-      sold_amount,
-      customer_name,
-      customer_phone,
-      customer_address,
-      bnpl_platform    || null,
-      profitPerDevice
-    ]);
-    const order = rows[0];
+    const { rows: pkRows } = await pool.query(pkCondition, params);
+    if (!pkRows.length) {
+      return res.status(400).json({
+        message: stock_update_id
+          ? "Invalid or expired stock pickup."
+          : "Not enough free stock to place that order."
+      });
+    }
+    // decide the product we're selling
+    const finalProductId = stock_update_id
+      ? pkRows[0].product_id
+      : product_id;
 
-    // 4) credit commissions…
-    await creditMarketerCommission(  marketerUid, order.id, device_type, number_of_devices);
-    await creditAdminCommission(      marketerUid, order.id, number_of_devices);
-    await creditSuperAdminCommission( marketerUid, order.id, number_of_devices);
+    // 2) Insert the order in PENDING state
+    const { rows } = await pool.query(
+      `INSERT INTO orders (
+         marketer_id,
+         product_id,
+         stock_update_id,
+         number_of_devices,
+         sold_amount,
+         customer_name,
+         customer_phone,
+         customer_address,
+         bnpl_platform,
+         status,
+         created_at
+       ) VALUES (
+         $1, $2, $3, $4, $5, $6, $7, $8, $9,
+         'pending', NOW()
+       )
+       RETURNING *`,
+      [
+        marketerId,
+        finalProductId,
+        stock_update_id || null,
+        number_of_devices,
+        sold_amount,
+        customer_name,
+        customer_phone,
+        customer_address,
+        bnpl_platform || null
+      ]
+    );
 
-    res.status(201).json({ message: "Order placed successfully.", order });
+    return res.status(201).json({
+      message: "Order placed successfully (pending admin confirmation).",
+      order: rows[0]
+    });
   } catch (err) {
     next(err);
   }
 }
+
 
 /**
  * getOrderHistory
