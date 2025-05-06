@@ -43,16 +43,16 @@ async function getPendingOrders(req, res, next) {
  * MasterAdmin confirms an order (stock or free).
  */
 async function confirmOrder(req, res, next) {
-  const { orderId } = req.params;
-  const adminUniqueId = req.user.unique_id;
-  const client = await pool.connect();
+  const { orderId }       = req.params;
+  const adminUniqueId     = req.user.unique_id;
+  const client            = await pool.connect();
 
   try {
     await client.query("BEGIN");
 
-    // lock the order
+    // 1) Lock the order row
     const { rows: lock } = await client.query(
-      `SELECT id, marketer_id, number_of_devices, commission_paid
+      `SELECT id, marketer_id, number_of_devices, commission_paid, stock_update_id
          FROM orders
         WHERE id = $1
         FOR UPDATE`,
@@ -62,12 +62,13 @@ async function confirmOrder(req, res, next) {
       await client.query("ROLLBACK");
       return res.status(404).json({ message: "Order not found." });
     }
-    if (lock[0].commission_paid) {
+    const orderMeta = lock[0];
+    if (orderMeta.commission_paid) {
       await client.query("ROLLBACK");
       return res.status(400).json({ message: "Commission already paid." });
     }
 
-    // figure out device_type
+    // 2) Figure out device_type
     const { rows: info } = await client.query(
       `SELECT p.device_type
          FROM orders o
@@ -81,17 +82,17 @@ async function confirmOrder(req, res, next) {
     }
     const deviceType = info[0].device_type.toLowerCase();
 
-    // now include ios instead of iphone
+    // 3) Compute commission with ios instead of “iphone”
     const COMMISSION_RATES = {
       android: 10000,
       ios:     15000
     };
     const rate = COMMISSION_RATES[deviceType];
     if (!rate) throw new Error(`Unsupported device type: ${deviceType}`);
-    const commission = rate * lock[0].number_of_devices;
+    const commission = rate * orderMeta.number_of_devices;
 
-    // mark confirmed
-    const { rows: updated } = await client.query(
+    // 4) Mark order confirmed & commission_paid
+    const { rows: updatedRows } = await client.query(
       `UPDATE orders
           SET status          = 'confirmed',
               confirmed_by    = $2,
@@ -102,14 +103,26 @@ async function confirmOrder(req, res, next) {
         RETURNING *`,
       [orderId, adminUniqueId]
     );
+    const updatedOrder = updatedRows[0];
 
-    // credit marketer
+    // 4.1) If this was a stock-pickup order, mark that pickup “sold”
+    if (orderMeta.stock_update_id) {
+      await client.query(
+        `UPDATE stock_updates
+            SET status = 'sold'
+          WHERE id = $1`,
+        [orderMeta.stock_update_id]
+      );
+    }
+
+    // 5) Credit marketer’s commission into wallet
     const { rows: userRow } = await client.query(
       `SELECT unique_id FROM users WHERE id = $1`,
-      [lock[0].marketer_id]
+      [orderMeta.marketer_id]
     );
     if (!userRow.length) throw new Error("Marketer not found");
     const marketerUniqueId = userRow[0].unique_id;
+
     const { available, withheld } = await walletService.creditCommissionFromAmount(
       marketerUniqueId,
       orderId,
@@ -117,11 +130,13 @@ async function confirmOrder(req, res, next) {
     );
 
     await client.query("COMMIT");
-    res.json({
-      message: "Order confirmed and commission credited.",
-      order: updated[0],
+
+    return res.json({
+      message: "Order confirmed, pickup marked sold, and commission credited.",
+      order: updatedOrder,
       commissionBreakdown: { commission, available, withheld }
     });
+
   } catch (err) {
     await client.query("ROLLBACK");
     next(err);
@@ -129,6 +144,7 @@ async function confirmOrder(req, res, next) {
     client.release();
   }
 }
+
 
 /**
  * PATCH /api/manage-orders/orders/:orderId/confirm-to-dealer
