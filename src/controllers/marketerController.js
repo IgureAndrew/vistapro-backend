@@ -311,13 +311,13 @@ async function getOrderHistory(req, res, next) {
     const { rows } = await pool.query(`
       SELECT
         o.id,
-        COALESCE(
-          (SELECT json_agg(i.imei)
-             FROM inventory_items i
-            WHERE i.stock_update_id = o.stock_update_id
-          ),
-          '[]'
-        ) AS imeis,
+        -- gather any reserved IMEIs
+        COALESCE((
+          SELECT json_agg(i.imei)
+            FROM inventory_items i
+           WHERE i.stock_update_id = o.stock_update_id
+        ), '[]') AS imeis,
+        -- join products either directly or via the stock_update
         p.device_name,
         p.device_model,
         p.device_type,
@@ -326,8 +326,10 @@ async function getOrderHistory(req, res, next) {
         o.sale_date,
         o.status
       FROM orders o
+      LEFT JOIN stock_updates su
+        ON o.stock_update_id = su.id
       LEFT JOIN products p
-        ON o.product_id = p.id
+        ON p.id = COALESCE(o.product_id, su.product_id)
       WHERE o.marketer_id = $1
       ORDER BY o.sale_date DESC
     `, [marketerId]);
