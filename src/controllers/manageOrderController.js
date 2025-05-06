@@ -80,7 +80,12 @@ async function confirmOrder(req, res, next) {
       throw new Error("Product not found for that order");
     }
     const deviceType = info[0].device_type.toLowerCase();
-    const COMMISSION_RATES = { android: 10000, iphone: 15000 };
+
+    // now include ios instead of iphone
+    const COMMISSION_RATES = {
+      android: 10000,
+      ios:     15000
+    };
     const rate = COMMISSION_RATES[deviceType];
     if (!rate) throw new Error(`Unsupported device type: ${deviceType}`);
     const commission = rate * lock[0].number_of_devices;
