@@ -50,16 +50,19 @@ async function getPendingOrders(req, res, next) {
  * and credits all commissions via walletService.
  */
 async function confirmOrder(req, res, next) {
-  const { orderId }   = req.params;
-  const adminUid      = req.user.unique_id;
-  const client        = await pool.connect();
+  const { orderId } = req.params;
+  const adminUid    = req.user.unique_id;
+  const client      = await pool.connect();
 
   try {
     await client.query("BEGIN");
 
-    // 1) lock & fetch order
+    // 1) Lock & fetch the order
     const { rows: [order] } = await client.query(
-      `SELECT * FROM orders WHERE id = $1 FOR UPDATE`,
+      `SELECT * 
+         FROM orders 
+        WHERE id = $1 
+          FOR UPDATE`,
       [orderId]
     );
     if (!order) {
@@ -67,35 +70,36 @@ async function confirmOrder(req, res, next) {
       return res.status(404).json({ message: "Order not found." });
     }
 
-    // 2) mark stock‐pickup items sold & mark pickup “sold”
+    // 2) If this was a stock‐pickup order, mark reserved IMEIs sold + pickup “sold”
     if (order.stock_update_id) {
       await client.query(
         `UPDATE inventory_items
-           SET status = 'sold'
-         WHERE stock_update_id = $1 AND status = 'reserved'`,
+            SET status = 'sold'
+          WHERE stock_update_id = $1
+            AND status          = 'reserved'`,
         [order.stock_update_id]
       );
       await client.query(
         `UPDATE stock_updates
-           SET status = 'sold'
-         WHERE id = $1`,
+            SET status = 'sold'
+          WHERE id = $1`,
         [order.stock_update_id]
       );
     }
 
-    // 3) update order → confirmed
+    // 3) Mark the order confirmed
     const { rows: [updated] } = await client.query(
       `UPDATE orders
-          SET status        = 'confirmed',
-              confirmed_by  = $2,
-              confirmed_at  = NOW(),
-              updated_at    = NOW()
+          SET status       = 'confirmed',
+              confirmed_by = $2,
+              confirmed_at = NOW(),
+              updated_at   = NOW()
         WHERE id = $1
         RETURNING *`,
       [orderId, adminUid]
     );
 
-    // 4) figure out device_type & qty
+    // 4) Look up device_type & quantity
     const { rows: [{ device_type }] } = await client.query(
       `SELECT p.device_type
          FROM orders o
@@ -104,19 +108,19 @@ async function confirmOrder(req, res, next) {
         WHERE o.id = $1`,
       [orderId]
     );
-    const qty = updated.number_of_devices;
-    const dt  = device_type.toLowerCase();
+    const qty   = updated.number_of_devices;
+    const dtKey = device_type.toLowerCase(); // "ios" or "android", etc.
 
-    // 5) credit all tiers
-    //    (marketerUid is the owner of the order)
+    // 5) Resolve the marketer's unique_id (owner of this order)
     const { rows: [{ unique_id: marketerUid }] } = await client.query(
-      `SELECT u.unique_id
-         FROM users u
-        WHERE u.id = $1`,
+      `SELECT unique_id
+         FROM users
+        WHERE id = $1`,
       [order.marketer_id]
     );
 
-    await creditMarketerCommission(  marketerUid, orderId, dt, qty );
+    // 6) Credit commissions on all three tiers
+    await creditMarketerCommission(  marketerUid, orderId, dtKey, qty );
     await creditAdminCommission(      marketerUid, orderId,       qty );
     await creditSuperAdminCommission( marketerUid, orderId,       qty );
 
@@ -131,80 +135,6 @@ async function confirmOrder(req, res, next) {
     next(err);
   } finally {
     client.release();
-  }
-}
-
-/**
- * PATCH /api/manage-orders/orders/:orderId/confirm-to-dealer
- */
-async function confirmOrderToDealer(req, res, next) {
-  try {
-    const { orderId } = req.params;
-    const { rows } = await pool.query(
-      `UPDATE orders
-          SET status       = 'confirmed_to_dealer',
-              confirmed_at = NOW(),
-              updated_at   = NOW()
-        WHERE id = $1
-        RETURNING *`,
-      [orderId]
-    );
-    if (!rows.length) return res.status(404).json({ message: "Order not found." });
-    res.json({ message: "Order confirmed to dealer.", order: rows[0] });
-  } catch (err) {
-    next(err);
-  }
-}
-
-/**
- * GET /api/manage-orders/orders/history
- */
-async function getOrderHistory(req, res, next) {
-  try {
-    const { unique_id: uid, role } = req.user;
-    let base = `
-      SELECT
-        o.id,
-        u.first_name           AS marketer_name,
-        o.bnpl_platform,
-        p.device_name,
-        p.device_model,
-        p.device_type,
-        o.number_of_devices,
-        o.sold_amount,
-        o.sale_date            AS sale_date,
-        o.status
-      FROM orders o
-      LEFT JOIN stock_updates su
-        ON o.stock_update_id = su.id
-      LEFT JOIN products p
-        ON p.id = COALESCE(o.product_id, su.product_id)
-      JOIN users u
-        ON o.marketer_id = u.id
-    `;
-    let where = "";
-    const params = [];
-
-    if (role === "MasterAdmin") {
-      where = `WHERE u.role = 'Marketer'`;
-    } else if (role === "Admin") {
-      where = `WHERE u.admin_id = (SELECT id FROM users WHERE unique_id = $1)`;
-      params.push(uid);
-    } else if (role === "SuperAdmin") {
-      base += ` JOIN users a ON u.admin_id = a.id `;
-      where = `WHERE a.super_admin_id = (SELECT id FROM users WHERE unique_id = $1)`;
-      params.push(uid);
-    } else {
-      return res.status(403).json({ message: "Permission denied." });
-    }
-
-    const { rows } = await pool.query(
-      `${base} ${where} ORDER BY o.sale_date DESC`,
-      params
-    );
-    res.json({ orders: rows });
-  } catch (err) {
-    next(err);
   }
 }
 
