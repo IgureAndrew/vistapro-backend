@@ -139,6 +139,80 @@ async function confirmOrder(req, res, next) {
 }
 
 /**
+ * PATCH /api/manage-orders/orders/:orderId/confirm-to-dealer
+ */
+async function confirmOrderToDealer(req, res, next) {
+  try {
+    const { orderId } = req.params;
+    const { rows } = await pool.query(
+      `UPDATE orders
+          SET status       = 'confirmed_to_dealer',
+              confirmed_at = NOW(),
+              updated_at   = NOW()
+        WHERE id = $1
+        RETURNING *`,
+      [orderId]
+    );
+    if (!rows.length) return res.status(404).json({ message: "Order not found." });
+    res.json({ message: "Order confirmed to dealer.", order: rows[0] });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * GET /api/manage-orders/orders/history
+ */
+async function getOrderHistory(req, res, next) {
+  try {
+    const { unique_id: uid, role } = req.user;
+    let base = `
+      SELECT
+        o.id,
+        u.first_name           AS marketer_name,
+        o.bnpl_platform,
+        p.device_name,
+        p.device_model,
+        p.device_type,
+        o.number_of_devices,
+        o.sold_amount,
+        o.sale_date            AS sale_date,
+        o.status
+      FROM orders o
+      LEFT JOIN stock_updates su
+        ON o.stock_update_id = su.id
+      LEFT JOIN products p
+        ON p.id = COALESCE(o.product_id, su.product_id)
+      JOIN users u
+        ON o.marketer_id = u.id
+    `;
+    let where = "";
+    const params = [];
+
+    if (role === "MasterAdmin") {
+      where = `WHERE u.role = 'Marketer'`;
+    } else if (role === "Admin") {
+      where = `WHERE u.admin_id = (SELECT id FROM users WHERE unique_id = $1)`;
+      params.push(uid);
+    } else if (role === "SuperAdmin") {
+      base += ` JOIN users a ON u.admin_id = a.id `;
+      where = `WHERE a.super_admin_id = (SELECT id FROM users WHERE unique_id = $1)`;
+      params.push(uid);
+    } else {
+      return res.status(403).json({ message: "Permission denied." });
+    }
+
+    const { rows } = await pool.query(
+      `${base} ${where} ORDER BY o.sale_date DESC`,
+      params
+    );
+    res.json({ orders: rows });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
  * PUT /api/manage-orders/orders/:orderId
  */
 async function updateOrder(req, res, next) {
