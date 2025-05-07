@@ -203,14 +203,12 @@ async function getMyWallet(userId) {
  */
 async function requestWithdrawal(userId, amount, bankDetails) {
   const FEE = 100;
-
-  // 1) Coerce & validate the requested amount
   const amt = Number(amount);
-  if (isNaN(amt) || amt <= 0) {
+  if (!Number.isFinite(amt) || amt <= 0) {
     throw new Error("Invalid withdrawal amount");
   }
 
-  // 2) Fetch current available balance
+  // 1) Fetch the wallet
   const { rows: [w] } = await pool.query(
     `SELECT available_balance
        FROM wallets
@@ -221,20 +219,22 @@ async function requestWithdrawal(userId, amount, bankDetails) {
     throw new Error("Wallet not found");
   }
 
-  // 3) Make sure they can cover both amount + fee
+  // 2) Check balance
   const net = amt + FEE;
   if (w.available_balance < net) {
     throw new Error("Insufficient available balance (including ₦100 fee)");
   }
 
-  // 4) Persist bank details & adjust balances
+  // 3) Update balances & bank details
   await pool.query(
     `UPDATE wallets
         SET account_name      = $2,
             account_number    = $3,
             bank_name         = $4,
-            available_balance = available_balance - $5,
-            withheld_balance  = withheld_balance  + $5,
+            -- CAST $5 to int so Postgres picks the right '-' operator
+            available_balance = available_balance - $5::int,
+            -- same for '+'
+            withheld_balance  = withheld_balance  + $5::int,
             updated_at        = NOW()
       WHERE user_unique_id = $1`,
     [
@@ -242,15 +242,15 @@ async function requestWithdrawal(userId, amount, bankDetails) {
       bankDetails.account_name,
       bankDetails.account_number,
       bankDetails.bank_name,
-      net            // JS Number → PG integer, so `- $5` is integer subtraction
+      net,              // JS number → text, so we cast it in SQL
     ]
   );
 
-  // 5) Insert the withdrawal request
+  // 4) Insert withdrawal request
   const { rows: [reqRow] } = await pool.query(
     `INSERT INTO withdrawal_requests
-      ( user_unique_id, amount_requested, fee, net_amount,
-        status, account_name, account_number, bank_name, requested_at )
+       (user_unique_id, amount_requested, fee, net_amount,
+        status, account_name, account_number, bank_name, requested_at)
      VALUES ($1, $2, $3, $4, 'pending', $5, $6, $7, NOW())
      RETURNING *`,
     [
@@ -260,16 +260,16 @@ async function requestWithdrawal(userId, amount, bankDetails) {
       net,
       bankDetails.account_name,
       bankDetails.account_number,
-      bankDetails.bank_name
+      bankDetails.bank_name,
     ]
   );
 
-  // 6) Log the transaction in wallet_transactions
+  // 5) Log the transaction
   await pool.query(
     `INSERT INTO wallet_transactions
-      ( user_unique_id, amount, transaction_type, meta )
-     VALUES ( $1, -$2, 'withdraw_request', $3::jsonb )`,
-    [ userId, net, JSON.stringify({ reqId: reqRow.id }) ]
+       (user_unique_id, amount, transaction_type, meta)
+     VALUES ($1, -$2, 'withdraw_request', $3::jsonb)`,
+    [userId, net, JSON.stringify({ reqId: reqRow.id })]
   );
 
   return reqRow;
