@@ -40,17 +40,18 @@ async function getPendingOrders(req, res, next) {
 
 /**
  * PATCH /api/manage-orders/orders/:orderId/confirm
- * MasterAdmin confirms an order (stock or free).
+ * MasterAdmin confirms an order (stock or free), marks stock sold,
+ * and credits all commissions via walletService.
  */
 async function confirmOrder(req, res, next) {
-  const { orderId }   = req.params;
-  const adminUniqueId = req.user.unique_id;
-  const client        = await pool.connect();
+  const { orderId } = req.params;
+  const adminUid    = req.user.unique_id;
+  const client      = await pool.connect();
 
   try {
     await client.query("BEGIN");
 
-    // 1) Lock and fetch the order
+    // 1) Lock & fetch the order
     const { rows: lockRows } = await client.query(
       `SELECT * FROM orders WHERE id = $1 FOR UPDATE`,
       [orderId]
@@ -61,7 +62,7 @@ async function confirmOrder(req, res, next) {
       return res.status(404).json({ message: "Order not found." });
     }
 
-    // 2) If stock-pickup order, mark reserved IMEIs sold and update pickup status
+    // 2) If a stock-pickup order, mark its reserved IMEIs sold & update pickup status
     if (order.stock_update_id) {
       await client.query(
         `UPDATE inventory_items
@@ -78,7 +79,7 @@ async function confirmOrder(req, res, next) {
       );
     }
 
-    // 3) Update order status and record who confirmed it
+    // 3) Mark the order confirmed by MasterAdmin
     const { rows: updatedRows } = await client.query(
       `UPDATE orders
           SET status       = 'confirmed',
@@ -87,30 +88,37 @@ async function confirmOrder(req, res, next) {
               updated_at   = NOW()
         WHERE id = $1
         RETURNING *`,
-      [orderId, adminUniqueId]
+      [orderId, adminUid]
     );
     const updatedOrder = updatedRows[0];
 
-    // 4) Determine device type and commission
+    // 4) Look up device_type so we can compute total commission
     const { rows: infoRows } = await client.query(
       `SELECT p.device_type
          FROM orders o
-         LEFT JOIN stock_updates su ON o.stock_update_id = su.id
-         LEFT JOIN products p      ON p.id = COALESCE(o.product_id, su.product_id)
+    LEFT JOIN stock_updates su ON o.stock_update_id = su.id
+    LEFT JOIN products       p ON p.id = COALESCE(o.product_id, su.product_id)
         WHERE o.id = $1`,
       [orderId]
     );
     const deviceType = infoRows[0].device_type.toLowerCase();
-    const rates = { android: 10000, ios: 15000 };
-    const rate  = rates[deviceType] || 0;
-    const commissionAmount = rate * updatedOrder.number_of_devices;
+    const rates      = { android: 10000, ios: 15000 };
+    const rate       = rates[deviceType] || 0;
+    const totalCommission = rate * updatedOrder.number_of_devices;
 
-    // 5) Credit commissions via walletService
-    // walletService will handle marketer, admin, superadmin splits
+    // 5) Find the marketer’s unique_id
+    const { rows: mktRows } = await client.query(
+      `SELECT unique_id FROM users WHERE id = $1`,
+      [updatedOrder.marketer_id]
+    );
+    if (!mktRows.length) throw new Error("Marketer not found");
+    const marketerUid = mktRows[0].unique_id;
+
+    // 6) Credit *all* commissions (marketer + admin + super-admin)
     await walletService.creditCommissionFromAmount(
-      req.user.unique_id,
+      marketerUid,
       orderId,
-      commissionAmount
+      totalCommission
     );
 
     await client.query("COMMIT");
