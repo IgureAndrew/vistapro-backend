@@ -203,56 +203,74 @@ async function getMyWallet(userId) {
  */
 async function requestWithdrawal(userId, amount, bankDetails) {
   const FEE = 100;
-  const { rows: [w] } = await pool.query(`
-    SELECT available_balance
-      FROM wallets
-     WHERE user_unique_id = $1
-  `, [userId]);
 
-  if (!w || w.available_balance < amount + FEE) {
+  // 1) Coerce & validate the requested amount
+  const amt = Number(amount);
+  if (isNaN(amt) || amt <= 0) {
+    throw new Error("Invalid withdrawal amount");
+  }
+
+  // 2) Fetch current available balance
+  const { rows: [w] } = await pool.query(
+    `SELECT available_balance
+       FROM wallets
+      WHERE user_unique_id = $1`,
+    [userId]
+  );
+  if (!w) {
+    throw new Error("Wallet not found");
+  }
+
+  // 3) Make sure they can cover both amount + fee
+  const net = amt + FEE;
+  if (w.available_balance < net) {
     throw new Error("Insufficient available balance (including ₦100 fee)");
   }
 
-  const net = amount + FEE;
+  // 4) Persist bank details & adjust balances
+  await pool.query(
+    `UPDATE wallets
+        SET account_name      = $2,
+            account_number    = $3,
+            bank_name         = $4,
+            available_balance = available_balance - $5,
+            withheld_balance  = withheld_balance  + $5,
+            updated_at        = NOW()
+      WHERE user_unique_id = $1`,
+    [
+      userId,
+      bankDetails.account_name,
+      bankDetails.account_number,
+      bankDetails.bank_name,
+      net            // JS Number → PG integer, so `- $5` is integer subtraction
+    ]
+  );
 
-  // persist bank details + adjust balances
-  await pool.query(`
-    UPDATE wallets
-       SET account_name      = $2,
-           account_number    = $3,
-           bank_name         = $4,
-           available_balance = available_balance - $5,
-           withheld_balance  = withheld_balance + $5,
-           updated_at        = NOW()
-     WHERE user_unique_id = $1
-  `, [
-    userId,
-    bankDetails.account_name,
-    bankDetails.account_number,
-    bankDetails.bank_name,
-    net
-  ]);
+  // 5) Insert the withdrawal request
+  const { rows: [reqRow] } = await pool.query(
+    `INSERT INTO withdrawal_requests
+      ( user_unique_id, amount_requested, fee, net_amount,
+        status, account_name, account_number, bank_name, requested_at )
+     VALUES ($1, $2, $3, $4, 'pending', $5, $6, $7, NOW())
+     RETURNING *`,
+    [
+      userId,
+      amt,
+      FEE,
+      net,
+      bankDetails.account_name,
+      bankDetails.account_number,
+      bankDetails.bank_name
+    ]
+  );
 
-  // record the withdrawal request
-  const { rows: [reqRow] } = await pool.query(`
-    INSERT INTO withdrawal_requests
-      (user_unique_id, amount_requested, fee, net_amount,
-       status, account_name, account_number, bank_name, requested_at)
-    VALUES ($1, $2, $3, $4, 'pending', $5, $6, $7, NOW())
-    RETURNING *
-  `, [
-    userId, amount, FEE, net,
-    bankDetails.account_name,
-    bankDetails.account_number,
-    bankDetails.bank_name,
-  ]);
-
-  // log the transaction
-  await pool.query(`
-    INSERT INTO wallet_transactions
-      (user_unique_id, amount, transaction_type, meta)
-    VALUES ($1, -$2, 'withdraw_request', $3::jsonb)
-  `, [userId, net, JSON.stringify({ reqId: reqRow.id })]);
+  // 6) Log the transaction in wallet_transactions
+  await pool.query(
+    `INSERT INTO wallet_transactions
+      ( user_unique_id, amount, transaction_type, meta )
+     VALUES ( $1, -$2, 'withdraw_request', $3::jsonb )`,
+    [ userId, net, JSON.stringify({ reqId: reqRow.id }) ]
+  );
 
   return reqRow;
 }
@@ -261,18 +279,19 @@ async function requestWithdrawal(userId, amount, bankDetails) {
  * List your withdrawals.
  */
 async function getMyWithdrawals(userId) {
-  const { rows } = await pool.query(`
-    SELECT id,
-           amount_requested AS amount,
-           fee,
-           net_amount       AS total,
-           status,
-           requested_at
-      FROM withdrawal_requests
+  const { rows } = await pool.query(
+    `SELECT
+       id,
+       amount_requested AS amount,
+       fee,
+       net_amount       AS total,
+       status,
+       requested_at
+     FROM withdrawal_requests
      WHERE user_unique_id = $1
-     ORDER BY requested_at DESC
-  `, [userId]);
-
+     ORDER BY requested_at DESC`,
+    [userId]
+  );
   return rows;
 }
 
