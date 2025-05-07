@@ -2,11 +2,6 @@
 
 const { pool } = require("../config/database");
 const walletService = require("../services/walletService");
-const {
-  creditMarketerCommission,
-  creditAdminCommission,
-  creditSuperAdminCommission
-} = require("../services/commissionService");
 
 /**
  * GET /api/manage-orders/orders
@@ -48,27 +43,25 @@ async function getPendingOrders(req, res, next) {
  * MasterAdmin confirms an order (stock or free).
  */
 async function confirmOrder(req, res, next) {
-  const { orderId }     = req.params;
-  const adminUniqueId   = req.user.unique_id;
-  const client          = await pool.connect();
+  const { orderId }   = req.params;
+  const adminUniqueId = req.user.unique_id;
+  const client        = await pool.connect();
 
   try {
     await client.query("BEGIN");
 
     // 1) Lock and fetch the order
-    const { rows: [order] } = await client.query(
-      `SELECT *
-         FROM orders
-        WHERE id = $1
-          FOR UPDATE`,
+    const { rows: lockRows } = await client.query(
+      `SELECT * FROM orders WHERE id = $1 FOR UPDATE`,
       [orderId]
     );
+    const order = lockRows[0];
     if (!order) {
       await client.query("ROLLBACK");
       return res.status(404).json({ message: "Order not found." });
     }
 
-    // 2) If stock-pickup order → mark its reserved IMEI sold & mark the pickup “sold”
+    // 2) If stock-pickup order, mark reserved IMEIs sold and update pickup status
     if (order.stock_update_id) {
       await client.query(
         `UPDATE inventory_items
@@ -85,44 +78,46 @@ async function confirmOrder(req, res, next) {
       );
     }
 
-    // 3) Update order status + record who confirmed it
-    const { rows: [updatedOrder] } = await client.query(
+    // 3) Update order status and record who confirmed it
+    const { rows: updatedRows } = await client.query(
       `UPDATE orders
-          SET status        = 'confirmed',
-              confirmed_by  = $2,
-              confirmed_at  = NOW(),
-              updated_at    = NOW()
+          SET status       = 'confirmed',
+              confirmed_by = $2,
+              confirmed_at = NOW(),
+              updated_at   = NOW()
         WHERE id = $1
         RETURNING *`,
       [orderId, adminUniqueId]
     );
+    const updatedOrder = updatedRows[0];
 
-    // 4) Compute commissions based on device_type & quantity
-    //    Device-type comes from whichever product record applies
-    const { rows: [{ device_type }] } = await client.query(
+    // 4) Determine device type and commission
+    const { rows: infoRows } = await client.query(
       `SELECT p.device_type
          FROM orders o
-    LEFT JOIN stock_updates su ON o.stock_update_id = su.id
-    LEFT JOIN products       p ON p.id = COALESCE(o.product_id, su.product_id)
+         LEFT JOIN stock_updates su ON o.stock_update_id = su.id
+         LEFT JOIN products p      ON p.id = COALESCE(o.product_id, su.product_id)
         WHERE o.id = $1`,
       [orderId]
     );
-    const qty   = updatedOrder.number_of_devices;
-    const type  = device_type.toLowerCase();
+    const deviceType = infoRows[0].device_type.toLowerCase();
     const rates = { android: 10000, ios: 15000 };
-    const rate  = rates[type] || 0;
+    const rate  = rates[deviceType] || 0;
+    const commissionAmount = rate * updatedOrder.number_of_devices;
 
-    // 5) Credit wallets
-    await creditMarketerCommission(  order.marketer_unique_id || req.user.unique_id, orderId, type, qty);
-    await creditAdminCommission(      order.marketer_unique_id || req.user.unique_id, orderId, qty);
-    await creditSuperAdminCommission( order.marketer_unique_id || req.user.unique_id, orderId, qty);
+    // 5) Credit commissions via walletService
+    // walletService will handle marketer, admin, superadmin splits
+    await walletService.creditCommissionFromAmount(
+      req.user.unique_id,
+      orderId,
+      commissionAmount
+    );
 
     await client.query("COMMIT");
     res.json({
       message: "Order confirmed, stock marked sold, and commissions credited.",
       order: updatedOrder
     });
-
   } catch (err) {
     await client.query("ROLLBACK");
     next(err);
@@ -130,6 +125,7 @@ async function confirmOrder(req, res, next) {
     client.release();
   }
 }
+
 
 /**
  * PATCH /api/manage-orders/orders/:orderId/confirm-to-dealer
