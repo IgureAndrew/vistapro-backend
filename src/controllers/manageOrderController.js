@@ -52,34 +52,35 @@ async function confirmOrder(req, res, next) {
     await client.query("BEGIN");
 
     // 1) Lock & fetch the order
-    const { rows: lockRows } = await client.query(
+    const { rows: orderRows } = await client.query(
       `SELECT * FROM orders WHERE id = $1 FOR UPDATE`,
       [orderId]
     );
-    const order = lockRows[0];
-    if (!order) {
+    if (!orderRows.length) {
       await client.query("ROLLBACK");
       return res.status(404).json({ message: "Order not found." });
     }
+    const order = orderRows[0];
+    const qty   = order.number_of_devices;
 
-    // 2) If a stock-pickup order, mark its reserved IMEIs sold & update pickup status
+    // 2) If this was a stock pickup, mark reserved IMEIs sold & flip pickup to sold
     if (order.stock_update_id) {
       await client.query(
         `UPDATE inventory_items
-           SET status = 'sold'
-         WHERE stock_update_id = $1
-           AND status = 'reserved'`,
+            SET status = 'sold'
+          WHERE stock_update_id = $1
+            AND status = 'reserved'`,
         [order.stock_update_id]
       );
       await client.query(
         `UPDATE stock_updates
-           SET status = 'sold'
-         WHERE id = $1`,
+            SET status = 'sold'
+          WHERE id = $1`,
         [order.stock_update_id]
       );
     }
 
-    // 3) Mark the order confirmed by MasterAdmin
+    // 3) Confirm the order
     const { rows: updatedRows } = await client.query(
       `UPDATE orders
           SET status       = 'confirmed',
@@ -92,39 +93,82 @@ async function confirmOrder(req, res, next) {
     );
     const updatedOrder = updatedRows[0];
 
-    // 4) Look up device_type so we can compute total commission
-    const { rows: infoRows } = await client.query(
+    // 4) Look up hierarchy: marketer → admin → super-admin
+    const { rows: mRows } = await client.query(
+      `SELECT unique_id, admin_id
+         FROM users
+        WHERE id = $1`,
+      [order.marketer_id]
+    );
+    const marketerUid = mRows[0].unique_id;
+    const adminId     = mRows[0].admin_id;
+
+    const { rows: aRows } = await client.query(
+      `SELECT unique_id, super_admin_id
+         FROM users
+        WHERE id = $1`,
+      [adminId]
+    );
+    const adminUid2     = aRows[0].unique_id;
+    const superAdminId  = aRows[0].super_admin_id;
+
+    const { rows: sRows } = await client.query(
+      `SELECT unique_id
+         FROM users
+        WHERE id = $1`,
+      [superAdminId]
+    );
+    const superUid = sRows[0].unique_id;
+
+    // 5) Determine per-device rates
+    const { rows: dRows } = await client.query(
       `SELECT p.device_type
-         FROM orders o
-    LEFT JOIN stock_updates su ON o.stock_update_id = su.id
-    LEFT JOIN products       p ON p.id = COALESCE(o.product_id, su.product_id)
-        WHERE o.id = $1`,
-      [orderId]
+         FROM products p
+    LEFT JOIN stock_updates su ON su.product_id = p.id
+        WHERE p.id = COALESCE($1, su.product_id)`,
+      [order.product_id]
     );
-    const deviceType = infoRows[0].device_type.toLowerCase();
-    const rates      = { android: 10000, ios: 15000 };
-    const rate       = rates[deviceType] || 0;
-    const totalCommission = rate * updatedOrder.number_of_devices;
+    const dtype = dRows[0].device_type.toLowerCase();
+    const marketerRate = dtype === "android" ? 10000 : 15000;
+    const adminRate     = 1500;
+    const superRate     = 1000;
 
-    // 5) Find the marketer’s unique_id
-    const { rows: mktRows } = await client.query(
-      `SELECT unique_id FROM users WHERE id = $1`,
-      [updatedOrder.marketer_id]
-    );
-    if (!mktRows.length) throw new Error("Marketer not found");
-    const marketerUid = mktRows[0].unique_id;
+    const marketerComm = marketerRate * qty;
+    const adminComm     = adminRate     * qty;
+    const superComm     = superRate     * qty;
 
-    // 6) Credit *all* commissions (marketer + admin + super-admin)
-    await walletService.creditCommissionFromAmount(
-      marketerUid,
-      orderId,
-      totalCommission
-    );
+    // 6) Upsert into wallets & record transactions
+    const upsertWallet = async (uid, amt, txType) => {
+      await client.query(
+        `INSERT INTO wallets (user_unique_id, total_balance, available_balance, withheld_balance, created_at, updated_at)
+         VALUES ($1, $2, $2, 0, NOW(), NOW())
+         ON CONFLICT (user_unique_id) DO
+           UPDATE SET
+             total_balance     = wallets.total_balance + $2,
+             available_balance = wallets.available_balance + $2,
+             updated_at        = NOW()`,
+        [uid, amt]
+      );
+      await client.query(
+        `INSERT INTO wallet_transactions (user_unique_id, amount, transaction_type, meta, created_at)
+         VALUES ($1, $2, $3, $4, NOW())`,
+        [uid, amt, txType, `order:${orderId}`]
+      );
+    };
+
+    await upsertWallet(marketerUid, marketerComm, "commission_marketer");
+    await upsertWallet(  adminUid2,   adminComm,     "commission_admin");
+    await upsertWallet( superUid,     superComm,     "commission_super");
 
     await client.query("COMMIT");
     res.json({
-      message: "Order confirmed, stock marked sold, and commissions credited.",
-      order: updatedOrder
+      message: "Order confirmed; stock marked sold; commissions credited.",
+      order: updatedOrder,
+      commissions: {
+        marketer: marketerComm,
+        admin:     adminComm,
+        super:     superComm
+      }
     });
   } catch (err) {
     await client.query("ROLLBACK");
@@ -133,7 +177,6 @@ async function confirmOrder(req, res, next) {
     client.release();
   }
 }
-
 
 /**
  * PATCH /api/manage-orders/orders/:orderId/confirm-to-dealer
