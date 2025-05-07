@@ -54,7 +54,7 @@ router.get(
 
 // approve or reject a withdrawal request
 router.patch(
-  '/master-admin/requests/:reqId',
+  '/master-admin/requests/:id',        // ← change reqId → id
   verifyToken,
   verifyRole(['MasterAdmin']),
   wc.reviewRequest

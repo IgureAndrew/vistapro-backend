@@ -100,7 +100,7 @@ async function listPendingRequests(req, res, next) {
 // PATCH /api/wallets/master-admin/requests/:reqId { action: 'approve' | 'reject' }
 async function reviewRequest(req, res, next) {
   try {
-    const reqId  = Number(req.params.reqId);
+    const { id } = req.params; 
     const action = req.body.action;
     await svc.reviewRequest(reqId, action, req.user.unique_id);
     res.json({ message: `Withdrawal ${action}d.` });
