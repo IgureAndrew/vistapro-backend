@@ -43,98 +43,81 @@ async function getPendingOrders(req, res, next) {
  * MasterAdmin confirms an order (stock or free).
  */
 async function confirmOrder(req, res, next) {
-  const { orderId }   = req.params;
-  const adminUid      = req.user.unique_id;
-  const client        = await pool.connect();
+  const { orderId }     = req.params;
+  const adminUniqueId   = req.user.unique_id;
+  const client          = await pool.connect();
 
   try {
     await client.query("BEGIN");
 
-    // 1) Lock and pull stock_update_id
-    const { rows: lockRows } = await client.query(`
-      SELECT id,
-             marketer_id,
-             number_of_devices,
-             commission_paid,
-             stock_update_id
-        FROM orders
-       WHERE id = $1
-       FOR UPDATE
-    `, [orderId]);
-
-    if (!lockRows.length) {
+    // 1) Lock and fetch the order
+    const { rows: [order] } = await client.query(
+      `SELECT *
+         FROM orders
+        WHERE id = $1
+          FOR UPDATE`,
+      [orderId]
+    );
+    if (!order) {
       await client.query("ROLLBACK");
       return res.status(404).json({ message: "Order not found." });
     }
-    const orderMeta = lockRows[0];
-    if (orderMeta.commission_paid) {
-      await client.query("ROLLBACK");
-      return res.status(400).json({ message: "Commission already paid." });
+
+    // 2) If stock-pickup order → mark its reserved IMEI sold & mark the pickup “sold”
+    if (order.stock_update_id) {
+      await client.query(
+        `UPDATE inventory_items
+           SET status = 'sold'
+         WHERE stock_update_id = $1
+           AND status = 'reserved'`,
+        [order.stock_update_id]
+      );
+      await client.query(
+        `UPDATE stock_updates
+           SET status = 'sold'
+         WHERE id = $1`,
+        [order.stock_update_id]
+      );
     }
 
-    // 2) Look up device_type
-    const { rows: infoRows } = await client.query(`
-      SELECT p.device_type
-        FROM orders o
-   LEFT JOIN stock_updates su ON o.stock_update_id = su.id
-   LEFT JOIN products p      ON p.id = COALESCE(o.product_id, su.product_id)
-       WHERE o.id = $1
-    `, [orderId]);
-
-    if (!infoRows.length || !infoRows[0].device_type) {
-      throw new Error("Product not found for that order");
-    }
-    const deviceType = infoRows[0].device_type.toLowerCase();
-
-    // 3) Compute commission (now using ios)
-    const COMMISSION_RATES = { android: 10000, ios: 15000 };
-    const rate = COMMISSION_RATES[deviceType];
-    if (!rate) throw new Error(`Unsupported device type: ${deviceType}`);
-    const commission = rate * orderMeta.number_of_devices;
-
-    // 4) Mark the order confirmed
-    const { rows: updatedRows } = await client.query(`
-      UPDATE orders
-         SET status          = 'confirmed',
-             confirmed_by    = $2,
-             confirmed_at    = NOW(),
-             commission_paid = TRUE,
-             updated_at      = NOW()
-       WHERE id = $1
-       RETURNING *
-    `, [ orderId, adminUid ]);
-    const updatedOrder = updatedRows[0];
-
-    // 4a) If this was a stock pickup, mark it sold
-    if (orderMeta.stock_update_id) {
-      await client.query(`
-        UPDATE stock_updates
-           SET status     = 'sold',
-               updated_at = NOW()
-         WHERE id = $1
-      `, [ orderMeta.stock_update_id ]);
-    }
-
-    // 5) Credit the marketer’s wallet
-    const { rows: userRows } = await client.query(`
-      SELECT unique_id FROM users WHERE id = $1
-    `, [ orderMeta.marketer_id ]);
-    if (!userRows.length) throw new Error("Marketer not found");
-    const marketerUid = userRows[0].unique_id;
-
-    const { available, withheld } = await walletService.creditCommissionFromAmount(
-      marketerUid,
-      orderId,
-      commission
+    // 3) Update order status + record who confirmed it
+    const { rows: [updatedOrder] } = await client.query(
+      `UPDATE orders
+          SET status        = 'confirmed',
+              confirmed_by  = $2,
+              confirmed_at  = NOW(),
+              updated_at    = NOW()
+        WHERE id = $1
+        RETURNING *`,
+      [orderId, adminUniqueId]
     );
 
-    await client.query("COMMIT");
+    // 4) Compute commissions based on device_type & quantity
+    //    Device-type comes from whichever product record applies
+    const { rows: [{ device_type }] } = await client.query(
+      `SELECT p.device_type
+         FROM orders o
+    LEFT JOIN stock_updates su ON o.stock_update_id = su.id
+    LEFT JOIN products       p ON p.id = COALESCE(o.product_id, su.product_id)
+        WHERE o.id = $1`,
+      [orderId]
+    );
+    const qty   = updatedOrder.number_of_devices;
+    const type  = device_type.toLowerCase();
+    const rates = { android: 10000, ios: 15000 };
+    const rate  = rates[type] || 0;
 
-    return res.json({
-      message: "Order confirmed, pickup marked sold, and commission paid.",
-      order: updatedOrder,
-      commissionBreakdown: { commission, available, withheld }
+    // 5) Credit wallets
+    await creditMarketerCommission(  order.marketer_unique_id || req.user.unique_id, orderId, type, qty);
+    await creditAdminCommission(      order.marketer_unique_id || req.user.unique_id, orderId, qty);
+    await creditSuperAdminCommission( order.marketer_unique_id || req.user.unique_id, orderId, qty);
+
+    await client.query("COMMIT");
+    res.json({
+      message: "Order confirmed, stock marked sold, and commissions credited.",
+      order: updatedOrder
     });
+
   } catch (err) {
     await client.query("ROLLBACK");
     next(err);
@@ -142,7 +125,6 @@ async function confirmOrder(req, res, next) {
     client.release();
   }
 }
-
 
 /**
  * PATCH /api/manage-orders/orders/:orderId/confirm-to-dealer

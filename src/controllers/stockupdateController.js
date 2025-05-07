@@ -94,72 +94,69 @@ async function listStockProductsByDealer(req, res, next) {
 async function createStockUpdate(req, res, next) {
   const client = await pool.connect();
   try {
-    const { product_id, quantity } = req.body;
     const marketerUID = req.user.unique_id;
-    const qty = parseInt(quantity, 10) || 1;
-    if (!product_id) {
-      return res.status(400).json({ message: "Missing product_id" });
-    }
+    const { product_id, quantity = 1 } = req.body;
+    const qty = parseInt(quantity, 10);
 
-    await client.query('BEGIN');
+    await client.query("BEGIN");
 
-    // a) verify marketer’s location
-    const { rows: me } = await client.query(
+    // 2.1 Fetch and verify marketer’s location
+    const { rows: [me] } = await client.query(
       `SELECT location FROM users WHERE unique_id = $1`,
       [marketerUID]
     );
-    if (!me.length) {
-      await client.query('ROLLBACK');
-      return res.status(404).json({ message: "Marketer not found." });
-    }
-    const marketerState = me[0].location;
+    if (!me) throw new Error("Marketer not found.");
 
-    // b) verify dealer’s location
-    const { rows: pd } = await client.query(
+    // 2.2 Fetch dealer’s location for this product
+    const { rows: [pd] } = await client.query(
       `SELECT u.location
          FROM products p
          JOIN users u ON p.dealer_id = u.id
         WHERE p.id = $1`,
       [product_id]
     );
-    if (!pd.length || pd[0].location !== marketerState) {
-      await client.query('ROLLBACK');
-      return res.status(403).json({
-        message: "Cannot pick up from a dealer outside your location."
-      });
+    if (!pd || pd.location !== me.location) {
+      return res
+        .status(403)
+        .json({ message: "Cannot pick up from a dealer outside your location." });
     }
 
-    // check available inventory
-    const { rows: cnt } = await client.query(
+    // 2.3 Count how many IMEIs are still “available”
+    const { rows: [cntRow] } = await client.query(
       `SELECT COUNT(*)::int AS cnt
          FROM inventory_items
         WHERE product_id = $1
-          AND status = 'available'`,
+          AND status     = 'available'`,
       [product_id]
     );
-    if (cnt[0].cnt < qty) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ message: "Not enough stock available" });
+    if (cntRow.cnt < qty) {
+      return res
+        .status(400)
+        .json({ message: "Not enough stock available for reservation." });
     }
 
-    // insert pickup record using unified `status`
-    const { rows: su } = await client.query(
-      `INSERT INTO stock_updates
-         (marketer_id, product_id, quantity, pickup_date, deadline, status)
-       VALUES (
+    // 2.4 Create the pickup record (status=pending)
+    const { rows: [su] } = await client.query(
+      `INSERT INTO stock_updates (
+         marketer_id,
+         product_id,
+         quantity,
+         pickup_date,
+         deadline,
+         status
+       ) VALUES (
          (SELECT id FROM users WHERE unique_id = $1),
          $2, $3,
          NOW(),
          NOW() + INTERVAL '48 hours',
          'pending'
        )
-       RETURNING id, marketer_id, product_id, quantity, pickup_date, deadline, status`,
+       RETURNING id, quantity, pickup_date, deadline, status`,
       [marketerUID, product_id, qty]
     );
-    const stock = su[0];
 
-    // reserve exactly qty items
-    const { rows: toReserve } = await client.query(
+    // 2.5 Reserve exactly `qty` IMEIs
+    const { rows: items } = await client.query(
       `SELECT id
          FROM inventory_items
         WHERE product_id = $1
@@ -168,41 +165,22 @@ async function createStockUpdate(req, res, next) {
         FOR UPDATE SKIP LOCKED`,
       [product_id, qty]
     );
-    const ids = toReserve.map(r => r.id);
+    const ids = items.map(r => r.id);
     await client.query(
       `UPDATE inventory_items
-         SET status = 'reserved',
-             stock_update_id = $1
+         SET status           = 'reserved',
+             stock_update_id  = $1
        WHERE id = ANY($2::int[])`,
-      [stock.id, ids]
+      [su.id, ids]
     );
 
-    // notify admin
-    const { rows: adminQ } = await client.query(
-      `SELECT u2.unique_id
-         FROM users u
-         JOIN users u2 ON u.admin_id = u2.id
-        WHERE u.unique_id = $1`,
-      [marketerUID]
-    );
-    if (adminQ.length) {
-      await client.query(
-        `INSERT INTO notifications (user_unique_id, message, created_at)
-         VALUES ($1, $2, NOW())`,
-        [
-          adminQ[0].unique_id,
-          `Marketer ${marketerUID} picked up ${qty} unit(s) of product ${product_id}.`
-        ]
-      );
-    }
-
-    await client.query('COMMIT');
+    await client.query("COMMIT");
     res.status(201).json({
-      message: "Stock pickup recorded successfully.",
-      stock
+      message: "Stock reserved successfully.",
+      pickup: su
     });
   } catch (err) {
-    await client.query('ROLLBACK');
+    await client.query("ROLLBACK");
     next(err);
   } finally {
     client.release();
@@ -214,71 +192,84 @@ async function createStockUpdate(req, res, next) {
  * Place an order, preferring a pending pickup over free mode.
  */
 async function placeOrder(req, res, next) {
-  try {
-    const uid = req.user.unique_id;
+  const marketerUID = req.user.unique_id;
+  const { stock_update_id, product_id, number_of_devices, sold_amount,
+          customer_name, customer_phone, customer_address, bnpl_platform } = req.body;
 
-    // fetch truly pending pickups (status = 'pending')
-    const { rows: pending } = await pool.query(
+  try {
+    // 3.1 Look for any “live” pickup you still hold
+    const { rows: live } = await pool.query(
       `SELECT id, product_id
          FROM stock_updates
         WHERE marketer_id = (SELECT id FROM users WHERE unique_id = $1)
-          AND status        = 'pending'
+          AND status IN ('pending','transfer_pending','transfer_approved')
           AND deadline > NOW()`,
-      [uid]
+      [marketerUID]
     );
 
-    let productId, stockUpdateId = null;
-    if (pending.length) {
-      stockUpdateId = req.body.stock_update_id;
-      if (!stockUpdateId) {
+    let useStockId = null, useProductId;
+
+    if (live.length) {
+      // you have a live pickup → must use it
+      if (!stock_update_id) {
         return res.status(400).json({
-          message: "You have held stock—please supply stock_update_id to sell it."
+          message: "You have reserved stock—please supply stock_update_id to sell it."
         });
       }
-      const pick = pending.find(p => p.id === +stockUpdateId);
+      const pick = live.find(p => p.id === +stock_update_id);
       if (!pick) {
         return res.status(403).json({ message: "Invalid or expired pickup selected." });
       }
-      productId = pick.product_id;
+      useStockId   = pick.id;
+      useProductId = pick.product_id;
     } else {
-      productId = req.body.product_id;
-      if (!productId) {
+      // no pickup → free mode
+      if (!product_id) {
         return res.status(400).json({
           message: "No held stock—please supply product_id to place a free order."
         });
       }
+      useProductId = product_id;
     }
 
-    const marketerId = (await pool.query(
-      `SELECT id FROM users WHERE unique_id = $1`, [uid]
-    )).rows[0].id;
-
-    const { rows: orderRows } = await pool.query(
-      `INSERT INTO orders
-         (marketer_id, product_id, stock_update_id, order_date)
-       VALUES ($1,$2,$3,NOW())
-       RETURNING *`,
-      [marketerId, productId, stockUpdateId]
+    // 3.2 Insert a “pending” order record
+    const { rows: [order] } = await pool.query(`
+      INSERT INTO orders (
+        marketer_id,
+        product_id,
+        stock_update_id,
+        number_of_devices,
+        sold_amount,
+        customer_name,
+        customer_phone,
+        customer_address,
+        bnpl_platform,
+        earnings_per_device,
+        status,
+        sale_date,
+        created_at
+      ) VALUES (
+        (SELECT id FROM users WHERE unique_id = $1),
+        $2, $3, $4, $5, $6, $7, $8, $9, 0,  -- earnings_per_device=0 until admin confirm
+        'pending', NOW(), NOW()
+      )
+      RETURNING *`,
+      [
+        marketerUID,
+        useProductId,
+        useStockId,
+        number_of_devices,
+        sold_amount,
+        customer_name,
+        customer_phone,
+        customer_address,
+        bnpl_platform || null
+      ]
     );
 
-    // if used a pickup, mark it sold when no more reserved items
-    if (stockUpdateId) {
-      await pool.query(
-        `UPDATE stock_updates
-           SET status = 'sold'
-         WHERE id = $1
-           AND NOT EXISTS (
-             SELECT 1 FROM inventory_items
-              WHERE stock_update_id = $1
-                AND status = 'reserved'
-           )`,
-        [stockUpdateId]
-      );
-    }
-
     res.status(201).json({
-      message: "Order placed successfully.",
-      order: orderRows[0]
+      message: "Order placed and awaiting confirmation.",
+      order
     });
   } catch (err) {
     next(err);
@@ -500,28 +491,90 @@ async function getStockUpdates(req, res, next) {
 
 /**
  * PATCH /api/marketer/stock-pickup/:id/return
- * Mark a pickup as returned (MasterAdmin only).
+ * MasterAdmin confirms a return → status='returned', stop timer,
+ * release any reserved IMEIs back to 'available', clear their stock_update_id.
  */
 async function confirmReturn(req, res, next) {
+  if (req.user.role !== 'MasterAdmin') {
+    return res.status(403).json({ message: "Only MasterAdmin may confirm returns." });
+  }
+
+  const stockUpdateId = parseInt(req.params.id, 10);
+  const client = await pool.connect();
+
   try {
-    if (req.user.role !== 'MasterAdmin') {
-      return res.status(403).json({ message: "Only MasterAdmin may confirm returns." });
-    }
-    const id = parseInt(req.params.id, 10);
-    const { rows } = await pool.query(
+    await client.query('BEGIN');
+
+    // 1) Mark the pickup as returned & record timestamp
+    const { rows: [pickup] } = await client.query(
       `UPDATE stock_updates
-         SET status = 'returned',
-             returned_at = NOW()
-       WHERE id = $1
-      RETURNING *`,
-      [id]
+          SET status      = 'returned',
+              returned_at = NOW(),
+              updated_at  = NOW()
+        WHERE id = $1
+          AND status = 'pending'
+        RETURNING *`,
+      [stockUpdateId]
     );
-    if (!rows.length) {
-      return res.status(404).json({ message: "Pickup not found." });
+    if (!pickup) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: "No pending pickup found to return." });
     }
-    res.json({ message: "Return confirmed.", stock: rows[0] });
+
+
+
+    // 2) Release any still‐reserved IMEIs back to available
+    await client.query(
+      `UPDATE inventory_items
+          SET status          = 'available',
+              stock_update_id = NULL
+        WHERE stock_update_id = $1
+          AND status = 'reserved'`,
+      [stockUpdateId]
+    );
+
+    // 3) Notify the original marketer (optional)
+    const { rows: [user] } = await client.query(
+      `SELECT u.unique_id
+         FROM users u
+         JOIN stock_updates su ON su.marketer_id = u.id
+        WHERE su.id = $1`,
+      [stockUpdateId]
+    );
+    if (user?.unique_id) {
+      await client.query(
+        `INSERT INTO notifications (user_unique_id, message, created_at)
+         VALUES ($1, $2, NOW())`,
+        [
+          user.unique_id,
+          `Your stock pickup #${stockUpdateId} has been marked returned by MasterAdmin.`
+        ]
+      );
+    }
+
+    await client.query(`
+      UPDATE stock_updates
+         SET status     = 'sold',
+             updated_at = NOW()
+       WHERE id = (
+         SELECT stock_update_id
+           FROM orders
+          WHERE id = $1
+       )
+    `, [orderId]);
+
+
+    await client.query('COMMIT');
+    res.json({
+      message: "Return confirmed, reserved units released back to inventory.",
+      stock: pickup
+    });
+
   } catch (err) {
+    await client.query('ROLLBACK');
     next(err);
+  } finally {
+    client.release();
   }
 }
 

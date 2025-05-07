@@ -74,6 +74,8 @@ io.on('connection', socket => {
 
 // Import routes
 require('./jobs/releaseWithheld');
+require('./jobs/expireStockPickups');
+
 
 const authRoutes = require('./routes/authRoutes');
 const masterAdminRoutes = require('./routes/masterAdminRoutes');
