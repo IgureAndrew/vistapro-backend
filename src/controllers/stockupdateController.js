@@ -91,101 +91,150 @@ async function listStockProductsByDealer(req, res, next) {
  * POST /api/marketer/stock-pickup
  * Create a new stock pickup (status = 'pending', reserves inventory_items).
  */
-async function createStockUpdate(req, res, next) {
+/**
+ * 1) createStockUpdate
+ *    Marketer picks up stock → creates a pending record.
+ *    Only from dealers in the same state as the marketer.
+ *    Deadline is 48 hrs from pickup.
+ *    Enforces one active pickup AND quantity=1.
+ */
+const createStockUpdate = async (req, res, next) => {
   const client = await pool.connect();
   try {
     const marketerUID = req.user.unique_id;
-    const { product_id, quantity = 1 } = req.body;
-    const qty = parseInt(quantity, 10);
 
-    await client.query("BEGIN");
+    // Enforce exactly one active pickup per marketer
+    const { rows: active } = await client.query(
+      `SELECT COUNT(*)::int AS cnt
+         FROM stock_updates
+        WHERE marketer_id = (SELECT id FROM users WHERE unique_id = $1)
+          AND status IN ('pending','transfer_pending','transfer_approved')`,
+      [marketerUID]
+    );
+    if (active[0].cnt > 0) {
+      return res.status(400).json({
+        message: "You already have an active pickup—complete, return or transfer it before requesting another."
+      });
+    }
 
-    // 2.1 Fetch and verify marketer’s location
-    const { rows: [me] } = await client.query(
+    // Parse inputs
+    const product_id = parseInt(req.body.product_id, 10);
+    const qty        = 1;  // always one unit per pickup
+
+    await client.query('BEGIN');
+
+    // --- Verify same-location constraint ---
+    // a) marketer's state
+    const { rows: meRows } = await client.query(
       `SELECT location FROM users WHERE unique_id = $1`,
       [marketerUID]
     );
-    if (!me) throw new Error("Marketer not found.");
+    if (!meRows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: "Marketer not found." });
+    }
+    const marketerState = meRows[0].location;
 
-    // 2.2 Fetch dealer’s location for this product
-    const { rows: [pd] } = await client.query(
+    // b) product's dealer & its state
+    const { rows: pdRows } = await client.query(
       `SELECT u.location
          FROM products p
          JOIN users u ON p.dealer_id = u.id
         WHERE p.id = $1`,
       [product_id]
     );
-    if (!pd || pd.location !== me.location) {
-      return res
-        .status(403)
-        .json({ message: "Cannot pick up from a dealer outside your location." });
+    if (!pdRows.length || pdRows[0].location !== marketerState) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({
+        message: "Cannot pick up from a dealer outside your location."
+      });
     }
+    // -----------------------------------------
 
-    // 2.3 Count how many IMEIs are still “available”
-    const { rows: [cntRow] } = await client.query(
+    // 1) count available items
+    const { rows: cntRows } = await client.query(
       `SELECT COUNT(*)::int AS cnt
          FROM inventory_items
         WHERE product_id = $1
-          AND status     = 'available'`,
+          AND status = 'available'`,
       [product_id]
     );
-    if (cntRow.cnt < qty) {
-      return res
-        .status(400)
-        .json({ message: "Not enough stock available for reservation." });
+    if (cntRows[0].cnt < qty) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: "Not enough stock available." });
     }
 
-    // 2.4 Create the pickup record (status=pending)
-    const { rows: [su] } = await client.query(
-      `INSERT INTO stock_updates (
-         marketer_id,
-         product_id,
-         quantity,
-         pickup_date,
-         deadline,
-         status
-       ) VALUES (
-         (SELECT id FROM users WHERE unique_id = $1),
+    // 2) insert pickup record
+    const insertQ = `
+      INSERT INTO stock_updates
+        ( marketer_id, product_id, quantity, pickup_date, deadline, status )
+      VALUES (
+        (SELECT id FROM users WHERE unique_id = $1),
          $2, $3,
          NOW(),
          NOW() + INTERVAL '48 hours',
          'pending'
-       )
-       RETURNING id, quantity, pickup_date, deadline, status`,
-      [marketerUID, product_id, qty]
-    );
+      )
+      RETURNING id, product_id, quantity, pickup_date, deadline, status
+    `;
+    const { rows: suRows } = await client.query(insertQ, [
+      marketerUID,
+      product_id,
+      qty
+    ]);
+    const stock = suRows[0];
 
-    // 2.5 Reserve exactly `qty` IMEIs
-    const { rows: items } = await client.query(
+    // 3) reserve exactly `qty` units
+    const { rows: itemsToReserve } = await client.query(
       `SELECT id
          FROM inventory_items
         WHERE product_id = $1
-          AND status     = 'available'
+          AND status = 'available'
         LIMIT $2
         FOR UPDATE SKIP LOCKED`,
       [product_id, qty]
     );
-    const ids = items.map(r => r.id);
+    const itemIds = itemsToReserve.map(r => r.id);
     await client.query(
       `UPDATE inventory_items
-         SET status           = 'reserved',
-             stock_update_id  = $1
+         SET status = 'reserved',
+             stock_update_id = $1
        WHERE id = ANY($2::int[])`,
-      [su.id, ids]
+      [stock.id, itemIds]
     );
 
-    await client.query("COMMIT");
+    // 4) notify admin (unchanged)
+    const { rows: adminQ } = await client.query(
+      `SELECT u2.unique_id
+         FROM users u
+         JOIN users u2 ON u.admin_id = u2.id
+        WHERE u.unique_id = $1`,
+      [marketerUID]
+    );
+    const adminUniqueId = adminQ[0]?.unique_id;
+    if (adminUniqueId) {
+      await client.query(
+        `INSERT INTO notifications (user_unique_id, message, created_at)
+         VALUES ($1, $2, NOW())`,
+        [
+          adminUniqueId,
+          `Marketer ${marketerUID} picked up 1 unit of product ${product_id}.`
+        ]
+      );
+    }
+
+    await client.query('COMMIT');
     res.status(201).json({
-      message: "Stock reserved successfully.",
-      pickup: su
+      message: "Stock pickup recorded successfully.",
+      stock
     });
   } catch (err) {
-    await client.query("ROLLBACK");
+    await client.query('ROLLBACK');
     next(err);
   } finally {
     client.release();
   }
-}
+};
 
 /**
  * POST /api/marketer/stock-pickup/order
