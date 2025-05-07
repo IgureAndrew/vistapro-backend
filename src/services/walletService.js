@@ -8,7 +8,7 @@ const { pool } = require('../config/database');
 // per‐device commission for the marketer
 const COMMISSION_RATES = {
   android: 10000,
-  iphone:  15000,
+  ios:     15000,    // ← use “ios” (lowercased) to match device_type
 };
 
 // fixed per‐device commissions for Admin & SuperAdmin
@@ -29,7 +29,8 @@ async function ensureWallet(userId) {
     INSERT INTO wallets
       (user_unique_id, total_balance, available_balance, withheld_balance, created_at, updated_at)
     VALUES ($1, 0, 0, 0, NOW(), NOW())
-    ON CONFLICT (user_unique_id) DO NOTHING
+    ON CONFLICT (user_unique_id) DO
+      UPDATE SET updated_at = NOW()
   `, [userId]);
 }
 
@@ -59,22 +60,26 @@ async function creditSplit(userId, orderId, totalCommission, typeTag) {
   `, [ totalCommission, available, withheld, userId ]);
 
   // log transactions: full, available split, withheld split
+  const meta = JSON.stringify({ orderId });
   await pool.query(`
     INSERT INTO wallet_transactions
       (user_unique_id, amount, transaction_type, meta)
     VALUES
       ($1, $2, $3,            $4::jsonb),
-      ($1, $5, $3 || '_available', '{}'::jsonb),
-      ($1, $6, $3 || '_withheld',  '{}'::jsonb)
+      ($1, $5, $3 || '_available', $4::jsonb),
+      ($1, $6, $3 || '_withheld',  $4::jsonb)
   `, [
     userId,
     totalCommission,
     typeTag,
-    JSON.stringify({ orderId }),
+    meta,
     available,
     withheld
   ]);
+
+  return { totalCommission, available, withheld };
 }
+
 
 //
 // ——— Multi-Tier Commission Credits —————————————————————————————————
@@ -86,8 +91,7 @@ async function creditSplit(userId, orderId, totalCommission, typeTag) {
 async function creditMarketerCommission(marketerUid, orderId, deviceType, quantity) {
   const rate = COMMISSION_RATES[deviceType.toLowerCase()] || 0;
   const commission = rate * quantity;
-  await creditSplit(marketerUid, orderId, commission, 'commission');
-  return commission;
+  return creditSplit(marketerUid, orderId, commission, 'commission');
 }
 
 /**
@@ -102,11 +106,10 @@ async function creditAdminCommission(marketerUid, orderId, quantity) {
      WHERE m.unique_id = $1
   `, [marketerUid]);
 
-  if (!rows.length) return 0;
-  const adminUid = rows[0].admin_uid;
+  if (!rows.length) return { totalCommission: 0, available: 0, withheld: 0 };
+  const adminUid   = rows[0].admin_uid;
   const commission = HIERARCHY_COMM.admin * quantity;
-  await creditSplit(adminUid, orderId, commission, 'admin_commission');
-  return commission;
+  return creditSplit(adminUid, orderId, commission, 'admin_commission');
 }
 
 /**
@@ -117,16 +120,15 @@ async function creditSuperAdminCommission(marketerUid, orderId, quantity) {
   const { rows } = await pool.query(`
     SELECT su.unique_id AS superadmin_uid
       FROM users m
-      JOIN users a  ON m.admin_id = a.id
-      JOIN users su ON a.admin_id = su.id
+      JOIN users a  ON m.admin_id        = a.id
+      JOIN users su ON a.super_admin_id = su.id
      WHERE m.unique_id = $1
   `, [marketerUid]);
 
-  if (!rows.length) return 0;
-  const superUid = rows[0].superadmin_uid;
+  if (!rows.length) return { totalCommission: 0, available: 0, withheld: 0 };
+  const superUid  = rows[0].superadmin_uid;
   const commission = HIERARCHY_COMM.superAdmin * quantity;
-  await creditSplit(superUid, orderId, commission, 'super_commission');
-  return commission;
+  return creditSplit(superUid, orderId, commission, 'super_commission');
 }
 
 //
