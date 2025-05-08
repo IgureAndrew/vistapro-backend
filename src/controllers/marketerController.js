@@ -228,30 +228,65 @@ async function createOrder(req, res, next) {
     bnpl_platform,
   } = req.body;
 
+  if (!number_of_devices || !customer_name) {
+    return res.status(400).json({ message: "Missing required order fields." });
+  }
+
+  const client = await pool.connect();
   try {
-    // 1) Look up cost & selling_price for commission/profit.
-    const table = stock_update_id
-      ? 'stock_updates su JOIN products p ON su.product_id = p.id'
-      : 'products p';
-    const where = stock_update_id
-      ? 'su.id = $1'
-      : 'p.id = $1';
+    await client.query('BEGIN');
 
-    const { rows: info } = await pool.query(`
-      SELECT p.device_type, p.cost_price, p.selling_price
-        FROM ${table}
-       WHERE ${where}
-    `, [ stock_update_id || product_id ]);
-
-    if (!info.length) {
-      return res
-        .status(400)
-        .json({ message: "Product or stock pickup not found." });
+    // 0) Prevent rapid re‐submits: if the same marketer placed an order in the last 5s, block it.
+    const { rowCount: recent } = await client.query(`
+      SELECT 1 FROM orders
+       WHERE marketer_id = $1
+         AND sale_date > NOW() - interval '5 seconds'
+    `, [marketerId]);
+    if (recent) {
+      return res.status(429).json({ message: "You’re placing orders too quickly – please wait a moment." });
     }
-    const { device_type, cost_price, selling_price } = info[0];
-    const profitPerDevice = Number(selling_price) - Number(cost_price);
 
-    // 2) Insert into orders — we leave the inventory status & pickup status alone for now.
+    // 1) Check & decrement stock
+    if (stock_update_id) {
+      // → you’re fulfilling against reserved pickup stock
+      const { rows: [pickup] } = await client.query(`
+        SELECT quantity
+          FROM stock_updates
+         WHERE id = $1
+           AND marketer_id = $2
+           AND status = 'pending'
+      `, [stock_update_id, marketerId]);
+      if (!pickup || pickup.quantity < number_of_devices) {
+        throw new Error("Not enough reserved stock for this pickup.");
+      }
+      // decrement the reserved quantity
+      await client.query(`
+        UPDATE stock_updates
+           SET quantity = quantity - $1,
+               status   = CASE WHEN quantity - $1 = 0 THEN 'completed' ELSE status END
+         WHERE id = $2
+      `, [number_of_devices, stock_update_id]);
+    } else {
+      // → free‐mode sale: grab from available inventory_items
+      const { rows: items } = await client.query(`
+        SELECT id
+          FROM inventory_items
+         WHERE product_id = $1
+           AND status     = 'available'
+         LIMIT $2
+      `, [product_id, number_of_devices]);
+      if (items.length < number_of_devices) {
+        throw new Error("Not enough available stock to place that order.");
+      }
+      // mark those items sold
+      await client.query(`
+        UPDATE inventory_items
+           SET status = 'sold'
+         WHERE id = ANY($1::int[])
+      `, [ items.map(i => i.id) ]);
+    }
+
+    // 2) Insert the order
     const insertSQL = `
       INSERT INTO orders (
         marketer_id,
@@ -273,8 +308,7 @@ async function createOrder(req, res, next) {
       )
       RETURNING *
     `;
-
-    const { rows } = await pool.query(insertSQL, [
+    const { rows: [order] } = await client.query(insertSQL, [
       marketerId,
       product_id       || null,
       stock_update_id  || null,
@@ -284,21 +318,27 @@ async function createOrder(req, res, next) {
       customer_phone,
       customer_address,
       bnpl_platform    || null,
-      profitPerDevice
+      // earnings per device is profit: sold_amount/qty minus cost?
+      (sold_amount / number_of_devices) -  /* your cost logic here */
+        0  
     ]);
-    const order = rows[0];
 
-    // 3) Credit marketer/admin/superadmin commissions (they'll be *paid out* on confirm)
-    await creditMarketerCommission(  marketerUid, order.id, device_type, number_of_devices);
-    await creditAdminCommission(      marketerUid, order.id, number_of_devices);
-    await creditSuperAdminCommission( marketerUid, order.id, number_of_devices);
+    // 3) Queue up the wallet credits (still in the same tx)
+    await creditMarketerCommission(  client, marketerUid, order.id, order.number_of_devices);
+    await creditAdminCommission(      client, marketerUid, order.id, order.number_of_devices);
+    await creditSuperAdminCommission( client, marketerUid, order.id, order.number_of_devices);
 
-    res.status(201).json({
+    await client.query('COMMIT');
+
+    return res.status(201).json({
       message: "Order placed successfully and awaiting master-admin confirmation.",
       order
     });
   } catch (err) {
-    next(err);
+    await client.query('ROLLBACK');
+    return next(err);
+  } finally {
+    client.release();
   }
 }
 
