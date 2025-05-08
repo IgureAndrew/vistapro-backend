@@ -748,6 +748,35 @@ async function listSuperAdminStockUpdates(req, res, next) {
   }
 }
 
+async function getStockUpdatesForAdmin(req, res, next) {
+  const adminId = req.user.id;
+  const { rows } = await pool.query(`
+    SELECT
+      su.id,
+      m.first_name || ' ' || m.last_name AS marketer_name,
+      p.device_name,
+      p.device_model,
+      su.quantity,
+      su.pickup_date,
+      su.deadline,
+      CASE
+        WHEN EXISTS (
+          SELECT 1 FROM orders o
+           WHERE o.stock_update_id = su.id
+             AND o.status = 'confirmed'
+        ) THEN 'sold'
+        WHEN su.deadline < NOW() THEN 'expired'
+        ELSE 'pending'
+      END AS status
+    FROM stock_updates su
+    JOIN users m       ON su.marketer_id = m.id
+    JOIN products p    ON p.id = su.product_id
+   WHERE m.admin_id = $1
+   ORDER BY su.pickup_date DESC;
+  `, [adminId]);
+  res.json({ data: rows });
+}
+
 module.exports = {
   listStockPickupDealers,
   listStockProductsByDealer,
@@ -760,4 +789,5 @@ module.exports = {
   confirmReturn,
   reviewStockTransfer,
   listSuperAdminStockUpdates,
+  getStockUpdatesForAdmin
 };

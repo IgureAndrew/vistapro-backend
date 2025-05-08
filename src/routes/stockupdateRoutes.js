@@ -83,4 +83,11 @@ router.get(
   verifyRole(['SuperAdmin']),
   ctrl.listSuperAdminStockUpdates
 );
+
+router.get(
+  "/stock-pickup",
+  verifyToken,
+  verifyRole(["Admin"]),
+  ctrl.getStockUpdatesForAdmin
+);
 module.exports = router;

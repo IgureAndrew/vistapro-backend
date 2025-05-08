@@ -89,11 +89,25 @@ async function creditFull(userId, orderId, amount, typeTag) {
 
 // ─── Commission Credits ─────────────────────────────────────────
 async function creditMarketerCommission(marketerUid, orderId, deviceType, qty) {
-  // Normalize any “iPhone” or “IOS” to our “ios” bucket
-  const key  = deviceType.toLowerCase().includes('ios') ? 'ios' : deviceType.toLowerCase();
-  const rate = COMMISSION_RATES[key] || 0;
+  // 1) Coerce deviceType to a string (falling back to empty string)
+  const typeStr = deviceType != null ? String(deviceType) : "";
+  const lower   = typeStr.toLowerCase();
+
+  // 2) Figure out which bucket to use
+  //    You can tweak these includes() checks if you have more device types
+  let key;
+  if (lower.includes("ios")) {
+    key = "ios";
+  } else if (lower.includes("android")) {
+    key = "android";
+  } else {
+    key = "";          // no commission if it's unknown
+  }
+
+  const rate  = COMMISSION_RATES[key] || 0;
   const total = rate * qty;
-  return creditSplit(marketerUid, orderId, total, 'commission');
+
+  return creditSplit(marketerUid, orderId, total, "commission");
 }
 
 async function creditAdminCommission(marketerUid, orderId, qty) {
@@ -182,7 +196,34 @@ async function getSubordinateWallets(superAdminUid) {
 
   return { wallets, transactions };
 }
+async function getMyWallet(userId) {
+  await ensureWallet(userId);
+  const { rows: [wallet] } = await pool.query(`
+    SELECT total_balance, available_balance, withheld_balance,
+           account_name, account_number, bank_name
+      FROM wallets
+     WHERE user_unique_id = $1
+  `, [ userId ]);
+  const { rows: transactions } = await pool.query(`
+    SELECT id, transaction_type, amount, created_at
+      FROM wallet_transactions
+     WHERE user_unique_id = $1
+     ORDER BY created_at DESC
+     LIMIT 50
+  `, [ userId ]);
+  return { wallet, transactions };
+}
 
+async function getMyWithdrawals(userId) {
+  await ensureWallet(userId);
+  const { rows } = await pool.query(`
+    SELECT id, amount_requested AS amount, fee, status, requested_at
+      FROM withdrawal_requests
+     WHERE user_unique_id = $1
+     ORDER BY requested_at DESC
+  `, [ userId ]);
+  return rows;
+}
 // ─── Exports ─────────────────────────────────────────────────────
 module.exports = {
   ensureWallet,
@@ -192,4 +233,6 @@ module.exports = {
   creditAdminCommission,
   creditSuperAdminCommission,
   getSubordinateWallets,
+  getMyWallet,
+  getMyWithdrawals,
 };
