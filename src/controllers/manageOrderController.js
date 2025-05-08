@@ -56,47 +56,67 @@ async function confirmOrder(req, res, next) {
   try {
     await client.query('BEGIN');
 
-    // 1) Confirm the order
+    // 1) Confirm the order, get back product_id & stock_update_id & qty
     const { rows: [order] } = await client.query(`
       UPDATE orders
          SET status       = 'confirmed',
              confirmed_at = NOW()
        WHERE id = $1
-     RETURNING *;
+     RETURNING product_id, stock_update_id, number_of_devices;
     `, [orderId]);
     if (!order) throw new Error("Order not found");
 
-    // 2) Look up the marketer's unique_id
+    const qty = order.number_of_devices;
+
+    // 2) Figure out the device_type
+    let deviceTypeRow;
+    if (order.product_id) {
+      // free-mode sale
+      [deviceTypeRow] = (await client.query(`
+        SELECT device_type
+          FROM products
+         WHERE id = $1
+      `, [order.product_id])).rows;
+    } else {
+      // stock-pickup sale
+      [deviceTypeRow] = (await client.query(`
+        SELECT p.device_type
+          FROM stock_updates su
+          JOIN products p ON su.product_id = p.id
+         WHERE su.id = $1
+      `, [order.stock_update_id])).rows;
+    }
+    if (!deviceTypeRow) {
+      throw new Error("Could not determine device type for commission");
+    }
+    const deviceType = deviceTypeRow.device_type;
+
+    // 3) Fetch the marketer’s unique_id
     const { rows: [m] } = await client.query(`
       SELECT unique_id
         FROM users
-       WHERE id = $1
-    `, [order.marketer_id]);
+       WHERE id = (
+         SELECT marketer_id FROM orders WHERE id = $1
+       )
+    `, [orderId]);
     if (!m) throw new Error("Marketer not found");
     const marketerUid = m.unique_id;
 
-    const qty  = order.number_of_devices;
-    const type = order.device_type;
-
-    // 3) Credit the marketer (does the 40/60 split automatically)
+    // 4) Pay out commissions
     await walletService.creditMarketerCommission(
       marketerUid,
-      order.id,
-      type,
+      orderId,
+      deviceType,
       qty
     );
-
-    // 4) Credit the admin: ₦1,500 × qty
     await walletService.creditAdminCommission(
       marketerUid,
-      order.id,
+      orderId,
       qty
     );
-
-    // 5) Credit the super-admin: ₦1,000 × qty
     await walletService.creditSuperAdminCommission(
       marketerUid,
-      order.id,
+      orderId,
       qty
     );
 
