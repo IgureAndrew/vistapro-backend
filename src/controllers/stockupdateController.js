@@ -505,38 +505,44 @@ async function getMarketerStockUpdates(req, res, next) {
  * GET /api/marketer/stock-pickup
  * (Master/Admin) list all pickups.
  */
-async function getStockUpdates(req, res, next) {
+async function getMyStockPickups(req, res, next) {
   try {
+    // Assume req.user.id is the marketer's numeric PK
+    const marketerId = req.user.id;
+
     const { rows } = await pool.query(`
       SELECT
         su.id,
         p.device_name,
         p.device_model,
-        d.business_name   AS dealer_name,
-        d.location        AS dealer_location,
         su.quantity,
         su.pickup_date,
         su.deadline,
-        su.status,
-        su.transfer_requested_at,
-        su.transfer_approved_at,
-        su.returned_at,
-        m.first_name || ' ' || m.last_name AS marketer_name,
-        m.unique_id                       AS marketer_unique_id,
-        tgt.first_name || ' ' || tgt.last_name AS transfer_to_name,
-        tgt.unique_id                           AS transfer_to_uid
+        -- override status based on whether an order was confirmed
+        CASE
+          WHEN EXISTS (
+            SELECT 1
+              FROM orders o
+             WHERE o.stock_update_id = su.id
+               AND o.status = 'confirmed'
+          ) THEN 'sold'
+          WHEN su.deadline < NOW() THEN 'expired'
+          ELSE 'pending'
+        END AS status,
+        su.transfer_status
       FROM stock_updates su
-      JOIN products p    ON p.id = su.product_id
-      JOIN users d       ON d.id = p.dealer_id
-      JOIN users m       ON m.id = su.marketer_id
-      LEFT JOIN users tgt ON tgt.id = su.transfer_to_marketer_id
-      ORDER BY su.pickup_date DESC
-    `);
+      JOIN products p
+        ON p.id = su.product_id
+     WHERE su.marketer_id = $1
+     ORDER BY su.pickup_date DESC;
+    `, [marketerId]);
+
     res.json({ data: rows });
   } catch (err) {
     next(err);
   }
 }
+
 
 /**
  * PATCH /api/marketer/stock-pickup/:id/return
