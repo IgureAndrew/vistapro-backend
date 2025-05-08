@@ -8,17 +8,21 @@ const WITHDRAWAL_FEE   = 100;
 
 // ─── Helpers ────────────────────────────────────────────────────
 async function ensureWallet(userId) {
-  if (!userId) {
-    throw new Error("Missing user_unique_id in ensureWallet");
+  // 1) Guard against missing or invalid IDs
+  if (typeof userId !== 'string' || !userId.trim()) {
+    console.error('ensureWallet called with invalid user_unique_id:', userId);
+    return; // bail out quietly (or throw, if you'd rather fail fast)
   }
-  const query = `
+
+  // 2) Safe INSERT … ON CONFLICT
+  const sql = `
     INSERT INTO wallets
       (user_unique_id, total_balance, available_balance, withheld_balance, created_at, updated_at)
     VALUES
       ($1, 0, 0, 0, NOW(), NOW())
     ON CONFLICT (user_unique_id) DO NOTHING;
   `;
-  await pool.query(query, [userId]);
+  await pool.query(sql, [userId]);
 }
 
 async function creditSplit(userId, orderId, totalComm, typeTag) {
