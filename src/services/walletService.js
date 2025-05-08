@@ -1,53 +1,24 @@
 // src/services/walletService.js
 const { pool } = require('../config/database');
 
-//
-// ——— Configuration —————————————————————————————————————————————————
-//
+// ─── Config ─────────────────────────────────────────────────────
+const COMMISSION_RATES = { android: 10000, ios: 15000 };
+const HIERARCHY_COMM   = { admin: 1500, superAdmin: 1000 };
+const WITHDRAWAL_FEE   = 100;
 
-// per‐device commission for the marketer
-const COMMISSION_RATES = {
-  android: 10000,
-  ios:     15000,    // ← use “ios” (lowercased) to match device_type
-};
-
-// fixed per‐device commissions for Admin & SuperAdmin
-const HIERARCHY_COMM = {
-  admin:      1500,
-  superAdmin: 1000,
-};
-
-//
-// ——— Core Helpers —————————————————————————————————————————————————
-//
-
-/**
- * Ensure a wallet row exists for this user.
- */
+// ─── Helpers ────────────────────────────────────────────────────
 async function ensureWallet(userId) {
   await pool.query(`
-    INSERT INTO wallets
-      (user_unique_id, total_balance, available_balance, withheld_balance, created_at, updated_at)
-    VALUES ($1, 0, 0, 0, NOW(), NOW())
-    ON CONFLICT (user_unique_id) DO
-      UPDATE SET updated_at = NOW()
+    INSERT INTO wallets (user_unique_id,total_balance,available_balance,withheld_balance,created_at,updated_at)
+    VALUES ($1,0,0,0,NOW(),NOW())
+    ON CONFLICT (user_unique_id) DO NOTHING
   `, [userId]);
 }
 
-/**
- * Generic helper: credit a lump‐sum into someone’s wallet,
- * splitting 40% available / 60% withheld, and logging three txns.
- *
- * @param {string} userId
- * @param {number} orderId
- * @param {number} totalCommission
- * @param {string} typeTag  e.g. 'commission', 'admin_commission', 'super_commission'
- */
-async function creditSplit(userId, orderId, totalCommission, typeTag) {
+async function creditSplit(userId, orderId, totalComm, typeTag) {
   await ensureWallet(userId);
-
-  const available = Math.floor(totalCommission * 0.4);
-  const withheld  = totalCommission - available;
+  const available = Math.floor(totalComm * 0.4);
+  const withheld  = totalComm - available;
 
   // bump balances
   await pool.query(`
@@ -57,259 +28,155 @@ async function creditSplit(userId, orderId, totalCommission, typeTag) {
            withheld_balance  = withheld_balance  + $3,
            updated_at        = NOW()
      WHERE user_unique_id = $4
-  `, [ totalCommission, available, withheld, userId ]);
+  `, [ totalComm, available, withheld, userId ]);
 
-  // log transactions: full, available split, withheld split
+  // log transactions
   const meta = JSON.stringify({ orderId });
   await pool.query(`
     INSERT INTO wallet_transactions
       (user_unique_id, amount, transaction_type, meta)
     VALUES
-      ($1, $2, $3,            $4::jsonb),
+      ($1, $2, $3,          $4::jsonb),
       ($1, $5, $3 || '_available', $4::jsonb),
       ($1, $6, $3 || '_withheld',  $4::jsonb)
-  `, [
-    userId,
-    totalCommission,
-    typeTag,
-    meta,
-    available,
-    withheld
-  ]);
+  `, [ userId, totalComm, typeTag, meta, available, withheld ]);
 
-  return { totalCommission, available, withheld };
+  return { totalComm, available, withheld };
 }
 
+async function creditFull(userId, orderId, amount, typeTag) {
+  await ensureWallet(userId);
+  // full amount to available
+  await pool.query(`
+    UPDATE wallets
+       SET total_balance     = total_balance     + $1,
+           available_balance = available_balance + $1,
+           updated_at        = NOW()
+     WHERE user_unique_id = $2
+  `, [ amount, userId ]);
+  // log it
+  const meta = JSON.stringify({ orderId });
+  await pool.query(`
+    INSERT INTO wallet_transactions
+      (user_unique_id, amount, transaction_type, meta)
+    VALUES ($1, $2, $3, $4::jsonb)
+  `, [ userId, amount, typeTag, meta ]);
+  return { totalComm: amount };
+}
 
-//
-// ——— Multi-Tier Commission Credits —————————————————————————————————
-//
-
-/**
- * Credit the marketer’s own commission.
- */
-async function creditMarketerCommission(marketerUid, orderId, deviceType, quantity) {
+// ─── Commission Credits ─────────────────────────────────────────
+async function creditMarketerCommission(marketerUid, orderId, deviceType, qty) {
   const rate = COMMISSION_RATES[deviceType.toLowerCase()] || 0;
-  const commission = rate * quantity;
-  return creditSplit(marketerUid, orderId, commission, 'commission');
+  const total = rate * qty;
+  return creditSplit(marketerUid, orderId, total, 'commission');
 }
 
-/**
- * Credit the Admin’s commission.
- */
-async function creditAdminCommission(marketerUid, orderId, quantity) {
-  // find this marketer’s admin
+async function creditAdminCommission(marketerUid, orderId, qty) {
+  // find the admin
   const { rows } = await pool.query(`
-    SELECT u2.unique_id AS admin_uid
+    SELECT u2.unique_id AS adminUid
       FROM users m
       JOIN users u2 ON m.admin_id = u2.id
      WHERE m.unique_id = $1
-  `, [marketerUid]);
-
-  if (!rows.length) return { totalCommission: 0, available: 0, withheld: 0 };
-  const adminUid   = rows[0].admin_uid;
-  const commission = HIERARCHY_COMM.admin * quantity;
-  return creditSplit(adminUid, orderId, commission, 'admin_commission');
+  `, [ marketerUid ]);
+  if (!rows[0]) return { totalComm: 0 };
+  const total = HIERARCHY_COMM.admin * qty;
+  return creditFull(rows[0].adminUid, orderId, total, 'admin_commission');
 }
 
-/**
- * Credit the SuperAdmin’s commission.
- */
-async function creditSuperAdminCommission(marketerUid, orderId, quantity) {
-  // find marketer → their admin → that admin’s superadmin
+async function creditSuperAdminCommission(marketerUid, orderId, qty) {
+  // find the superadmin
   const { rows } = await pool.query(`
-    SELECT su.unique_id AS superadmin_uid
+    SELECT su.unique_id AS superUid
       FROM users m
       JOIN users a  ON m.admin_id        = a.id
       JOIN users su ON a.super_admin_id = su.id
      WHERE m.unique_id = $1
-  `, [marketerUid]);
-
-  if (!rows.length) return { totalCommission: 0, available: 0, withheld: 0 };
-  const superUid  = rows[0].superadmin_uid;
-  const commission = HIERARCHY_COMM.superAdmin * quantity;
-  return creditSplit(superUid, orderId, commission, 'super_commission');
+  `, [ marketerUid ]);
+  if (!rows[0]) return { totalComm: 0 };
+  const total = HIERARCHY_COMM.superAdmin * qty;
+  return creditFull(rows[0].superUid, orderId, total, 'super_commission');
 }
 
-//
-// ——— Other Existing Functions ———————————————————————————————————————
-//
-
-/**
- * Credit a raw commission (used in some legacy flows).
- */
-async function creditCommissionFromAmount(userId, orderId, commission) {
-  await ensureWallet(userId);
-  const available = Math.floor(commission * 0.4);
-  const withheld  = commission - available;
-
-  await pool.query(`
-    UPDATE wallets
-       SET total_balance     = total_balance     + $1,
-           available_balance = available_balance + $2,
-           withheld_balance  = withheld_balance  + $3,
-           updated_at        = NOW()
-     WHERE user_unique_id = $4
-  `, [commission, available, withheld, userId]);
-
-  await pool.query(`
-    INSERT INTO wallet_transactions
-      (user_unique_id, amount, transaction_type, meta)
-    VALUES
-      ($1, $2, 'commission',            $5::jsonb),
-      ($1, $3, 'commission_available',  '{}'::jsonb),
-      ($1, $4, 'commission_withheld',   '{}'::jsonb)
-  `, [
-    userId,
-    commission,
-    available,
-    withheld,
-    JSON.stringify({ orderId }),
-  ]);
-
-  return { commission, available, withheld };
-}
-
-/**
- * Fetch a user’s wallet + recent transactions.
- */
+// ─── Query Wallet & History ────────────────────────────────────
 async function getMyWallet(userId) {
-  await pool.query(`
-    INSERT INTO wallets(user_unique_id)
-      VALUES ($1)
-    ON CONFLICT (user_unique_id) DO NOTHING
-  `, [userId]);
-
+  await ensureWallet(userId);
   const { rows: [wallet] } = await pool.query(`
     SELECT total_balance, available_balance, withheld_balance,
            account_name, account_number, bank_name
       FROM wallets
      WHERE user_unique_id = $1
-  `, [userId]);
-
+  `, [ userId ]);
   const { rows: transactions } = await pool.query(`
     SELECT id, transaction_type, amount, created_at
       FROM wallet_transactions
      WHERE user_unique_id = $1
      ORDER BY created_at DESC
-     LIMIT 20
-  `, [userId]);
-
+     LIMIT 50
+  `, [ userId ]);
   return { wallet, transactions };
 }
 
-/**
- * Marketer requests a withdrawal.
- */
+async function getMyWithdrawals(userId) {
+  const { rows } = await pool.query(`
+    SELECT id, amount_requested, fee, status, requested_at
+      FROM withdrawal_requests
+     WHERE user_unique_id = $1
+     ORDER BY requested_at DESC
+  `, [ userId ]);
+  return rows;
+}
+
+// ─── Withdrawal Flow ──────────────────────────────────────────
 async function requestWithdrawal(userId, amount, bankDetails) {
-  const FEE = 100;
-  const amt = Number(amount);
-  if (!Number.isFinite(amt) || amt <= 0) {
-    throw new Error("Invalid withdrawal amount");
-  }
+  await ensureWallet(userId);
+  const { rows: [w] } = await pool.query(`
+    SELECT available_balance
+      FROM wallets
+     WHERE user_unique_id = $1
+  `, [ userId ]);
 
-  // 1) Fetch the wallet
-  const { rows: [w] } = await pool.query(
-    `SELECT available_balance
-       FROM wallets
-      WHERE user_unique_id = $1`,
-    [userId]
-  );
-  if (!w) {
-    throw new Error("Wallet not found");
-  }
-
-  // 2) Check balance
-  const net = amt + FEE;
-  if (w.available_balance < net) {
+  if (!w || w.available_balance < amount + WITHDRAWAL_FEE) {
     throw new Error("Insufficient available balance (including ₦100 fee)");
   }
 
-  // 3) Update balances & bank details
-  await pool.query(
-    `UPDATE wallets
-        SET account_name      = $2,
-            account_number    = $3,
-            bank_name         = $4,
-            -- CAST $5 to int so Postgres picks the right '-' operator
-            available_balance = available_balance - $5::int,
-            -- same for '+'
-            withheld_balance  = withheld_balance  + $5::int,
-            updated_at        = NOW()
-      WHERE user_unique_id = $1`,
-    [
-      userId,
-      bankDetails.account_name,
-      bankDetails.account_number,
-      bankDetails.bank_name,
-      net,              // JS number → text, so we cast it in SQL
-    ]
-  );
+  // deduct immediately
+  await pool.query(`
+    UPDATE wallets
+       SET available_balance = available_balance - $1,
+           updated_at        = NOW()
+     WHERE user_unique_id = $2
+  `, [ amount + WITHDRAWAL_FEE, userId ]);
 
-  // 4) Insert withdrawal request
-  const { rows: [reqRow] } = await pool.query(
-    `INSERT INTO withdrawal_requests
-       (user_unique_id, amount_requested, fee, net_amount,
-        status, account_name, account_number, bank_name, requested_at)
-     VALUES ($1, $2, $3, $4, 'pending', $5, $6, $7, NOW())
-     RETURNING *`,
-    [
-      userId,
-      amt,
-      FEE,
-      net,
-      bankDetails.account_name,
-      bankDetails.account_number,
-      bankDetails.bank_name,
-    ]
-  );
+  // record request
+  const { rows: [reqRow] } = await pool.query(`
+    INSERT INTO withdrawal_requests
+      (user_unique_id, amount_requested, fee, status,
+       account_name, account_number, bank_name, requested_at)
+    VALUES ($1, $2, $3, 'pending', $4, $5, $6, NOW())
+    RETURNING *
+  `, [
+    userId, amount, WITHDRAWAL_FEE,
+    bankDetails.account_name,
+    bankDetails.account_number,
+    bankDetails.bank_name
+  ]);
 
-  // 5) Log the transaction
-  await pool.query(
-    `INSERT INTO wallet_transactions
-       (user_unique_id, amount, transaction_type, meta)
-     VALUES ($1, -$2, 'withdraw_request', $3::jsonb)`,
-    [userId, net, JSON.stringify({ reqId: reqRow.id })]
-  );
+  // log the fee
+  const meta = JSON.stringify({ reqId: reqRow.id });
+  await pool.query(`
+    INSERT INTO wallet_transactions
+      (user_unique_id, amount, transaction_type, meta)
+    VALUES ($1, -$2, 'withdrawal_fee', $3::jsonb)
+  `, [ userId, WITHDRAWAL_FEE, meta ]);
 
   return reqRow;
 }
 
-/**
- * List your withdrawals.
- */
-async function getMyWithdrawals(userId) {
-  const { rows } = await pool.query(
-    `SELECT
-       id,
-       amount_requested AS amount,
-       fee,
-       net_amount       AS total,
-       status,
-       requested_at
-     FROM withdrawal_requests
-     WHERE user_unique_id = $1
-     ORDER BY requested_at DESC`,
-    [userId]
-  );
-  return rows;
-}
-
-/**
- * List pending withdrawals (for Admin).
- */
+// ─── Master-Admin Endpoints ───────────────────────────────────
 async function listPendingRequests() {
   const { rows } = await pool.query(`
-    SELECT w.id,
-           w.user_unique_id,
-           u.first_name AS marketer_name,
-           w.amount_requested AS amount,
-           w.fee,
-           w.net_amount AS total,
-           w.account_name,
-           w.account_number,
-           w.bank_name,
-           w.requested_at
+    SELECT w.*, u.first_name || ' ' || u.last_name AS marketer_name
       FROM withdrawal_requests w
       JOIN users u ON u.unique_id = w.user_unique_id
      WHERE w.status = 'pending'
@@ -318,41 +185,28 @@ async function listPendingRequests() {
   return rows;
 }
 
-/**
- * Approve or reject a withdrawal (Admin).
- */
-async function reviewRequest(reqId, action, adminId) {
+async function reviewRequest(reqId, action, adminUid) {
   const { rows: [r] } = await pool.query(`
-    SELECT * FROM withdrawal_requests
-     WHERE id = $1 AND status = 'pending'
-  `, [reqId]);
-
+    SELECT * FROM withdrawal_requests WHERE id = $1 AND status = 'pending'
+  `, [ reqId ]);
   if (!r) throw new Error("Request not found or already processed");
 
   if (action === 'approve') {
-    // mark approved + log payout
     await pool.query(`
       UPDATE withdrawal_requests
          SET status = 'approved',
              reviewed_by = $2,
              reviewed_at = NOW()
        WHERE id = $1
-    `, [reqId, adminId]);
-
-    await pool.query(`
-      INSERT INTO wallet_transactions
-        (user_unique_id, amount, transaction_type, meta)
-      VALUES ($1, -$2, 'withdraw_approved', $3::jsonb)
-    `, [r.user_unique_id, r.net_amount, JSON.stringify({ reqId })]);
+    `, [ reqId, adminUid ]);
   } else {
-    // rollback balances + mark rejected
+    // on rejection, refund the user
     await pool.query(`
       UPDATE wallets
-         SET available_balance = available_balance + $1,
-             withheld_balance  = withheld_balance - $1,
+         SET available_balance = available_balance + (amount_requested + fee),
              updated_at        = NOW()
-       WHERE user_unique_id = $2
-    `, [r.net_amount, r.user_unique_id]);
+       WHERE user_unique_id = $1
+    `, [ r.user_unique_id ]);
 
     await pool.query(`
       UPDATE withdrawal_requests
@@ -360,19 +214,18 @@ async function reviewRequest(reqId, action, adminId) {
              reviewed_by = $2,
              reviewed_at = NOW()
        WHERE id = $1
-    `, [reqId, adminId]);
+    `, [ reqId, adminUid ]);
 
+    // log the refund of fee+amount
+    const meta = JSON.stringify({ reqId });
     await pool.query(`
       INSERT INTO wallet_transactions
         (user_unique_id, amount, transaction_type, meta)
       VALUES ($1, $2, 'withdraw_rejected', $3::jsonb)
-    `, [r.user_unique_id, r.net_amount, JSON.stringify({ reqId })]);
+    `, [ r.user_unique_id, r.amount_requested + r.fee, meta ]);
   }
 }
 
-/**
- * Release withheld balances (MasterAdmin only).
- */
 async function releaseWithheld() {
   const client = await pool.connect();
   try {
@@ -382,7 +235,6 @@ async function releaseWithheld() {
         FROM wallets
        WHERE withheld_balance > 0
     `);
-
     for (const w of rows) {
       await client.query(`
         UPDATE wallets
@@ -390,19 +242,14 @@ async function releaseWithheld() {
                withheld_balance  = 0,
                updated_at        = NOW()
          WHERE user_unique_id = $2
-      `, [w.withheld_balance, w.user_unique_id]);
-
+      `, [ w.withheld_balance, w.user_unique_id ]);
+      const meta = JSON.stringify({ released: w.withheld_balance });
       await client.query(`
         INSERT INTO wallet_transactions
           (user_unique_id, amount, transaction_type, meta)
         VALUES ($1, $2, 'release_withheld', $3::jsonb)
-      `, [
-        w.user_unique_id,
-        w.withheld_balance,
-        JSON.stringify({ period: new Date().toISOString().slice(0,7) })
-      ]);
+      `, [ w.user_unique_id, w.withheld_balance, meta ]);
     }
-
     await client.query('COMMIT');
   } catch (err) {
     await client.query('ROLLBACK');
@@ -412,41 +259,34 @@ async function releaseWithheld() {
   }
 }
 
-/**
- * Fetch commission stats.
- */
-async function getStats(userId, from, to) {
-  const fromDate = from ? new Date(from) : new Date(0);
-  const toDate   = to   ? new Date(to)   : new Date();
-
+// ─── Utility ───────────────────────────────────────────────────
+async function getFeeStats(from, to) {
   const { rows } = await pool.query(`
-    SELECT COALESCE(SUM(amount),0)::BIGINT AS total_commission
-      FROM wallet_transactions
-     WHERE user_unique_id  = $1
-       AND transaction_type = 'commission'
-       AND created_at BETWEEN $2 AND $3
-  `, [
-    userId,
-    fromDate.toISOString(),
-    toDate.toISOString()
-  ]);
-
-  return { commission: Number(rows[0].total_commission) };
+    SELECT
+      COUNT(*)           AS count,
+      COALESCE(SUM(amount),0) AS total_fees
+    FROM wallet_transactions
+   WHERE transaction_type = 'withdrawal_fee'
+     AND created_at BETWEEN $1 AND $2
+  `, [ from, to ]);
+  return rows[0];
 }
 
-/**
- * Reset all wallets & transactions (MasterAdmin only).
- */
-async function resetWallets() {
+async function resetWallet(userId) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query(`UPDATE wallets
-                          SET total_balance     = 0,
-                              available_balance = 0,
-                              withheld_balance  = 0,
-                              updated_at        = NOW()`);
-    await client.query(`DELETE FROM wallet_transactions`);
+    await client.query(`
+      UPDATE wallets
+         SET total_balance = 0,
+             available_balance = 0,
+             withheld_balance  = 0,
+             updated_at = NOW()
+       WHERE user_unique_id = $1
+    `, [ userId ]);
+    await client.query(`
+      DELETE FROM wallet_transactions WHERE user_unique_id = $1
+    `, [ userId ]);
     await client.query('COMMIT');
   } catch (err) {
     await client.query('ROLLBACK');
@@ -457,35 +297,196 @@ async function resetWallets() {
 }
 
 /**
- * List all marketers’ wallets (MasterAdmin).
+ * Release the withheld 60% for a single user.
+ * Only MasterAdmin may call this, only on the last day of the month,
+ * and only if the marketer has no pending stock-pickup issues.
  */
-async function getAllWallets() {
-  const { rows } = await pool.query(`
-    SELECT w.user_unique_id,
-           u.first_name || ' ' || u.last_name AS marketer_name,
-           w.total_balance,
-           w.available_balance,
-           w.withheld_balance
-      FROM wallets w
-      JOIN users u ON u.unique_id = w.user_unique_id
-     WHERE u.role = 'Marketer'
-     ORDER BY u.first_name, u.last_name
-  `);
-  return rows;
+async function releaseWithheldForUser(userId) {
+  // 1) Date check: must be last day of the month
+  const now     = new Date();
+  const lastDay = new Date(now.getFullYear(), now.getMonth()+1, 0).getDate();
+  if (now.getDate() !== lastDay) {
+    throw new Error("Withheld funds can only be released on the last day of the month.");
+  }
+
+  // 2) Ensure no pending stock-updates for that marketer
+  const { rows: [marketer] } = await pool.query(
+    `SELECT id FROM users WHERE unique_id = $1`, [userId]
+  );
+  if (!marketer) {
+    throw new Error("Marketer not found.");
+  }
+
+  const { rows: pending } = await pool.query(
+    `SELECT 1
+       FROM stock_updates
+      WHERE marketer_id = $1
+        AND status IN ('pending','transfer_pending','transfer_approved')
+   `,
+    [marketer.id]
+  );
+  if (pending.length) {
+    throw new Error("Cannot release withheld: marketer has live pickup-stock issues.");
+  }
+
+  // 3) Fetch their withheld balance
+  const { rows: [wallet] } = await pool.query(
+    `SELECT withheld_balance FROM wallets WHERE user_unique_id = $1`,
+    [userId]
+  );
+  const toRelease = wallet?.withheld_balance || 0;
+  if (!toRelease) {
+    return { released: 0 };
+  }
+
+  // 4) Move withheld → available
+  await pool.query(`
+    UPDATE wallets
+       SET available_balance = available_balance + $1,
+           withheld_balance  = 0,
+           updated_at        = NOW()
+     WHERE user_unique_id = $2
+  `, [toRelease, userId]);
+
+  // 5) Log a transaction
+  const meta = JSON.stringify({ released: toRelease });
+  await pool.query(`
+    INSERT INTO wallet_transactions
+      (user_unique_id, amount, transaction_type, meta)
+    VALUES ($1, $2, 'release_withheld', $3::jsonb)
+  `, [userId, toRelease, meta]);
+
+  return { released: toRelease };
 }
 
+//
+// ——— Withdrawal Requests —————————————————————————————————————————————————
+//
+
+/**
+ * Create a pending withdrawal request.
+ * Does NOT touch balances yet—only logs the intent.
+ */
+async function createWithdrawalRequest(userId, amount, bankDetails) {
+  // 1) ensure user exists & has enough available
+  const FEE = 100;
+  const { rows: [w] } = await pool.query(
+    `SELECT available_balance
+       FROM wallets
+      WHERE user_unique_id = $1`,
+    [userId]
+  );
+  if (!w || w.available_balance < amount + FEE) {
+    throw new Error("Insufficient available balance (including ₦100 fee)");
+  }
+
+  // 2) insert into withdrawal_requests
+  const { rows: [reqRow] } = await pool.query(`
+    INSERT INTO withdrawal_requests
+      ( user_unique_id,
+        amount_requested,
+        fee,
+        net_amount,
+        account_name,
+        account_number,
+        bank_name,
+        status,
+        requested_at
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7, 'pending', NOW()
+      )
+    RETURNING *`,
+    [
+      userId,
+      amount,
+      FEE,
+      amount,            // net to user; fee kept by platform
+      bankDetails.account_name,
+      bankDetails.account_number,
+      bankDetails.bank_name
+    ]
+  );
+
+  return reqRow;
+}
+
+/**
+ * MasterAdmin reviews (approve / reject) a withdrawal request.
+ */
+async function reviewWithdrawalRequest(requestId, action, adminUid) {
+  // 1) fetch pending request
+  const { rows: [req] } = await pool.query(
+    `SELECT * FROM withdrawal_requests WHERE id = $1 AND status = 'pending'`,
+    [requestId]
+  );
+  if (!req) throw new Error("Request not found or not pending");
+
+  // 2) if approve → debit user’s available, credit fee revenue, mark request approved
+  if (action === 'approve') {
+    await pool.query('BEGIN');
+    try {
+      // a) debit available_balance by (amount+fee)
+      await pool.query(`
+        UPDATE wallets
+           SET available_balance = available_balance - ($1 + $2),
+               updated_at        = NOW()
+         WHERE user_unique_id = $3
+      `, [req.amount_requested, req.fee, req.user_unique_id]);
+
+      // b) record transaction
+      await pool.query(`
+        INSERT INTO wallet_transactions
+          (user_unique_id, amount, transaction_type, meta)
+        VALUES
+          ($1, -$2, 'withdrawal',   $4::jsonb),
+          ($1, -$3, 'withdrawal_fee',$4::jsonb)
+      `, [
+        req.user_unique_id,
+        req.amount_requested,
+        req.fee,
+        JSON.stringify({ requestId })
+      ]);
+
+      // c) mark request approved
+      await pool.query(`
+        UPDATE withdrawal_requests
+           SET status      = 'approved',
+               reviewed_by = $2,
+               reviewed_at = NOW()
+         WHERE id = $1
+      `, [requestId, adminUid]);
+
+      await pool.query('COMMIT');
+      return { requestId, approved: true };
+    } catch (e) {
+      await pool.query('ROLLBACK');
+      throw e;
+    }
+  } else {
+    // 3) if reject → simply mark request rejected
+    await pool.query(`
+      UPDATE withdrawal_requests
+         SET status      = 'rejected',
+             reviewed_by = $2,
+             reviewed_at = NOW()
+       WHERE id = $1
+    `, [requestId, adminUid]);
+    return { requestId, approved: false };
+  }
+}
 module.exports = {
   creditMarketerCommission,
   creditAdminCommission,
   creditSuperAdminCommission,
-  creditCommissionFromAmount,
   getMyWallet,
-  requestWithdrawal,
   getMyWithdrawals,
+  requestWithdrawal,
   listPendingRequests,
   reviewRequest,
   releaseWithheld,
-  getStats,
-  resetWallets,
-  getAllWallets,
+  getFeeStats,
+  resetWallet,
+  releaseWithheldForUser,
+  createWithdrawalRequest,
+  reviewWithdrawalRequest,
 };
