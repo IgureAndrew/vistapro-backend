@@ -51,85 +51,55 @@ async function getPendingOrders(req, res, next) {
  */
 async function confirmOrder(req, res, next) {
   const { orderId } = req.params;
-  const adminUid    = req.user.unique_id;
   const client      = await pool.connect();
 
   try {
     await client.query("BEGIN");
 
-    // 1) Lock & fetch the order
-    const { rows: [order] } = await client.query(
-      `SELECT * 
-         FROM orders 
-        WHERE id = $1 
-          FOR UPDATE`,
-      [orderId]
-    );
-    if (!order) {
-      await client.query("ROLLBACK");
-      return res.status(404).json({ message: "Order not found." });
-    }
+    // 1) Mark the order as confirmed
+    const { rows: [order] } = await client.query(`
+      UPDATE orders
+         SET status       = 'confirmed',
+             confirmed_at = NOW()
+       WHERE id = $1
+     RETURNING *;
+    `, [orderId]);
+    if (!order) throw new Error("Order not found");
 
-    // 2) If this was a stock‐pickup order, mark reserved IMEIs sold + pickup “sold”
-    if (order.stock_update_id) {
-      await client.query(
-        `UPDATE inventory_items
-            SET status = 'sold'
-          WHERE stock_update_id = $1
-            AND status          = 'reserved'`,
-        [order.stock_update_id]
-      );
-      await client.query(
-        `UPDATE stock_updates
-            SET status = 'sold'
-          WHERE id = $1`,
-        [order.stock_update_id]
-      );
-    }
+    // 2) Grab the marketer's unique_id (so we can credit their wallet)
+    const { rows: [u] } = await client.query(`
+      SELECT unique_id
+        FROM users
+       WHERE id = $1
+    `, [order.marketer_id]);
+    if (!u) throw new Error("Marketer not found");
+    const marketerUid = u.unique_id;
 
-    // 3) Mark the order confirmed
-    const { rows: [updated] } = await client.query(
-      `UPDATE orders
-          SET status       = 'confirmed',
-              confirmed_by = $2,
-              confirmed_at = NOW(),
-              updated_at   = NOW()
-        WHERE id = $1
-        RETURNING *`,
-      [orderId, adminUid]
+    // 3) Credit the marketer (full commission to available)
+    //    You could also use creditSplit if you want 40/60 split
+    await walletService.creditFull(
+      marketerUid,
+      order.id,
+      order.number_of_devices * order.earnings_per_device,
+      'order_commission'
     );
 
-    // 4) Look up device_type & quantity
-    const { rows: [{ device_type }] } = await client.query(
-      `SELECT p.device_type
-         FROM orders o
-    LEFT JOIN stock_updates su ON o.stock_update_id = su.id
-    LEFT JOIN products       p ON p.id = COALESCE(o.product_id, su.product_id)
-        WHERE o.id = $1`,
-      [orderId]
-    );
-    const qty   = updated.number_of_devices;
-    const dtKey = device_type.toLowerCase(); // "ios" or "android", etc.
-
-    // 5) Resolve the marketer's unique_id (owner of this order)
-    const { rows: [{ unique_id: marketerUid }] } = await client.query(
-      `SELECT unique_id
-         FROM users
-        WHERE id = $1`,
-      [order.marketer_id]
+    // 4) Credit the admin: N1 500 per device sold
+    await walletService.creditAdminCommission(
+      marketerUid,
+      order.id,
+      order.number_of_devices
     );
 
-    // 6) Credit commissions on all three tiers
-    await creditMarketerCommission(  marketerUid, orderId, dtKey, qty );
-    await creditAdminCommission(      marketerUid, orderId,       qty );
-    await creditSuperAdminCommission( marketerUid, orderId,       qty );
+    // 5) Credit the super-admin: N1 000 per device sold
+    await walletService.creditSuperAdminCommission(
+      marketerUid,
+      order.id,
+      order.number_of_devices
+    );
 
     await client.query("COMMIT");
-    res.json({
-      message: "Order confirmed, stock marked sold, and commissions credited.",
-      order: updated
-    });
-
+    res.json({ message: "Order confirmed. Commissions paid to marketer, admin, and super-admin." });
   } catch (err) {
     await client.query("ROLLBACK");
     next(err);
