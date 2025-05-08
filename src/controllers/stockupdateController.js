@@ -480,7 +480,7 @@ async function approveStockTransfer(req, res, next) {
  * GET /api/marketer/stock-pickup/marketer
  * List this marketer’s pickups.
  */
-async function getMarketerStockUpdates(req, res, next) {
+async function getStockUpdates(req, res, next) {
   try {
     const uid = req.user.unique_id;
     const { rows } = await pool.query(
