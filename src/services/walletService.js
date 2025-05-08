@@ -127,6 +127,62 @@ async function creditSuperAdminCommission(marketerUid, orderId, qty) {
   return creditFull(superUid, orderId, total, 'super_commission');
 }
 
+async function getSubordinateWallets(superAdminUid) {
+  // 1) look up superadmin's internal ID
+  const { rows: [su] } = await pool.query(
+    `SELECT id FROM users WHERE unique_id = $1`,
+    [superAdminUid]
+  );
+  if (!su) throw new Error('SuperAdmin not found');
+
+  // 2) find all admins under this superAdmin
+  const { rows: admins } = await pool.query(
+    `SELECT unique_id FROM users WHERE super_admin_id = $1`,
+    [su.id]
+  );
+  const adminUids = admins.map(r => r.unique_id);
+
+  // 3) find all marketers under those admins
+  let marketerUids = [];
+  if (adminUids.length) {
+    const { rows: mkrs } = await pool.query(
+      `SELECT unique_id 
+         FROM users 
+        WHERE admin_id IN (
+          SELECT id FROM users WHERE unique_id = ANY($1)
+        )`,
+      [adminUids]
+    );
+    marketerUids = mkrs.map(r => r.unique_id);
+  }
+
+  // 4) fetch wallets & latest transactions for each
+  const uids = [...adminUids, ...marketerUids];
+  if (!uids.length) return { wallets: [], transactions: [] };
+
+  // a) wallets
+  const { rows: wallets } = await pool.query(
+    `SELECT w.*, u.first_name||' '||u.last_name AS name, u.role
+       FROM wallets w
+       JOIN users u ON u.unique_id = w.user_unique_id
+      WHERE w.user_unique_id = ANY($1)`,
+    [uids]
+  );
+
+  // b) most recent 20 txns among them
+  const { rows: transactions } = await pool.query(
+    `SELECT wt.*, u.first_name||' '||u.last_name AS name
+       FROM wallet_transactions wt
+       JOIN users u ON u.unique_id = wt.user_unique_id
+      WHERE wt.user_unique_id = ANY($1)
+      ORDER BY wt.created_at DESC
+      LIMIT 50`,
+    [uids]
+  );
+
+  return { wallets, transactions };
+}
+
 // ─── Exports ─────────────────────────────────────────────────────
 module.exports = {
   ensureWallet,
@@ -134,5 +190,6 @@ module.exports = {
   creditFull,
   creditMarketerCommission,
   creditAdminCommission,
-  creditSuperAdminCommission
+  creditSuperAdminCommission,
+  getSubordinateWallets,
 };

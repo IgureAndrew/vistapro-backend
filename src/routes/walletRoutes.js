@@ -70,4 +70,11 @@ router.get(
   wc.getAllWallets
 );
 
+router.get(
+  '/super-admin/activities',
+  verifyToken,
+  verifyRole(['SuperAdmin']),
+  wc.getSuperAdminActivities
+);
+
 module.exports = router;

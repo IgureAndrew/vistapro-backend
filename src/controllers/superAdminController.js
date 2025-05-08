@@ -4,47 +4,136 @@ const { createUser } = require('../models/userModel');
 const { logAudit } = require('../utils/auditLogger'); // Optional: for audit trails
 
 /**
- * updateProfile - Allows Super Admins to update their profile details.
- * Expects the Super Admin's ID from req.user (set by verifyToken middleware),
- * and fields in req.body: email, phone, gender, newPassword (optional).
- * Also accepts an optional file upload for the profile image (field name 'profileImage').
+ * GET /api/super-admin/account
+ * Fetch current super-admin’s profile settings
  */
-const updateProfile = async (req, res, next) => {
+async function getAccountSettings(req, res, next) {
   try {
-    const userId = req.user.id;
-    const { email, phone, gender, newPassword } = req.body;
+    const superUid = req.user.unique_id;
+    if (!superUid) {
+      return res.status(400).json({ message: "SuperAdmin unique ID not available." });
+    }
+    const { rows } = await pool.query(`
+      SELECT
+        first_name        AS firstName,
+        last_name         AS lastName,
+        email,
+        phone,
+        profile_image     AS profileImage
+      FROM users
+      WHERE unique_id = $1
+        AND role = 'SuperAdmin'
+    `, [superUid]);
 
-    let hashedPassword = null;
-    if (newPassword) {
-      hashedPassword = await bcrypt.hash(newPassword, 10);
+    if (!rows.length) {
+      return res.status(404).json({ message: "SuperAdmin not found." });
+    }
+    res.json({ settings: rows[0] });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * PATCH /api/super-admin/account
+ * Partially update super-admin’s profile
+ */
+async function updateAccountSettings(req, res, next) {
+  try {
+    const superUid = req.user.unique_id;
+    if (!superUid) {
+      return res.status(400).json({ message: "SuperAdmin unique ID not available." });
     }
 
-    // Get the uploaded file's path if available
-    const profileImage = req.file ? req.file.path : null;
+    const {
+      firstName,
+      lastName,
+      email,
+      phone,
+      oldPassword,
+      newPassword
+    } = req.body;
 
-    // Update the Super Admin's profile using COALESCE to preserve existing data if no new value is provided.
-    const query = `
+    const clauses = [];
+    const values  = [];
+    let   idx     = 1;
+
+    // 1) handle password change
+    if (newPassword) {
+      if (!oldPassword) {
+        return res.status(400).json({ message: "Old password is required to change password." });
+      }
+      // fetch existing hash
+      const { rows: urows } = await pool.query(
+        `SELECT password FROM users WHERE unique_id = $1 AND role = 'SuperAdmin'`,
+        [superUid]
+      );
+      if (!urows.length) {
+        return res.status(404).json({ message: "SuperAdmin not found." });
+      }
+      const match = await bcrypt.compare(oldPassword, urows[0].password);
+      if (!match) {
+        return res.status(400).json({ message: "Old password is incorrect." });
+      }
+      const hash = await bcrypt.hash(newPassword, 10);
+      clauses.push(`password = $${idx}`); values.push(hash); idx++;
+    }
+
+    // 2) other optional fields
+    if (firstName) {
+      clauses.push(`first_name = $${idx}`); values.push(firstName); idx++;
+    }
+    if (lastName) {
+      clauses.push(`last_name = $${idx}`); values.push(lastName); idx++;
+    }
+    if (email) {
+      clauses.push(`email = $${idx}`); values.push(email); idx++;
+    }
+    if (phone) {
+      clauses.push(`phone = $${idx}`); values.push(phone); idx++;
+    }
+    if (req.file) {
+      clauses.push(`profile_image = $${idx}`); values.push(req.file.path); idx++;
+    }
+
+    if (!clauses.length) {
+      return res.status(400).json({ message: "No fields provided for update." });
+    }
+
+    // always update updated_at
+    clauses.push(`updated_at = NOW()`);
+
+    // add WHERE param
+    values.push(superUid);
+
+    const sql = `
       UPDATE users
-      SET email = COALESCE($1, email),
-          phone = COALESCE($2, phone),
-          gender = COALESCE($3, gender),
-          profile_image = COALESCE($4, profile_image),
-          password = COALESCE($5, password),
-          updated_at = NOW()
-      WHERE id = $6
-      RETURNING *
+         SET ${clauses.join(', ')}
+       WHERE unique_id = $${idx}
+         AND role = 'SuperAdmin'
+      RETURNING
+        unique_id        AS uniqueId,
+        first_name       AS firstName,
+        last_name        AS lastName,
+        email,
+        phone,
+        profile_image    AS profileImage,
+        updated_at       AS updatedAt
     `;
-    const values = [email, phone, gender, profileImage, hashedPassword, userId];
-    const result = await pool.query(query, values);
 
-    return res.status(200).json({
-      message: "Super Admin profile updated successfully.",
-      user: result.rows[0],
+    const { rows } = await pool.query(sql, values);
+    if (!rows.length) {
+      return res.status(404).json({ message: "SuperAdmin not found." });
+    }
+    res.json({
+      message: "Account updated successfully.",
+      settings: rows[0]
     });
-  } catch (error) {
-    next(error);
+  } catch (err) {
+    next(err);
   }
-};
+}
+
 /**
  * registerAdmin - Allows Super Admins to register a new Admin account.
  * Expects name, email, password, phone, and account_number in req.body.
@@ -80,6 +169,7 @@ const registerAdmin = async (req, res, next) => {
 };
 
 module.exports = {
-  updateProfile,
+  getAccountSettings,
+  updateAccountSettings,
   registerAdmin,
 };

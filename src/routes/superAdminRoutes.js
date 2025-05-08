@@ -1,35 +1,56 @@
+// src/routes/superAdminRoutes.js
 const express = require('express');
-const router = express.Router();
-const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
-const { verifyToken } = require('../middlewares/authMiddleware');
-const { verifyRole } = require('../middlewares/roleMiddleware');
-const { updateProfile, registerAdmin } = require('../controllers/superAdminController');
+const router  = express.Router();
+const multer  = require('multer');
+const path    = require('path');
+const fs      = require('fs');
+const { verifyToken }    = require('../middlewares/authMiddleware');
+const { verifyRole }     = require('../middlewares/roleMiddleware');
+const {
+  getAccountSettings,
+  updateAccountSettings,
+  registerAdmin
+} = require('../controllers/superAdminController');
 
-// Define the uploads directory and ensure it exists.
+// ensure uploads directory exists
 const uploadDir = path.join(__dirname, '../../uploads');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
 
-// Configure Multer storage settings.
+// Multer setup for accountImage
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadDir),
-  filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname)
+  destination: (_req, _file, cb) => cb(null, uploadDir),
+  filename:    (_req, file, cb) => {
+    const safeName = Date.now() + '-' + file.originalname.replace(/\s+/g, '_');
+    cb(null, safeName);
+  }
 });
 const upload = multer({ storage });
 
-// Super Admin profile update endpoint with file upload (profileImage)
+// ─── SuperAdmin Account Endpoints ─────────────────────────────────
+
+// GET /api/super-admin/account
+router.get(
+  '/account',
+  verifyToken,
+  verifyRole(['SuperAdmin']),
+  getAccountSettings
+);
+
+// PUT /api/super-admin/account
+// (optionally accepts a file under field name 'profileImage')
 router.put(
-  '/profile',
+  '/account',
   verifyToken,
   verifyRole(['SuperAdmin']),
   upload.single('profileImage'),
-  updateProfile
+  updateAccountSettings
 );
 
-// Endpoint for Super Admin to register a new Admin account
+// ─── Register a new Admin ──────────────────────────────────────
+
+// POST /api/super-admin/register-admin
 router.post(
   '/register-admin',
   verifyToken,

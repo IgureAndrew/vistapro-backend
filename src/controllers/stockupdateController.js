@@ -693,6 +693,61 @@ async function reviewStockTransfer(req, res, next) {
     next(err);
   }
 }
+
+/**
+ * GET /api/superadmin/stock-updates
+ * Returns *only* those stock‐pickups for marketers whose admin_id → super_admin_id  
+ * matches the current super-admin’s unique_id. Includes deadline for countdown.
+ */
+async function listSuperAdminStockUpdates(req, res, next) {
+  try {
+    const superUid = req.user.unique_id;
+    if (!superUid) {
+      return res.status(400).json({ message: "SuperAdmin unique_id missing." });
+    }
+
+    const { rows } = await pool.query(`
+      SELECT
+        su.id,
+        p.device_name,
+        p.device_model,
+        su.quantity,
+        su.pickup_date,
+        su.deadline,
+        -- derive status: sold if there's a confirmed order, expired if past deadline, else pending
+        CASE
+          WHEN EXISTS (
+            SELECT 1
+              FROM orders o
+             WHERE o.stock_update_id = su.id
+               AND o.status = 'confirmed'
+          ) THEN 'sold'
+          WHEN su.deadline < NOW() THEN 'expired'
+          ELSE 'pending'
+        END AS status,
+        m.unique_id          AS marketer_unique_id,
+        m.first_name||' '||m.last_name AS marketer_name,
+        a.unique_id          AS admin_unique_id,
+        a.first_name||' '||a.last_name AS admin_name
+      FROM stock_updates su
+      JOIN products p
+        ON p.id = su.product_id
+      JOIN users m
+        ON m.id = su.marketer_id
+      JOIN users a
+        ON m.admin_id = a.id
+      JOIN users s
+        ON a.super_admin_id = s.id
+      WHERE s.unique_id = $1
+      ORDER BY su.pickup_date DESC
+    `, [superUid]);
+
+    res.json({ data: rows });
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   listStockPickupDealers,
   listStockProductsByDealer,
@@ -704,4 +759,5 @@ module.exports = {
   getStockUpdates,
   confirmReturn,
   reviewStockTransfer,
+  listSuperAdminStockUpdates,
 };

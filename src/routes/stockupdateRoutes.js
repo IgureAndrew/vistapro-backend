@@ -77,4 +77,10 @@ router.patch(
   ctrl.confirmReturn
 );
 
+router.get(
+  '/superadmin/stock-updates',
+  verifyToken,
+  verifyRole(['SuperAdmin']),
+  ctrl.listSuperAdminStockUpdates
+);
 module.exports = router;

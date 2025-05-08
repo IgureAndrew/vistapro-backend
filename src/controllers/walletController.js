@@ -147,6 +147,17 @@ async function releaseWithheld(req, res, next) {
   }
 }
 
+async function getSuperAdminActivities(req, res, next) {
+  try {
+    const superAdminUid = req.user.unique_id;
+    const { wallets, transactions } =
+      await walletService.getSubordinateWallets(superAdminUid);
+    res.json({ wallets, transactions });
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   getMyWallet,
   getWalletStats,
@@ -156,5 +167,6 @@ module.exports = {
   reviewRequest,
   resetWallets,
   getAllWallets,
-  releaseWithheld
+  releaseWithheld,
+  getSuperAdminActivities
 };
