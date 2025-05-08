@@ -1,6 +1,7 @@
 const { pool } = require('../config/database');
 
 // ─── Config ─────────────────────────────────────────────────────
+//Marketer commission: ₦10 000 on Android, ₦15 000 on iOS
 const COMMISSION_RATES = { android: 10000, ios: 15000 };
 const HIERARCHY_COMM   = { admin: 1500, superAdmin: 1000 };
 const WITHDRAWAL_FEE   = 100;
@@ -88,7 +89,9 @@ async function creditFull(userId, orderId, amount, typeTag) {
 
 // ─── Commission Credits ─────────────────────────────────────────
 async function creditMarketerCommission(marketerUid, orderId, deviceType, qty) {
-  const rate = COMMISSION_RATES[deviceType.toLowerCase()] || 0;
+  // Normalize any “iPhone” or “IOS” to our “ios” bucket
+  const key  = deviceType.toLowerCase().includes('ios') ? 'ios' : deviceType.toLowerCase();
+  const rate = COMMISSION_RATES[key] || 0;
   const total = rate * qty;
   return creditSplit(marketerUid, orderId, total, 'commission');
 }
