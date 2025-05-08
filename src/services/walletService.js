@@ -489,4 +489,6 @@ module.exports = {
   releaseWithheldForUser,
   createWithdrawalRequest,
   reviewWithdrawalRequest,
+  creditSplit,               // ← add this if you ever need it
+  creditFull,  
 };
