@@ -54,9 +54,9 @@ async function confirmOrder(req, res, next) {
   const client      = await pool.connect();
 
   try {
-    await client.query("BEGIN");
+    await client.query('BEGIN');
 
-    // 1) Mark the order as confirmed
+    // 1) Confirm the order
     const { rows: [order] } = await client.query(`
       UPDATE orders
          SET status       = 'confirmed',
@@ -66,48 +66,49 @@ async function confirmOrder(req, res, next) {
     `, [orderId]);
     if (!order) throw new Error("Order not found");
 
-    // 2) Grab the marketer's unique_id (so we can credit their wallet)
-    const { rows: [u] } = await client.query(`
+    // 2) Look up the marketer's unique_id
+    const { rows: [m] } = await client.query(`
       SELECT unique_id
         FROM users
        WHERE id = $1
     `, [order.marketer_id]);
-    if (!u) throw new Error("Marketer not found");
-    const marketerUid = u.unique_id;
+    if (!m) throw new Error("Marketer not found");
+    const marketerUid = m.unique_id;
 
-    // 3) Credit the marketer (full commission to available)
-    //    You could also use creditSplit if you want 40/60 split
-    await walletService.creditFull(
+    const qty  = order.number_of_devices;
+    const type = order.device_type;
+
+    // 3) Credit the marketer (does the 40/60 split automatically)
+    await walletService.creditMarketerCommission(
       marketerUid,
       order.id,
-      order.number_of_devices * order.earnings_per_device,
-      'order_commission'
+      type,
+      qty
     );
 
-    // 4) Credit the admin: N1 500 per device sold
+    // 4) Credit the admin: ₦1,500 × qty
     await walletService.creditAdminCommission(
       marketerUid,
       order.id,
-      order.number_of_devices
+      qty
     );
 
-    // 5) Credit the super-admin: N1 000 per device sold
+    // 5) Credit the super-admin: ₦1,000 × qty
     await walletService.creditSuperAdminCommission(
       marketerUid,
       order.id,
-      order.number_of_devices
+      qty
     );
 
-    await client.query("COMMIT");
-    res.json({ message: "Order confirmed. Commissions paid to marketer, admin, and super-admin." });
+    await client.query('COMMIT');
+    res.json({ message: "Order confirmed and commissions paid out." });
   } catch (err) {
-    await client.query("ROLLBACK");
+    await client.query('ROLLBACK');
     next(err);
   } finally {
     client.release();
   }
 }
-
 /**
  * PATCH /api/manage-orders/orders/:orderId/confirm-to-dealer
  */
