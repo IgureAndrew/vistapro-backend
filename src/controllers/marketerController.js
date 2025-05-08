@@ -324,9 +324,9 @@ async function createOrder(req, res, next) {
     ]);
 
     // 3) Queue up the wallet credits (still in the same tx)
-    await creditMarketerCommission(  client, marketerUid, order.id, order.number_of_devices);
-    await creditAdminCommission(      client, marketerUid, order.id, order.number_of_devices);
-    await creditSuperAdminCommission( client, marketerUid, order.id, order.number_of_devices);
+    await creditMarketerCommission(  marketerUid, order.id, order.number_of_devices );
+    await creditAdminCommission(      marketerUid, order.id, order.number_of_devices );
+    await creditSuperAdminCommission( marketerUid, order.id, order.number_of_devices );
 
     await client.query('COMMIT');
 
