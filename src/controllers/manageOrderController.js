@@ -128,7 +128,6 @@ async function confirmOrder(req, res, next) {
       await client.query(
         `UPDATE stock_updates
             SET status     = 'sold',
-                updated_at = NOW()
           WHERE id = $1`,
         [stock_update_id]
       );
