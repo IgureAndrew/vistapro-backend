@@ -1,60 +1,26 @@
 // src/routes/reportRoutes.js
 const express = require('express');
-const router  = express.Router();
-const { verifyToken } = require('../middlewares/authMiddleware');
-const { verifyRole }  = require('../middlewares/roleMiddleware');
-const ctrl = require('../controllers/reportController');
+const { verifyToken, verifyRole } = require('../middlewares/authMiddleware');
+const rc = require('../controllers/reportController');
 
-// all routes protected, only MasterAdmin/Admin/SuperAdmin can access
-const ROLES = ['MasterAdmin','Admin','SuperAdmin'];
+const router = express.Router();
 
-router.get(
-  '/profit',
-  verifyToken,
-  verifyRole(ROLES),
-  ctrl.getTotalProfitReport
-);
+// only MasterAdmin (or above) may view reports
+router.use(verifyToken, verifyRole(['MasterAdmin']));
 
-router.get(
-  '/sales/marketer',
-  verifyToken,
-  verifyRole(ROLES),
-  ctrl.getSalesByMarketerReport
-);
+// profit
+router.get('/reports/profit',                  rc.getTotalProfitReport);
 
-router.get(
-  '/sales/admin',
-  verifyToken,
-  verifyRole(ROLES),
-  ctrl.getSalesByAdminReport
-);
+// sales
+router.get('/reports/sales/marketer',          rc.getSalesByMarketerReport);
+router.get('/reports/sales/admin',             rc.getSalesByAdminReport);
+router.get('/reports/sales/superadmin',        rc.getSalesBySuperAdminReport);
 
-router.get(
-  '/sales/superadmin',
-  verifyToken,
-  verifyRole(ROLES),
-  ctrl.getSalesBySuperAdminReport
-);
+// commissions
+router.get('/reports/commission/admin',        rc.getCommissionByAdminReport);
+router.get('/reports/commission/superadmin',   rc.getCommissionBySuperAdminReport);
 
-router.get(
-  '/commission/admin',
-  verifyToken,
-  verifyRole(ROLES),
-  ctrl.getCommissionByAdminReport
-);
-
-router.get(
-  '/commission/superadmin',
-  verifyToken,
-  verifyRole(ROLES),
-  ctrl.getCommissionBySuperAdminReport
-);
-
-router.get(
-  '/device-sales',
-  verifyToken,
-  verifyRole(ROLES),
-  ctrl.getDeviceSalesReport
-);
+// device‐sales
+router.get('/reports/device-sales',            rc.getDeviceSalesReport);
 
 module.exports = router;

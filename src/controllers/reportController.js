@@ -16,8 +16,7 @@ function getTrunc(interval) {
 }
 
 /**
- * GET /reports/profit?interval=daily|weekly|monthly|quarterly|yearly
- * Returns raw profit, commissions and net profit per period.
+ * GET /api/reports/profit
  */
 async function getTotalProfitReport(req, res, next) {
   try {
@@ -25,18 +24,18 @@ async function getTotalProfitReport(req, res, next) {
     const sql = `
       SELECT
         ${trunc}                                       AS period,
-        COALESCE(SUM(o.earnings_per_device*o.number_of_devices),0) AS raw_profit,
+        COALESCE(SUM(o.earnings_per_device * o.number_of_devices),0) AS raw_profit,
         COALESCE(SUM(
           CASE p.device_type
             WHEN 'android' THEN 10000
             WHEN 'iphone'  THEN 15000
             ELSE 0
           END * o.number_of_devices
-        ),0) AS marketer_commission,
+        ),0)                                            AS marketer_commission,
         COALESCE(SUM(1500 * o.number_of_devices),0)      AS admin_commission,
         COALESCE(SUM(1000 * o.number_of_devices),0)      AS superadmin_commission,
-        -- net = raw - all commissions
-        COALESCE(SUM(o.earnings_per_device*o.number_of_devices),0)
+        -- net profit = raw minus all commissions
+        COALESCE(SUM(o.earnings_per_device * o.number_of_devices),0)
         - COALESCE(SUM(
             CASE p.device_type
               WHEN 'android' THEN 10000
@@ -51,7 +50,7 @@ async function getTotalProfitReport(req, res, next) {
       JOIN products p ON p.id = o.product_id
       WHERE o.status = 'released_confirmed'
       GROUP BY period
-      ORDER BY period DESC
+      ORDER BY period DESC;
     `;
     const { rows } = await pool.query(sql);
     res.json({ message: 'Total profit report', data: rows });
@@ -61,23 +60,22 @@ async function getTotalProfitReport(req, res, next) {
 }
 
 /**
- * GET /reports/sales/marketer?interval=…
- * Returns total sales per marketer per period.
+ * GET /api/reports/sales/marketer
  */
 async function getSalesByMarketerReport(req, res, next) {
   try {
     const trunc = getTrunc(req.query.interval);
     const sql = `
       SELECT
-        ${trunc}                                       AS period,
-        m.unique_id                                   AS marketer_id,
-        m.first_name||' '||m.last_name                AS marketer_name,
-        COALESCE(SUM(o.sold_amount),0)                AS total_sales
+        ${trunc}                    AS period,
+        m.unique_id                 AS marketer_id,
+        m.first_name || ' ' || m.last_name AS marketer_name,
+        COALESCE(SUM(o.sold_amount),0) AS total_sales
       FROM orders o
-      JOIN users m  ON o.marketer_id = m.id
+      JOIN users m ON o.marketer_id = m.id
       WHERE o.status = 'released_confirmed'
       GROUP BY period, m.unique_id, marketer_name
-      ORDER BY period DESC, total_sales DESC
+      ORDER BY period DESC, total_sales DESC;
     `;
     const { rows } = await pool.query(sql);
     res.json({ message: 'Sales by marketer', data: rows });
@@ -87,24 +85,23 @@ async function getSalesByMarketerReport(req, res, next) {
 }
 
 /**
- * GET /reports/sales/admin?interval=…
- * Returns total sales by all marketers under each Admin.
+ * GET /api/reports/sales/admin
  */
 async function getSalesByAdminReport(req, res, next) {
   try {
     const trunc = getTrunc(req.query.interval);
     const sql = `
       SELECT
-        ${trunc}                                       AS period,
-        a.unique_id                                   AS admin_id,
-        a.first_name||' '||a.last_name                AS admin_name,
-        COALESCE(SUM(o.sold_amount),0)                AS total_sales
+        ${trunc}                    AS period,
+        a.unique_id                 AS admin_id,
+        a.first_name || ' ' || a.last_name   AS admin_name,
+        COALESCE(SUM(o.sold_amount),0) AS total_sales
       FROM orders o
-      JOIN users m  ON o.marketer_id = m.id
-      JOIN users a  ON m.admin_id     = a.id
+      JOIN users m ON o.marketer_id = m.id
+      JOIN users a ON m.admin_id     = a.id
       WHERE o.status = 'released_confirmed'
       GROUP BY period, a.unique_id, admin_name
-      ORDER BY period DESC, total_sales DESC
+      ORDER BY period DESC, total_sales DESC;
     `;
     const { rows } = await pool.query(sql);
     res.json({ message: 'Sales by admin', data: rows });
@@ -114,25 +111,24 @@ async function getSalesByAdminReport(req, res, next) {
 }
 
 /**
- * GET /reports/sales/superadmin?interval=…
- * Returns total sales by all marketers under each SuperAdmin.
+ * GET /api/reports/sales/superadmin
  */
 async function getSalesBySuperAdminReport(req, res, next) {
   try {
     const trunc = getTrunc(req.query.interval);
     const sql = `
       SELECT
-        ${trunc}                                       AS period,
-        su.unique_id                                  AS superadmin_id,
-        su.first_name||' '||su.last_name              AS superadmin_name,
-        COALESCE(SUM(o.sold_amount),0)                AS total_sales
+        ${trunc}                        AS period,
+        su.unique_id                    AS superadmin_id,
+        su.first_name || ' ' || su.last_name AS superadmin_name,
+        COALESCE(SUM(o.sold_amount),0)   AS total_sales
       FROM orders o
       JOIN users m  ON o.marketer_id = m.id
       JOIN users a  ON m.admin_id     = a.id
-      JOIN users su ON a.admin_id     = su.id
+      JOIN users su ON a.super_admin_id = su.id
       WHERE o.status = 'released_confirmed'
       GROUP BY period, su.unique_id, superadmin_name
-      ORDER BY period DESC, total_sales DESC
+      ORDER BY period DESC, total_sales DESC;
     `;
     const { rows } = await pool.query(sql);
     res.json({ message: 'Sales by superadmin', data: rows });
@@ -142,24 +138,23 @@ async function getSalesBySuperAdminReport(req, res, next) {
 }
 
 /**
- * GET /reports/commission/admin?interval=…
- * Total commission (₦1,500×devices) earned by each Admin.
+ * GET /api/reports/commission/admin
  */
 async function getCommissionByAdminReport(req, res, next) {
   try {
     const trunc = getTrunc(req.query.interval);
     const sql = `
       SELECT
-        ${trunc}                                       AS period,
-        a.unique_id                                   AS admin_id,
-        a.first_name||' '||a.last_name                AS admin_name,
-        COALESCE(SUM(1500 * o.number_of_devices),0)    AS admin_commission
+        ${trunc}                               AS period,
+        a.unique_id                            AS admin_id,
+        a.first_name || ' ' || a.last_name     AS admin_name,
+        COALESCE(SUM(1500 * o.number_of_devices),0) AS admin_commission
       FROM orders o
-      JOIN users m  ON o.marketer_id = m.id
-      JOIN users a  ON m.admin_id     = a.id
+      JOIN users m ON o.marketer_id = m.id
+      JOIN users a ON m.admin_id     = a.id
       WHERE o.status = 'released_confirmed'
       GROUP BY period, a.unique_id, admin_name
-      ORDER BY period DESC, admin_commission DESC
+      ORDER BY period DESC, admin_commission DESC;
     `;
     const { rows } = await pool.query(sql);
     res.json({ message: 'Admin commission report', data: rows });
@@ -169,25 +164,24 @@ async function getCommissionByAdminReport(req, res, next) {
 }
 
 /**
- * GET /reports/commission/superadmin?interval=…
- * Total commission (₦1,000×devices) earned by each SuperAdmin.
+ * GET /api/reports/commission/superadmin
  */
 async function getCommissionBySuperAdminReport(req, res, next) {
   try {
     const trunc = getTrunc(req.query.interval);
     const sql = `
       SELECT
-        ${trunc}                                       AS period,
-        su.unique_id                                  AS superadmin_id,
-        su.first_name||' '||su.last_name              AS superadmin_name,
-        COALESCE(SUM(1000 * o.number_of_devices),0)    AS superadmin_commission
+        ${trunc}                                 AS period,
+        su.unique_id                            AS superadmin_id,
+        su.first_name || ' ' || su.last_name    AS superadmin_name,
+        COALESCE(SUM(1000 * o.number_of_devices),0) AS superadmin_commission
       FROM orders o
       JOIN users m  ON o.marketer_id = m.id
       JOIN users a  ON m.admin_id     = a.id
-      JOIN users su ON a.admin_id     = su.id
+      JOIN users su ON a.super_admin_id = su.id
       WHERE o.status = 'released_confirmed'
       GROUP BY period, su.unique_id, superadmin_name
-      ORDER BY period DESC, superadmin_commission DESC
+      ORDER BY period DESC, superadmin_commission DESC;
     `;
     const { rows } = await pool.query(sql);
     res.json({ message: 'SuperAdmin commission report', data: rows });
@@ -197,23 +191,22 @@ async function getCommissionBySuperAdminReport(req, res, next) {
 }
 
 /**
- * GET /reports/device-sales?interval=…
- * Total units sold per device_name/type per period.
+ * GET /api/reports/device-sales
  */
 async function getDeviceSalesReport(req, res, next) {
   try {
     const trunc = getTrunc(req.query.interval);
     const sql = `
       SELECT
-        ${trunc}                                       AS period,
+        ${trunc}                             AS period,
         p.device_name,
         p.device_type,
-        COALESCE(SUM(o.number_of_devices),0)           AS units_sold
+        COALESCE(SUM(o.number_of_devices),0) AS units_sold
       FROM orders o
       JOIN products p ON p.id = o.product_id
       WHERE o.status = 'released_confirmed'
       GROUP BY period, p.device_name, p.device_type
-      ORDER BY period DESC, units_sold DESC
+      ORDER BY period DESC, units_sold DESC;
     `;
     const { rows } = await pool.query(sql);
     res.json({ message: 'Device sales report', data: rows });
