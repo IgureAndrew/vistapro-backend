@@ -213,42 +213,43 @@ async function getPlaceOrderData(req, res, next) {
  * • marks stock_updates completed if used
  * • credits marketer, admin, superadmin commissions
  */
-// src/controllers/marketerController.js
 async function createOrder(req, res, next) {
   const marketerId  = req.user.id;
   const marketerUid = req.user.unique_id;
-  const {
+  let {
     stock_update_id,
     product_id,
     number_of_devices,
-    sold_amount,
     customer_name,
     customer_phone,
     customer_address,
     bnpl_platform,
   } = req.body;
 
+  number_of_devices = parseInt(number_of_devices, 10);
   if (!number_of_devices || !customer_name) {
     return res.status(400).json({ message: "Missing required order fields." });
   }
 
   const client = await pool.connect();
   try {
-    await client.query('BEGIN');
+    await client.query("BEGIN");
 
-    // 0) Prevent rapid re‐submits: if the same marketer placed an order in the last 5s, block it.
+    // 0) Prevent rapid re‐submits (last 5s)
     const { rowCount: recent } = await client.query(`
       SELECT 1 FROM orders
        WHERE marketer_id = $1
          AND sale_date > NOW() - interval '5 seconds'
     `, [marketerId]);
     if (recent) {
-      return res.status(429).json({ message: "You’re placing orders too quickly – please wait a moment." });
+      return res.status(429).json({
+        message: "You’re placing orders too quickly – please wait a moment."
+      });
     }
 
-    // 1) Check & decrement stock
+    // 1) Reserve or sell from inventory
     if (stock_update_id) {
-      // → you’re fulfilling against reserved pickup stock
+      // reserved‐stock path
       const { rows: [pickup] } = await client.query(`
         SELECT quantity
           FROM stock_updates
@@ -259,7 +260,6 @@ async function createOrder(req, res, next) {
       if (!pickup || pickup.quantity < number_of_devices) {
         throw new Error("Not enough reserved stock for this pickup.");
       }
-      // decrement the reserved quantity
       await client.query(`
         UPDATE stock_updates
            SET quantity = quantity - $1,
@@ -267,7 +267,7 @@ async function createOrder(req, res, next) {
          WHERE id = $2
       `, [number_of_devices, stock_update_id]);
     } else {
-      // → free‐mode sale: grab from available inventory_items
+      // free‐mode path
       const { rows: items } = await client.query(`
         SELECT id
           FROM inventory_items
@@ -278,7 +278,6 @@ async function createOrder(req, res, next) {
       if (items.length < number_of_devices) {
         throw new Error("Not enough available stock to place that order.");
       }
-      // mark those items sold
       await client.query(`
         UPDATE inventory_items
            SET status = 'sold'
@@ -286,7 +285,32 @@ async function createOrder(req, res, next) {
       `, [ items.map(i => i.id) ]);
     }
 
-    // 2) Insert the order
+    // 2) Recalculate price & deviceType from DB
+    let priceRow;
+    if (stock_update_id) {
+      const { rows } = await client.query(`
+        SELECT p.selling_price, p.device_type
+          FROM stock_updates su
+          JOIN products p ON su.product_id = p.id
+         WHERE su.id = $1
+      `, [stock_update_id]);
+      priceRow = rows[0];
+    } else {
+      const { rows } = await client.query(`
+        SELECT selling_price, device_type
+          FROM products
+         WHERE id = $1
+      `, [product_id]);
+      priceRow = rows[0];
+    }
+    if (!priceRow) throw new Error("Product details not found");
+    const truePrice = Number(priceRow.selling_price);
+    const sold_amount = truePrice * number_of_devices;
+    const deviceType = priceRow.device_type.toLowerCase().includes("ios")
+      ? "ios"
+      : priceRow.device_type.toLowerCase();
+
+    // 3) Insert the order (earnings_per_device = profit placeholder)
     const insertSQL = `
       INSERT INTO orders (
         marketer_id,
@@ -318,30 +342,39 @@ async function createOrder(req, res, next) {
       customer_phone,
       customer_address,
       bnpl_platform    || null,
-      // earnings per device is profit: sold_amount/qty minus cost?
-      (sold_amount / number_of_devices) -  /* your cost logic here */
-        0  
+      (truePrice - /* cost_price go here */ 0)
     ]);
 
-    // 3) Queue up the wallet credits (still in the same tx)
-    await creditMarketerCommission(  marketerUid, order.id, order.number_of_devices );
-    await creditAdminCommission(      marketerUid, order.id, order.number_of_devices );
-    await creditSuperAdminCommission( marketerUid, order.id, order.number_of_devices );
+    // 4) Credit commissions with the correct signature
+    await creditMarketerCommission(
+      marketerUid,
+      order.id,
+      deviceType,
+      number_of_devices
+    );
+    await creditAdminCommission(
+      marketerUid,
+      order.id,
+      number_of_devices
+    );
+    await creditSuperAdminCommission(
+      marketerUid,
+      order.id,
+      number_of_devices
+    );
 
-    await client.query('COMMIT');
-
+    await client.query("COMMIT");
     return res.status(201).json({
       message: "Order placed successfully and awaiting master-admin confirmation.",
       order
     });
   } catch (err) {
-    await client.query('ROLLBACK');
-    return next(err);
+    await client.query("ROLLBACK");
+    next(err);
   } finally {
     client.release();
   }
 }
-
 /**
  * getOrderHistory
  * GET /api/marketer/orders/history
