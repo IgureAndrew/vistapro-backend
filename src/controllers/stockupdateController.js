@@ -554,6 +554,7 @@ async function getStockUpdates(req, res, next) {
  * MasterAdmin confirms a return → status='returned', stop timer,
  * release any reserved IMEIs back to 'available', clear their stock_update_id.
  */
+// PATCH /api/marketer/stock-pickup/:id/return
 async function confirmReturn(req, res, next) {
   if (req.user.role !== 'MasterAdmin') {
     return res.status(403).json({ message: "Only MasterAdmin may confirm returns." });
@@ -565,7 +566,7 @@ async function confirmReturn(req, res, next) {
   try {
     await client.query('BEGIN');
 
-    // 1) Mark the pickup as returned & record timestamp
+    // 1) Mark the pickup as returned
     const { rows: [pickup] } = await client.query(
       `UPDATE stock_updates
           SET status      = 'returned',
@@ -581,9 +582,7 @@ async function confirmReturn(req, res, next) {
       return res.status(404).json({ message: "No pending pickup found to return." });
     }
 
-
-
-    // 2) Release any still‐reserved IMEIs back to available
+    // 2) Release any still-reserved IMEIs
     await client.query(
       `UPDATE inventory_items
           SET status          = 'available',
@@ -593,7 +592,7 @@ async function confirmReturn(req, res, next) {
       [stockUpdateId]
     );
 
-    // 3) Notify the original marketer (optional)
+    // 3) Notify the original marketer
     const { rows: [user] } = await client.query(
       `SELECT u.unique_id
          FROM users u
@@ -612,18 +611,6 @@ async function confirmReturn(req, res, next) {
       );
     }
 
-    await client.query(`
-      UPDATE stock_updates
-         SET status     = 'sold',
-             updated_at = NOW()
-       WHERE id = (
-         SELECT stock_update_id
-           FROM orders
-          WHERE id = $1
-       )
-    `, [orderId]);
-
-
     await client.query('COMMIT');
     res.json({
       message: "Return confirmed, reserved units released back to inventory.",
@@ -637,6 +624,7 @@ async function confirmReturn(req, res, next) {
     client.release();
   }
 }
+
 
 /**
  * PATCH /api/marketer/stock-pickup/:id/transfer
@@ -776,6 +764,7 @@ async function getStockUpdatesForAdmin(req, res, next) {
   `, [adminId]);
   res.json({ data: rows });
 }
+
 
 module.exports = {
   listStockPickupDealers,

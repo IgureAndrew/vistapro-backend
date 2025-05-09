@@ -71,6 +71,10 @@ async function creditSplit(userId, orderId, totalComm, typeTag) {
 async function creditFull(userId, orderId, amount, typeTag) {
   await ensureWallet(userId);
 
+  // build our meta JSON first
+  const meta = JSON.stringify({ orderId });
+
+  // now it's safe to reference `meta`
   await pool.query(
     `INSERT INTO wallet_transactions
        (user_unique_id, amount, transaction_type, meta)
@@ -78,17 +82,6 @@ async function creditFull(userId, orderId, amount, typeTag) {
      ON CONFLICT (user_unique_id, transaction_type, (meta->>'orderId'))
        DO NOTHING;`,
     [ userId, amount, typeTag, meta ]
-  );
-
-  const meta = JSON.stringify({ orderId });
-  await pool.query(
-    `INSERT INTO wallet_transactions
-       (user_unique_id, amount, transaction_type, meta)
-     VALUES
-       ($1, $2, $3, $4::jsonb)
-     ON CONFLICT (user_unique_id, transaction_type, (meta->>'orderId'))
-       DO NOTHING;`,
-    [userId, amount, typeTag, meta]
   );
 
   return { totalComm: amount };
