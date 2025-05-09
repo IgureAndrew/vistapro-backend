@@ -48,7 +48,7 @@ async function getTotalProfitReport(req, res, next) {
         AS net_profit
       FROM orders o
       JOIN products p ON p.id = o.product_id
-      WHERE o.status = 'released_confirmed'
+      WHERE o.status = 'confirmed'
       GROUP BY period
       ORDER BY period DESC;
     `;
