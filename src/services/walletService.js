@@ -35,25 +35,28 @@ async function creditSplit(userId, orderId, totalComm, typeTag) {
 
   const available = Math.floor(totalComm * 0.4);
   const withheld  = totalComm - available;
+  const meta      = JSON.stringify({ orderId });
 
   await pool.query(
     `UPDATE wallets
-       SET total_balance     = total_balance     + $1,
-           available_balance = available_balance + $2,
-           withheld_balance  = withheld_balance  + $3,
-           updated_at        = NOW()
-     WHERE user_unique_id = $4`,
+        SET total_balance     = total_balance     + $1,
+            available_balance = available_balance + $2,
+            withheld_balance  = withheld_balance  + $3,
+            updated_at        = NOW()
+      WHERE user_unique_id = $4`,
     [totalComm, available, withheld, userId]
   );
 
-  const meta = JSON.stringify({ orderId });
+  // now try to insert all three transaction rows, but skip if already present
   await pool.query(
     `INSERT INTO wallet_transactions
-      (user_unique_id, amount, transaction_type, meta)
-    VALUES
-      ($1, $2, $3,       $4::jsonb),
-      ($1, $5, $3 || '_available', $4::jsonb),
-      ($1, $6, $3 || '_withheld',  $4::jsonb)`,
+       (user_unique_id, amount, transaction_type, meta)
+     VALUES
+       ($1, $2, $3,       $4::jsonb),
+       ($1, $5, $3 || '_available', $4::jsonb),
+       ($1, $6, $3 || '_withheld',  $4::jsonb)
+     ON CONFLICT ON CONSTRAINT ux_wallet_commission_per_order
+       DO NOTHING;`,
     [userId, totalComm, typeTag, meta, available, withheld]
   );
 
@@ -69,23 +72,27 @@ async function creditFull(userId, orderId, amount, typeTag) {
 
   await pool.query(
     `UPDATE wallets
-       SET total_balance     = total_balance     + $1,
-           available_balance = available_balance + $1,
-           updated_at        = NOW()
-     WHERE user_unique_id = $2`,
+        SET total_balance     = total_balance     + $1,
+            available_balance = available_balance + $1,
+            updated_at        = NOW()
+      WHERE user_unique_id = $2`,
     [amount, userId]
   );
 
   const meta = JSON.stringify({ orderId });
   await pool.query(
     `INSERT INTO wallet_transactions
-      (user_unique_id, amount, transaction_type, meta)
-    VALUES ($1, $2, $3, $4::jsonb)`,
+       (user_unique_id, amount, transaction_type, meta)
+     VALUES
+       ($1, $2, $3, $4::jsonb)
+     ON CONFLICT ON CONSTRAINT ux_wallet_commission_per_order
+       DO NOTHING;`,
     [userId, amount, typeTag, meta]
   );
 
   return { totalComm: amount };
 }
+
 
 // ─── Commission Credits ─────────────────────────────────────────
 async function creditMarketerCommission(marketerUid, orderId, deviceType, qty) {

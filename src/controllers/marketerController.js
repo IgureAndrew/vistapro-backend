@@ -216,6 +216,8 @@ async function getPlaceOrderData(req, res, next) {
 async function createOrder(req, res, next) {
   const marketerId  = req.user.id;
   const marketerUid = req.user.unique_id;
+
+  // 1) Parse & validate inputs
   let {
     stock_update_id,
     product_id,
@@ -226,30 +228,33 @@ async function createOrder(req, res, next) {
     bnpl_platform,
   } = req.body;
 
+  stock_update_id   = stock_update_id   ? parseInt(stock_update_id, 10)   : null;
+  product_id        = product_id        ? parseInt(product_id, 10)        : null;
   number_of_devices = parseInt(number_of_devices, 10);
+
   if (!number_of_devices || !customer_name) {
     return res.status(400).json({ message: "Missing required order fields." });
   }
 
   const client = await pool.connect();
   try {
-    await client.query("BEGIN");
+    await client.query('BEGIN');
 
-    // 0) Prevent rapid re‐submits (last 5s)
+    // 2) Prevent ultra-rapid re-submits
     const { rowCount: recent } = await client.query(`
       SELECT 1 FROM orders
        WHERE marketer_id = $1
-         AND sale_date > NOW() - interval '5 seconds'
+         AND sale_date > NOW() - INTERVAL '5 seconds'
     `, [marketerId]);
     if (recent) {
       return res.status(429).json({
-        message: "You’re placing orders too quickly – please wait a moment."
+        message: "You're placing orders too quickly – please wait a moment."
       });
     }
 
-    // 1) Reserve or sell from inventory
+    // 3) Reserve or sell inventory
     if (stock_update_id) {
-      // reserved‐stock path
+      // → fulfilling a pending pickup
       const { rows: [pickup] } = await client.query(`
         SELECT quantity
           FROM stock_updates
@@ -257,17 +262,28 @@ async function createOrder(req, res, next) {
            AND marketer_id = $2
            AND status = 'pending'
       `, [stock_update_id, marketerId]);
+
       if (!pickup || pickup.quantity < number_of_devices) {
         throw new Error("Not enough reserved stock for this pickup.");
       }
+
+      // decrement & if zero, mark completed
       await client.query(`
         UPDATE stock_updates
            SET quantity = quantity - $1,
                status   = CASE WHEN quantity - $1 = 0 THEN 'completed' ELSE status END
          WHERE id = $2
       `, [number_of_devices, stock_update_id]);
+
+      // and immediately mark as sold so it disappears from "pending"
+      await client.query(`
+        UPDATE stock_updates
+           SET status = 'sold'
+         WHERE id = $1
+      `, [stock_update_id]);
+
     } else {
-      // free‐mode path
+      // → free-mode sale
       const { rows: items } = await client.query(`
         SELECT id
           FROM inventory_items
@@ -275,42 +291,45 @@ async function createOrder(req, res, next) {
            AND status     = 'available'
          LIMIT $2
       `, [product_id, number_of_devices]);
+
       if (items.length < number_of_devices) {
         throw new Error("Not enough available stock to place that order.");
       }
+
+      // mark those items sold
+      const ids = items.map(i => i.id);
       await client.query(`
         UPDATE inventory_items
            SET status = 'sold'
          WHERE id = ANY($1::int[])
-      `, [ items.map(i => i.id) ]);
+      `, [ids]);
     }
 
-    // 2) Recalculate price & deviceType from DB
-    let priceRow;
-    if (stock_update_id) {
-      const { rows } = await client.query(`
-        SELECT p.selling_price, p.device_type
-          FROM stock_updates su
-          JOIN products p ON su.product_id = p.id
-         WHERE su.id = $1
-      `, [stock_update_id]);
-      priceRow = rows[0];
-    } else {
-      const { rows } = await client.query(`
-        SELECT selling_price, device_type
-          FROM products
-         WHERE id = $1
-      `, [product_id]);
-      priceRow = rows[0];
-    }
-    if (!priceRow) throw new Error("Product details not found");
-    const truePrice = Number(priceRow.selling_price);
-    const sold_amount = truePrice * number_of_devices;
-    const deviceType = priceRow.device_type.toLowerCase().includes("ios")
-      ? "ios"
-      : priceRow.device_type.toLowerCase();
+    // 4) Re-read price & device type from the DB
+    const priceQ = stock_update_id
+      ? `SELECT p.selling_price, p.device_type
+           FROM stock_updates su
+           JOIN products p ON su.product_id = p.id
+          WHERE su.id = $1`
+      : `SELECT selling_price, device_type
+           FROM products
+          WHERE id = $1`;
 
-    // 3) Insert the order (earnings_per_device = profit placeholder)
+    const { rows: priceRows } = await client.query(priceQ, [
+      stock_update_id || product_id
+    ]);
+    if (!priceRows.length) {
+      throw new Error("Product details not found.");
+    }
+    const { selling_price, device_type } = priceRows[0];
+    const unitPrice = Number(selling_price);
+    const sold_amount = unitPrice * number_of_devices;
+
+    // normalize deviceType for commission logic
+    const dt = device_type.toLowerCase();
+    const deviceType = dt.includes("ios") ? "ios" : dt.includes("android") ? "android" : dt;
+
+    // 5) Insert the order record
     const insertSQL = `
       INSERT INTO orders (
         marketer_id,
@@ -342,35 +361,23 @@ async function createOrder(req, res, next) {
       customer_phone,
       customer_address,
       bnpl_platform    || null,
-      (truePrice - /* cost_price go here */ 0)
+      /* for now just pass profit placeholder */ (unitPrice - 0)
     ]);
 
-    // 4) Credit commissions with the correct signature
-    await creditMarketerCommission(
-      marketerUid,
-      order.id,
-      deviceType,
-      number_of_devices
-    );
-    await creditAdminCommission(
-      marketerUid,
-      order.id,
-      number_of_devices
-    );
-    await creditSuperAdminCommission(
-      marketerUid,
-      order.id,
-      number_of_devices
-    );
+    // 6) Pay out commissions
+    await creditMarketerCommission(  marketerUid, order.id, deviceType,           number_of_devices );
+    await creditAdminCommission(      marketerUid, order.id,                     number_of_devices );
+    await creditSuperAdminCommission( marketerUid, order.id,                     number_of_devices );
 
-    await client.query("COMMIT");
+    await client.query('COMMIT');
     return res.status(201).json({
       message: "Order placed successfully and awaiting master-admin confirmation.",
       order
     });
+
   } catch (err) {
-    await client.query("ROLLBACK");
-    next(err);
+    await client.query('ROLLBACK');
+    return next(err);
   } finally {
     client.release();
   }
