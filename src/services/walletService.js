@@ -38,15 +38,16 @@ async function creditSplit(userId, orderId, totalComm, typeTag) {
 
   // 1) bump balances
   await pool.query(
-    `UPDATE wallets
-        SET total_balance     = total_balance     + $1,
-            available_balance = available_balance + $2,
-            withheld_balance  = withheld_balance  + $3,
-            updated_at        = NOW()
-      WHERE user_unique_id = $4`,
-    [totalComm, available, withheld, userId]
+    `INSERT INTO wallet_transactions
+       (user_unique_id, amount, transaction_type, meta)
+     VALUES
+       ($1, $2, $3,       $4::jsonb),
+       ($1, $5, $3 || '_available', $4::jsonb),
+       ($1, $6, $3 || '_withheld',  $4::jsonb)
+     ON CONFLICT (user_unique_id, transaction_type, (meta->>'orderId'))
+       DO NOTHING;`,
+    [ userId, totalComm, typeTag, meta, available, withheld ]
   );
-
   // 2) insert transactions, skip if same (user, type, orderId) already exists
   await pool.query(
     `INSERT INTO wallet_transactions
@@ -71,12 +72,12 @@ async function creditFull(userId, orderId, amount, typeTag) {
   await ensureWallet(userId);
 
   await pool.query(
-    `UPDATE wallets
-        SET total_balance     = total_balance     + $1,
-            available_balance = available_balance + $1,
-            updated_at        = NOW()
-      WHERE user_unique_id = $2`,
-    [amount, userId]
+    `INSERT INTO wallet_transactions
+       (user_unique_id, amount, transaction_type, meta)
+     VALUES ($1, $2, $3, $4::jsonb)
+     ON CONFLICT (user_unique_id, transaction_type, (meta->>'orderId'))
+       DO NOTHING;`,
+    [ userId, amount, typeTag, meta ]
   );
 
   const meta = JSON.stringify({ orderId });
