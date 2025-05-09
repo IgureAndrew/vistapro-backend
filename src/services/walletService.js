@@ -1,29 +1,27 @@
+// src/services/walletService.js
+
 const { pool } = require('../config/database');
 
 // ─── Config ─────────────────────────────────────────────────────
-//Marketer commission: ₦10 000 on Android, ₦15 000 on iOS
+// Marketer commission: ₦10 000 on Android, ₦15 000 on iOS
 const COMMISSION_RATES = { android: 10000, ios: 15000 };
 const HIERARCHY_COMM   = { admin: 1500, superAdmin: 1000 };
 const WITHDRAWAL_FEE   = 100;
 
 // ─── Helpers ────────────────────────────────────────────────────
-/**
- * Ensure a wallet row exists for the given user_unique_id.
- * Throws if userId is invalid.
- */
 async function ensureWallet(userId) {
   if (typeof userId !== 'string' || !userId.trim()) {
     console.error('🛑 ensureWallet called with invalid user_unique_id:', userId);
     throw new Error('Missing or invalid user_unique_id in ensureWallet');
   }
-  const sql = `
-    INSERT INTO wallets
+  await pool.query(
+    `INSERT INTO wallets
       (user_unique_id, total_balance, available_balance, withheld_balance, created_at, updated_at)
-    VALUES
+     VALUES
       ($1, 0, 0, 0, NOW(), NOW())
-    ON CONFLICT (user_unique_id) DO NOTHING;
-  `;
-  await pool.query(sql, [userId]);
+     ON CONFLICT (user_unique_id) DO NOTHING;`,
+    [userId]
+  );
 }
 
 /**
@@ -36,7 +34,7 @@ async function creditSplit(userId, orderId, totalComm, typeTag) {
   const withheld  = totalComm - available;
   const meta      = JSON.stringify({ orderId });
 
-  // 1) bump balances
+  // 1) insert the three ledger entries
   await pool.query(
     `INSERT INTO wallet_transactions
        (user_unique_id, amount, transaction_type, meta)
@@ -48,33 +46,29 @@ async function creditSplit(userId, orderId, totalComm, typeTag) {
        DO NOTHING;`,
     [ userId, totalComm, typeTag, meta, available, withheld ]
   );
-  // 2) insert transactions, skip if same (user, type, orderId) already exists
+
+  // 2) bump the running balances
   await pool.query(
-    `INSERT INTO wallet_transactions
-       (user_unique_id, amount, transaction_type, meta)
-     VALUES
-       ($1, $2, $3,              $4::jsonb),
-       ($1, $5, $3 || '_available', $4::jsonb),
-       ($1, $6, $3 || '_withheld',  $4::jsonb)
-     ON CONFLICT (user_unique_id, transaction_type, (meta->>'orderId'))
-       DO NOTHING;`,
-    [userId, totalComm, typeTag, meta, available, withheld]
+    `UPDATE wallets
+        SET total_balance     = total_balance     + $2,
+            available_balance = available_balance + $3,
+            withheld_balance  = withheld_balance  + $4,
+            updated_at        = NOW()
+      WHERE user_unique_id = $1;`,
+    [ userId, totalComm, available, withheld ]
   );
 
   return { totalComm, available, withheld };
 }
-
 
 /**
  * Credits the full amount to the user's available balance.
  */
 async function creditFull(userId, orderId, amount, typeTag) {
   await ensureWallet(userId);
-
-  // build our meta JSON first
   const meta = JSON.stringify({ orderId });
 
-  // now it's safe to reference `meta`
+  // 1) ledger entry
   await pool.query(
     `INSERT INTO wallet_transactions
        (user_unique_id, amount, transaction_type, meta)
@@ -84,25 +78,31 @@ async function creditFull(userId, orderId, amount, typeTag) {
     [ userId, amount, typeTag, meta ]
   );
 
+  // 2) bump balances
+  await pool.query(
+    `UPDATE wallets
+        SET total_balance     = total_balance     + $2,
+            available_balance = available_balance + $2,
+            updated_at        = NOW()
+      WHERE user_unique_id = $1;`,
+    [ userId, amount ]
+  );
+
   return { totalComm: amount };
 }
 
-
 // ─── Commission Credits ─────────────────────────────────────────
 async function creditMarketerCommission(marketerUid, orderId, deviceType, qty) {
-  // 1) Coerce deviceType to a string (falling back to empty string)
   const typeStr = deviceType != null ? String(deviceType) : "";
   const lower   = typeStr.toLowerCase();
 
-  // 2) Figure out which bucket to use
-  //    You can tweak these includes() checks if you have more device types
   let key;
   if (lower.includes("ios")) {
     key = "ios";
   } else if (lower.includes("android")) {
     key = "android";
   } else {
-    key = "";          // no commission if it's unknown
+    key = "";
   }
 
   const rate  = COMMISSION_RATES[key] || 0;
@@ -142,27 +142,25 @@ async function creditSuperAdminCommission(marketerUid, orderId, qty) {
   return creditFull(superUid, orderId, total, 'super_commission');
 }
 
+// ─── Queries ────────────────────────────────────────────────────
 async function getSubordinateWallets(superAdminUid) {
-  // 1) look up superadmin's internal ID
   const { rows: [su] } = await pool.query(
     `SELECT id FROM users WHERE unique_id = $1`,
     [superAdminUid]
   );
   if (!su) throw new Error('SuperAdmin not found');
 
-  // 2) find all admins under this superAdmin
   const { rows: admins } = await pool.query(
     `SELECT unique_id FROM users WHERE super_admin_id = $1`,
     [su.id]
   );
   const adminUids = admins.map(r => r.unique_id);
 
-  // 3) find all marketers under those admins
   let marketerUids = [];
   if (adminUids.length) {
     const { rows: mkrs } = await pool.query(
-      `SELECT unique_id 
-         FROM users 
+      `SELECT unique_id
+         FROM users
         WHERE admin_id IN (
           SELECT id FROM users WHERE unique_id = ANY($1)
         )`,
@@ -171,11 +169,9 @@ async function getSubordinateWallets(superAdminUid) {
     marketerUids = mkrs.map(r => r.unique_id);
   }
 
-  // 4) fetch wallets & latest transactions for each
   const uids = [...adminUids, ...marketerUids];
   if (!uids.length) return { wallets: [], transactions: [] };
 
-  // a) wallets
   const { rows: wallets } = await pool.query(
     `SELECT w.*, u.first_name||' '||u.last_name AS name, u.role
        FROM wallets w
@@ -184,7 +180,6 @@ async function getSubordinateWallets(superAdminUid) {
     [uids]
   );
 
-  // b) most recent 20 txns among them
   const { rows: transactions } = await pool.query(
     `SELECT wt.*, u.first_name||' '||u.last_name AS name
        FROM wallet_transactions wt
@@ -197,6 +192,7 @@ async function getSubordinateWallets(superAdminUid) {
 
   return { wallets, transactions };
 }
+
 async function getMyWallet(userId) {
   await ensureWallet(userId);
   const { rows: [wallet] } = await pool.query(`
@@ -205,6 +201,7 @@ async function getMyWallet(userId) {
       FROM wallets
      WHERE user_unique_id = $1
   `, [ userId ]);
+
   const { rows: transactions } = await pool.query(`
     SELECT id, transaction_type, amount, created_at
       FROM wallet_transactions
@@ -212,6 +209,7 @@ async function getMyWallet(userId) {
      ORDER BY created_at DESC
      LIMIT 50
   `, [ userId ]);
+
   return { wallet, transactions };
 }
 
@@ -225,7 +223,7 @@ async function getMyWithdrawals(userId) {
   `, [ userId ]);
   return rows;
 }
-// ─── Exports ─────────────────────────────────────────────────────
+
 module.exports = {
   ensureWallet,
   creditSplit,
