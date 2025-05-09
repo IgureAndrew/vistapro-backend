@@ -267,20 +267,13 @@ async function createOrder(req, res, next) {
         throw new Error("Not enough reserved stock for this pickup.");
       }
 
-      // decrement & if zero, mark completed
+      // decrement & if zero, mark completed then sold
       await client.query(`
         UPDATE stock_updates
-           SET quantity = quantity - $1,
-               status   = CASE WHEN quantity - $1 = 0 THEN 'completed' ELSE status END
+           SET quantity = GREATEST(quantity - $1, 0),
+               status   = CASE WHEN quantity - $1 <= 0 THEN 'sold' ELSE status END
          WHERE id = $2
       `, [number_of_devices, stock_update_id]);
-
-      // and immediately mark as sold so it disappears from "pending"
-      await client.query(`
-        UPDATE stock_updates
-           SET status = 'sold'
-         WHERE id = $1
-      `, [stock_update_id]);
 
     } else {
       // → free-mode sale
@@ -296,7 +289,6 @@ async function createOrder(req, res, next) {
         throw new Error("Not enough available stock to place that order.");
       }
 
-      // mark those items sold
       const ids = items.map(i => i.id);
       await client.query(`
         UPDATE inventory_items
@@ -305,7 +297,7 @@ async function createOrder(req, res, next) {
       `, [ids]);
     }
 
-    // 4) Re-read price & device type from the DB
+    // 4) Fetch price & deviceType
     const priceQ = stock_update_id
       ? `SELECT p.selling_price, p.device_type
            FROM stock_updates su
@@ -318,18 +310,13 @@ async function createOrder(req, res, next) {
     const { rows: priceRows } = await client.query(priceQ, [
       stock_update_id || product_id
     ]);
-    if (!priceRows.length) {
-      throw new Error("Product details not found.");
-    }
+    if (!priceRows.length) throw new Error("Product details not found.");
+
     const { selling_price, device_type } = priceRows[0];
-    const unitPrice = Number(selling_price);
+    const unitPrice  = Number(selling_price);
     const sold_amount = unitPrice * number_of_devices;
 
-    // normalize deviceType for commission logic
-    const dt = device_type.toLowerCase();
-    const deviceType = dt.includes("ios") ? "ios" : dt.includes("android") ? "android" : dt;
-
-    // 5) Insert the order record
+    // 5) Insert the order record (no commissions here)
     const insertSQL = `
       INSERT INTO orders (
         marketer_id,
@@ -361,13 +348,8 @@ async function createOrder(req, res, next) {
       customer_phone,
       customer_address,
       bnpl_platform    || null,
-      /* for now just pass profit placeholder */ (unitPrice - 0)
+      /* placeholder profit: sold_amount - cost */ sold_amount
     ]);
-
-    // 6) Pay out commissions
-    await creditMarketerCommission(  marketerUid, order.id, deviceType,           number_of_devices );
-    await creditAdminCommission(      marketerUid, order.id,                     number_of_devices );
-    await creditSuperAdminCommission( marketerUid, order.id,                     number_of_devices );
 
     await client.query('COMMIT');
     return res.status(201).json({

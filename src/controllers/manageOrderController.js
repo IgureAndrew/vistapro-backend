@@ -54,88 +54,92 @@ async function confirmOrder(req, res, next) {
   const client      = await pool.connect();
 
   try {
-    await client.query('BEGIN');
+    await client.query("BEGIN");
 
-    // 1) Confirm the order & grab all needed fields in one go
+    // 1) Confirm the order & grab needed fields
     const { rows: [order] } = await client.query(`
       UPDATE orders
          SET status       = 'confirmed',
-             confirmed_at = NOW()
+             confirmed_at = NOW(),
+             updated_at   = NOW()
        WHERE id = $1
      RETURNING
        marketer_id,
        product_id,
        stock_update_id,
-       number_of_devices;
+       number_of_devices
     `, [orderId]);
-    if (!order) throw new Error("Order not found");
+    if (!order) {
+      throw new Error("Order not found");
+    }
 
-    const { marketer_id, product_id, stock_update_id, number_of_devices: qty } = order;
+    const { marketer_id, product_id, stock_update_id, number_of_devices } = order;
 
     // 2) Determine the device type
-    let deviceTypeRow;
-    if (product_id) {
-      [deviceTypeRow] = (await client.query(
-        `SELECT device_type
-           FROM products
-          WHERE id = $1`,
-        [product_id]
-      )).rows;
-    } else {
-      [deviceTypeRow] = (await client.query(
-        `SELECT p.device_type
+    const typeQuery = product_id
+      ? `SELECT device_type FROM products WHERE id = $1`
+      : `SELECT p.device_type
            FROM stock_updates su
-           JOIN products p
-             ON su.product_id = p.id
-          WHERE su.id = $1`,
-        [stock_update_id]
-      )).rows;
+           JOIN products p ON su.product_id = p.id
+          WHERE su.id = $1`;
+    const { rows: [typeRow] } = await client.query(typeQuery, [
+      product_id || stock_update_id
+    ]);
+    if (!typeRow) {
+      throw new Error("Could not determine device type");
     }
-    if (!deviceTypeRow) throw new Error("Could not determine device type");
-    const deviceType = deviceTypeRow.device_type;
+    const rawType = String(typeRow.device_type).toLowerCase();
+    const deviceType = rawType.includes("ios")
+      ? "ios"
+      : rawType.includes("android")
+      ? "android"
+      : rawType;
 
     // 3) Fetch the marketer’s unique_id
     const { rows: [m] } = await client.query(
-      `SELECT unique_id
-         FROM users
-        WHERE id = $1`,
+      `SELECT unique_id FROM users WHERE id = $1`,
       [marketer_id]
     );
-    if (!m) throw new Error("Marketer not found");
+    if (!m) {
+      throw new Error("Marketer not found");
+    }
     const marketerUid = m.unique_id;
 
-    // 4) Pay out commissions (all within this transaction)
+    // 4) Pay out commissions
     await walletService.creditMarketerCommission(
       marketerUid,
       orderId,
       deviceType,
-      qty
+      number_of_devices
     );
     await walletService.creditAdminCommission(
       marketerUid,
       orderId,
-      qty
+      number_of_devices
     );
     await walletService.creditSuperAdminCommission(
       marketerUid,
       orderId,
-      qty
+      number_of_devices
     );
 
-    // 5) Only after confirmation & commissions, mark reserved stock as sold
+    // 5) Finally mark the reserved pickup as sold
     if (stock_update_id) {
       await client.query(
         `UPDATE stock_updates
-            SET status = 'sold'
+            SET status     = 'sold',
+                updated_at = NOW()
           WHERE id = $1`,
         [stock_update_id]
       );
     }
 
-    await client.query('COMMIT');
-    res.json({ message: "Order confirmed, stock marked sold, and commissions paid." });
+    await client.query("COMMIT");
+    res.json({
+      message: "Order confirmed, stock marked sold, and commissions paid."
+    });
   } catch (err) {
-    await client.query('ROLLBACK');
+    await client.query("ROLLBACK");
     next(err);
   } finally {
     client.release();
