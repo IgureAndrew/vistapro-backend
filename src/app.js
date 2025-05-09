@@ -76,6 +76,15 @@ io.on('connection', socket => {
 require('./jobs/releaseWithheld');
 require('./jobs/expireStockPickups');
 
+app.use('/api', (req, res, next) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  // optional: turn off Express ETag entirely
+  res.removeHeader('ETag');
+  next();
+});
+
 
 const authRoutes = require('./routes/authRoutes');
 const masterAdminRoutes = require('./routes/masterAdminRoutes');
