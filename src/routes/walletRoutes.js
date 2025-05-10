@@ -77,4 +77,11 @@ router.get(
   wc.getSuperAdminActivities
 );
 
+router.get(
+  '/super-admin/my',
+  verifyToken,
+  verifyRole(['SuperAdmin']),
+  wc.getMyWallet   // re-use the same controller
+);
+
 module.exports = router;
