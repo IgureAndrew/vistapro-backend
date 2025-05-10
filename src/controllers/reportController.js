@@ -15,14 +15,7 @@ function getTrunc(interval) {
   }
 }
 
-/**
- * GET /api/reports/profit
- *   raw_profit = (sell–cost)*qty
- *   marketer_commission = flat-rate per device
- *   admin_commission    = flat-rate per device
- *   superadmin_commission= flat-rate per device
- *   net_profit = raw – all commissions
- */
+
 /**
  * GET /api/reports/profit
  *   raw_profit = (sell–cost)*qty
@@ -106,6 +99,59 @@ async function getTotalProfitReport(req, res, next) {
   }
 }
 
+
+/**
+ * GET /api/reports/sales/admin
+ */
+async function getSalesByAdminReport(req, res, next) {
+  try {
+    const trunc = getTrunc(req.query.interval);
+    const sql = `
+      SELECT
+        ${trunc}                    AS period,
+        a.unique_id                 AS admin_id,
+        a.first_name || ' ' || a.last_name   AS admin_name,
+        COALESCE(SUM(o.sold_amount),0) AS total_sales
+      FROM orders o
+      JOIN users m ON o.marketer_id = m.id
+      JOIN users a ON m.admin_id     = a.id
+      WHERE o.status = 'released_confirmed'
+      GROUP BY period, a.unique_id, admin_name
+      ORDER BY period DESC, total_sales DESC;
+    `;
+    const { rows } = await pool.query(sql);
+    res.json({ message: 'Sales by admin', data: rows });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * GET /api/reports/sales/superadmin
+ */
+async function getSalesBySuperAdminReport(req, res, next) {
+  try {
+    const trunc = getTrunc(req.query.interval);
+    const sql = `
+      SELECT
+        ${trunc}                        AS period,
+        su.unique_id                    AS superadmin_id,
+        su.first_name || ' ' || su.last_name AS superadmin_name,
+        COALESCE(SUM(o.sold_amount),0)   AS total_sales
+      FROM orders o
+      JOIN users m  ON o.marketer_id = m.id
+      JOIN users a  ON m.admin_id     = a.id
+      JOIN users su ON a.super_admin_id = su.id
+      WHERE o.status = 'released_confirmed'
+      GROUP BY period, su.unique_id, superadmin_name
+      ORDER BY period DESC, total_sales DESC;
+    `;
+    const { rows } = await pool.query(sql);
+    res.json({ message: 'Sales by superadmin', data: rows });
+  } catch (err) {
+    next(err);
+  }
+}
 
 /**
  * GET /api/reports/commission/admin
