@@ -254,7 +254,6 @@ async function createOrder(req, res, next) {
 
     // 3) Reserve or sell inventory
     if (stock_update_id) {
-      // → fulfilling a pending pickup
       const { rows: [pickup] } = await client.query(`
         SELECT quantity
           FROM stock_updates
@@ -267,7 +266,6 @@ async function createOrder(req, res, next) {
         throw new Error("Not enough reserved stock for this pickup.");
       }
 
-      // decrement & if zero, mark completed then sold
       await client.query(`
         UPDATE stock_updates
            SET quantity = GREATEST(quantity - $1, 0),
@@ -276,7 +274,6 @@ async function createOrder(req, res, next) {
       `, [number_of_devices, stock_update_id]);
 
     } else {
-      // → free-mode sale
       const { rows: items } = await client.query(`
         SELECT id
           FROM inventory_items
@@ -297,26 +294,26 @@ async function createOrder(req, res, next) {
       `, [ids]);
     }
 
-    // 4) Fetch price & deviceType
+    // 4) Fetch cost_price, selling_price & deviceType
     const priceQ = stock_update_id
-      ? `SELECT p.selling_price, p.device_type
+      ? `SELECT p.cost_price, p.selling_price, p.device_type
            FROM stock_updates su
            JOIN products p ON su.product_id = p.id
           WHERE su.id = $1`
-      : `SELECT selling_price, device_type
+      : `SELECT cost_price, selling_price, device_type
            FROM products
           WHERE id = $1`;
-
     const { rows: priceRows } = await client.query(priceQ, [
       stock_update_id || product_id
     ]);
     if (!priceRows.length) throw new Error("Product details not found.");
 
-    const { selling_price, device_type } = priceRows[0];
-    const unitPrice  = Number(selling_price);
+    const { cost_price, selling_price, device_type } = priceRows[0];
+    const unitPrice   = Number(selling_price);
     const sold_amount = unitPrice * number_of_devices;
+    const unitProfit  = unitPrice - Number(cost_price);
 
-    // 5) Insert the order record (no commissions here)
+    // 5) Insert the order record with real earnings_per_device
     const insertSQL = `
       INSERT INTO orders (
         marketer_id,
@@ -348,7 +345,7 @@ async function createOrder(req, res, next) {
       customer_phone,
       customer_address,
       bnpl_platform    || null,
-      /* placeholder profit: sold_amount - cost */ sold_amount
+      unitProfit
     ]);
 
     await client.query('COMMIT');
@@ -364,6 +361,7 @@ async function createOrder(req, res, next) {
     client.release();
   }
 }
+
 /**
  * getOrderHistory
  * GET /api/marketer/orders/history
