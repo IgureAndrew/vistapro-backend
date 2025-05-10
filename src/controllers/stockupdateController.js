@@ -492,7 +492,7 @@ async function getMarketerStockUpdates(req, res, next) {
              SELECT 1
                FROM orders o
               WHERE o.stock_update_id = su.id
-                AND o.status = 'confirmed'
+                AND o.status = ('confirmed','released_confirmed')
            ) THEN 'sold'
            WHEN su.deadline < NOW() THEN 'expired'
            ELSE 'pending'
@@ -708,7 +708,7 @@ async function listSuperAdminStockUpdates(req, res, next) {
             SELECT 1
               FROM orders o
              WHERE o.stock_update_id = su.id
-               AND o.status = 'confirmed'
+               AND o.status = ('confirmed','released_confirmed')
           ) THEN 'sold'
           WHEN su.deadline < NOW() THEN 'expired'
           ELSE 'pending'
@@ -751,7 +751,7 @@ async function getStockUpdatesForAdmin(req, res, next) {
         WHEN EXISTS (
           SELECT 1 FROM orders o
            WHERE o.stock_update_id = su.id
-             AND o.status = 'confirmed'
+             AND o.status = ('confirmed','released_confirmed')
         ) THEN 'sold'
         WHEN su.deadline < NOW() THEN 'expired'
         ELSE 'pending'
