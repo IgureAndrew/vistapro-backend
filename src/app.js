@@ -115,7 +115,7 @@ app.use('/api/marketer', marketerRoutes);
 app.use('/api/outlet', outletRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/manage-orders', manageOrderRoutes);
-app.use('/api/report', reportRoutes);
+app.use('/api/reports', reportRoutes);
 app.use('/api/profit-report', profitReportRoutes);
 app.use('/api/performance', performanceRoutes);
 app.use('/api/stock', stockupdateRoutes);
