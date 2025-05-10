@@ -1,5 +1,4 @@
 // src/routes/walletRoutes.js
-
 const express = require('express');
 const { verifyToken, verifyRole } = require('../middlewares/authMiddleware');
 const wc = require('../controllers/walletController');
@@ -7,81 +6,75 @@ const wc = require('../controllers/walletController');
 const router = express.Router();
 
 // ─── Marketer endpoints ────────────────────────────────────────
-// All require a valid token + role "Marketer"
 router.get(
-  '/',
+  '/',                           // GET  /api/wallets
   verifyToken,
   verifyRole(['Marketer']),
   wc.getMyWallet
 );
 router.get(
-  '/stats',
+  '/stats',                      // GET  /api/wallets/stats
   verifyToken,
   verifyRole(['Marketer']),
   wc.getWalletStats
 );
 router.get(
-  '/withdrawals',
+  '/withdrawals',                // GET  /api/wallets/withdrawals
   verifyToken,
   verifyRole(['Marketer']),
   wc.getMyWithdrawals
 );
 router.post(
-  '/withdraw',
+  '/withdraw',                   // POST /api/wallets/withdraw
   verifyToken,
   verifyRole(['Marketer']),
   wc.requestWithdrawal
 );
 
-// ─── Admin/SuperAdmin endpoints ────────────────────────────────
-// List all pending withdrawal requests
+// ─── MasterAdmin endpoints ────────────────────────────────────
 router.get(
-  '/master-admin/requests',
+  '/master-admin/requests',      // GET  /api/wallets/master-admin/requests
   verifyToken,
   verifyRole(['MasterAdmin']),
   wc.listPendingRequests
 );
-// Approve/reject a withdrawal
 router.patch(
-  '/master-admin/requests/:reqId',
+  '/master-admin/requests/:reqId', // PATCH /api/wallets/master-admin/requests/:reqId
   verifyToken,
   verifyRole(['MasterAdmin']),
   wc.reviewRequest
 );
-// Release all withheld balances → available
 router.post(
-  '/master-admin/release-withheld',
+  '/master-admin/release-withheld', // POST /api/wallets/master-admin/release-withheld
   verifyToken,
   verifyRole(['MasterAdmin']),
   wc.releaseWithheld
 );
-// Reset everyone’s wallets & txns
 router.post(
-  '/master-admin/reset',
+  '/master-admin/reset',         // POST /api/wallets/master-admin/reset
   verifyToken,
   verifyRole(['MasterAdmin']),
   wc.resetWallets
 );
-// View all marketers’ wallets
 router.get(
-  '/master-admin/wallets',
+  '/master-admin/wallets',       // GET  /api/wallets/master-admin/wallets
   verifyToken,
   verifyRole(['MasterAdmin']),
   wc.getAllWallets
 );
 
+// ─── SuperAdmin endpoints ─────────────────────────────────────
 router.get(
-  '/super-admin/activities',
+  '/super-admin/activities',     // GET /api/wallets/super-admin/activities
   verifyToken,
   verifyRole(['SuperAdmin']),
   wc.getSuperAdminActivities
 );
-
 router.get(
-  '/super-admin/my',
+  '/super-admin/my',             // GET /api/wallets/super-admin/my
   verifyToken,
   verifyRole(['SuperAdmin']),
-  wc.getMyWallet   // re-use the same controller
+  wc.getMyWallet                  // re-use your own-wallet controller
 );
 
 module.exports = router;

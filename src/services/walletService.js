@@ -223,7 +223,26 @@ async function getMyWithdrawals(userId) {
   `, [ userId ]);
   return rows;
 }
+async function getAllWallets() {
+  // ensure you have the table populated
+  // (optional) you could await ensureWallet for some default users here
 
+  // pull every wallet + maybe user info
+  const { rows: wallets } = await pool.query(`
+    SELECT w.user_unique_id,
+           w.total_balance,
+           w.available_balance,
+           w.withheld_balance,
+           u.role
+      FROM wallets w
+      JOIN users u
+        ON u.unique_id = w.user_unique_id
+     WHERE u.role = 'Marketer'
+     ORDER BY w.user_unique_id
+  `);
+
+  return wallets;
+}
 module.exports = {
   ensureWallet,
   creditSplit,
@@ -234,4 +253,5 @@ module.exports = {
   getSubordinateWallets,
   getMyWallet,
   getMyWithdrawals,
+  getAllWallets,
 };

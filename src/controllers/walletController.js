@@ -125,6 +125,7 @@ async function resetWallets(req, res, next) {
  * GET /api/wallets/master-admin/wallets
  * List all marketers’ wallets (MasterAdmin)
  */
+
 async function getAllWallets(req, res, next) {
   try {
     const all = await walletService.getAllWallets();
