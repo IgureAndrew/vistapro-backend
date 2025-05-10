@@ -17,6 +17,11 @@ function getTrunc(interval) {
 
 /**
  * GET /api/reports/profit
+ *   raw_profit = (sell–cost)*qty
+ *   marketer_commission = flat-rate per device
+ *   admin_commission    = flat-rate per device
+ *   superadmin_commission= flat-rate per device
+ *   net_profit = raw – all commissions
  */
 async function getTotalProfitReport(req, res, next) {
   try {
@@ -24,65 +29,71 @@ async function getTotalProfitReport(req, res, next) {
     const sql = `
       SELECT
         ${trunc}                                       AS period,
-        COALESCE(SUM(o.earnings_per_device * o.number_of_devices),0) AS raw_profit,
-        COALESCE(SUM(
-          CASE p.device_type
-            WHEN 'android' THEN 10000
-            WHEN 'iphone'  THEN 15000
-            ELSE 0
-          END * o.number_of_devices
-        ),0)                                            AS marketer_commission,
-        COALESCE(SUM(1500 * o.number_of_devices),0)      AS admin_commission,
-        COALESCE(SUM(1000 * o.number_of_devices),0)      AS superadmin_commission,
-        -- net profit = raw minus all commissions
-        COALESCE(SUM(o.earnings_per_device * o.number_of_devices),0)
-        - COALESCE(SUM(
-            CASE p.device_type
-              WHEN 'android' THEN 10000
-              WHEN 'iphone'  THEN 15000
+
+        -- 1) raw profit
+        COALESCE(
+          SUM( (p.selling_price - p.cost_price) * o.number_of_devices ),
+          0
+        ) AS raw_profit,
+
+        -- 2) marketer commission (10k Android, 15k iOS per device)
+        COALESCE(
+          SUM(
+            CASE
+              WHEN LOWER(p.device_type) LIKE '%android%' THEN 10000
+              WHEN LOWER(p.device_type) LIKE '%ios%'     THEN 15000
               ELSE 0
             END * o.number_of_devices
-          ),0)
+          ),
+          0
+        ) AS marketer_commission,
+
+        -- 3) admin commission (1500 per device)
+        COALESCE(
+          SUM( 1500 * o.number_of_devices ),
+          0
+        ) AS admin_commission,
+
+        -- 4) superadmin commission (1000 per device)
+        COALESCE(
+          SUM( 1000 * o.number_of_devices ),
+          0
+        ) AS superadmin_commission,
+
+        -- 5) net profit = raw_profit − all commissions
+        COALESCE(
+          SUM((p.selling_price - p.cost_price) * o.number_of_devices),
+          0
+        )
+        - COALESCE(
+            SUM(
+              CASE
+                WHEN LOWER(p.device_type) LIKE '%android%' THEN 10000
+                WHEN LOWER(p.device_type) LIKE '%ios%'     THEN 15000
+                ELSE 0
+              END * o.number_of_devices
+            ),
+            0
+          )
         - COALESCE(SUM(1500 * o.number_of_devices),0)
         - COALESCE(SUM(1000 * o.number_of_devices),0)
         AS net_profit
+
       FROM orders o
       JOIN products p ON p.id = o.product_id
-      WHERE o.status = 'confirmed'
+      WHERE o.status = 'released_confirmed'
       GROUP BY period
       ORDER BY period DESC;
     `;
+
     const { rows } = await pool.query(sql);
     res.json({ message: 'Total profit report', data: rows });
+
   } catch (err) {
     next(err);
   }
 }
 
-/**
- * GET /api/reports/sales/marketer
- */
-async function getSalesByMarketerReport(req, res, next) {
-  try {
-    const trunc = getTrunc(req.query.interval);
-    const sql = `
-      SELECT
-        ${trunc}                    AS period,
-        m.unique_id                 AS marketer_id,
-        m.first_name || ' ' || m.last_name AS marketer_name,
-        COALESCE(SUM(o.sold_amount),0) AS total_sales
-      FROM orders o
-      JOIN users m ON o.marketer_id = m.id
-      WHERE o.status = 'released_confirmed'
-      GROUP BY period, m.unique_id, marketer_name
-      ORDER BY period DESC, total_sales DESC;
-    `;
-    const { rows } = await pool.query(sql);
-    res.json({ message: 'Sales by marketer', data: rows });
-  } catch (err) {
-    next(err);
-  }
-}
 
 /**
  * GET /api/reports/sales/admin
@@ -210,6 +221,30 @@ async function getDeviceSalesReport(req, res, next) {
     `;
     const { rows } = await pool.query(sql);
     res.json({ message: 'Device sales report', data: rows });
+  } catch (err) {
+    next(err);
+  }
+}
+/**
+ * GET /api/reports/sales/marketer
+ */
+async function getSalesByMarketerReport(req, res, next) {
+  try {
+    const trunc = getTrunc(req.query.interval);
+    const sql = `
+      SELECT
+        ${trunc}                                       AS period,
+        m.unique_id                                   AS marketer_id,
+        m.first_name||' '||m.last_name                AS marketer_name,
+        COALESCE(SUM(o.sold_amount),0)                AS total_sales
+      FROM orders o
+      JOIN users m  ON o.marketer_id = m.id
+      WHERE o.status = 'released_confirmed'
+      GROUP BY period, m.unique_id, marketer_name
+      ORDER BY period DESC, total_sales DESC;
+    `;
+    const { rows } = await pool.query(sql);
+    res.json({ message: 'Sales by marketer', data: rows });
   } catch (err) {
     next(err);
   }
