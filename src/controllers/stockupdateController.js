@@ -482,31 +482,40 @@ async function approveStockTransfer(req, res, next) {
  */
 async function getMarketerStockUpdates(req, res, next) {
   try {
-    const uid = req.user.unique_id;
-    const { rows } = await pool.query(
-      `SELECT
-         su.id, su.product_id, su.quantity,
-         su.pickup_date, su.deadline,
-         CASE
-           WHEN EXISTS (
-             SELECT 1
-               FROM orders o
-              WHERE o.stock_update_id = su.id
-                AND o.status = ('confirmed','released_confirmed')
-           ) THEN 'sold'
-           WHEN su.deadline < NOW() THEN 'expired'
-           ELSE 'pending'
-         END AS status,
-         p.device_name, p.device_model
-       FROM stock_updates su
-       JOIN products p
-         ON su.product_id = p.id
-      WHERE su.marketer_id = (
-        SELECT id FROM users WHERE unique_id = $1
-      )
-      ORDER BY su.pickup_date DESC;`,
-      [uid]
-    );
+    const marketerUid = req.user.unique_id;
+    if (!marketerUid) {
+      return res.status(400).json({ message: "Missing marketer unique_id" });
+    }
+
+    const sql = `
+      SELECT
+        su.id,
+        su.product_id,
+        su.quantity,
+        su.pickup_date,
+        su.deadline,
+        CASE
+          WHEN EXISTS (
+            SELECT 1
+            FROM orders o
+            WHERE o.stock_update_id = su.id
+              AND o.status IN ('confirmed', 'released_confirmed')
+          ) THEN 'sold'
+          WHEN su.deadline < NOW() THEN 'expired'
+          ELSE 'pending'
+        END AS status,
+        p.device_name,
+        p.device_model
+      FROM stock_updates su
+      JOIN users u
+        ON su.marketer_id = u.id
+      JOIN products p
+        ON su.product_id = p.id
+      WHERE u.unique_id = $1
+      ORDER BY su.pickup_date DESC
+    `;
+
+    const { rows } = await pool.query(sql, [marketerUid]);
     res.json({ data: rows });
   } catch (err) {
     next(err);
