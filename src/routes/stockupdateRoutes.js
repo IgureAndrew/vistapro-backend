@@ -1,4 +1,3 @@
-// src/routes/stockupdateRoutes.js
 const express = require('express');
 const router  = express.Router();
 const { verifyToken }   = require('../middlewares/authMiddleware');
@@ -45,15 +44,15 @@ router.post(
   ctrl.requestStockTransfer
 );
 
-// 4. MasterAdmin approves/rejects transfers
-   router.patch(
-    '/:id/transfer',
-    verifyToken,
-    verifyRole(['MasterAdmin']),
-    ctrl.reviewStockTransfer    // <— new unified handler
-  );
+// 6) Marketer requests to initiate a return (sets status = 'return_pending')
+router.patch(
+  '/:id/return-request',
+  verifyToken,
+  verifyRole(['Marketer']),
+  ctrl.requestReturn
+);
 
-// 7) List my pickups
+// 7) List my pickups (Marketer view)
 router.get(
   '/marketer',
   verifyToken,
@@ -61,7 +60,7 @@ router.get(
   ctrl.getMarketerStockUpdates
 );
 
-// 8) List all pickups (Master/Admin/SuperAdmin)
+// 8) List all pickups (Master/Admin/SuperAdmin view)
 router.get(
   '/',
   verifyToken,
@@ -77,6 +76,7 @@ router.patch(
   ctrl.confirmReturn
 );
 
+// 10) SuperAdmin sees pickups under their hierarchy
 router.get(
   '/superadmin/stock-updates',
   verifyToken,
@@ -84,10 +84,12 @@ router.get(
   ctrl.listSuperAdminStockUpdates
 );
 
+// 11) Admin sees pickups for their marketers
 router.get(
-  "/stock-pickup",
+  '/stock-pickup',
   verifyToken,
-  verifyRole(["Admin"]),
+  verifyRole(['Admin']),
   ctrl.getStockUpdatesForAdmin
 );
+
 module.exports = router;

@@ -494,23 +494,15 @@ async function getMarketerStockUpdates(req, res, next) {
         su.quantity,
         su.pickup_date,
         su.deadline,
-        CASE
-          WHEN EXISTS (
-            SELECT 1
-            FROM orders o
-            WHERE o.stock_update_id = su.id
-              AND o.status IN ('confirmed', 'released_confirmed')
-          ) THEN 'sold'
-          WHEN su.deadline < NOW() THEN 'expired'
-          ELSE 'pending'
-        END AS status,
+       -- return the real status, including 'return_pending' and 'returned'
+        su.status AS status,
         p.device_name,
         p.device_model
       FROM stock_updates su
-      JOIN users u
-        ON su.marketer_id = u.id
-      JOIN products p
-        ON su.product_id = p.id
+       JOIN users u
+         ON su.marketer_id = u.id
+       JOIN products p
+         ON su.product_id = p.id
       WHERE u.unique_id = $1
       ORDER BY su.pickup_date DESC
     `;
@@ -577,15 +569,15 @@ async function confirmReturn(req, res, next) {
 
     // 1) Mark the pickup as returned
     const { rows: [pickup] } = await client.query(
-      `UPDATE stock_updates
-          SET status      = 'returned',
-              returned_at = NOW(),
-              updated_at  = NOW()
-        WHERE id = $1
-          AND status = 'pending'
-        RETURNING *`,
-      [stockUpdateId]
-    );
+            `UPDATE stock_updates
+                SET status      = 'returned',
+                    returned_at = NOW(),
+                    updated_at  = NOW()
+              WHERE id = $1
+               AND status = 'return_pending'
+              RETURNING *`,
+            [stockUpdateId]
+          );
     if (!pickup) {
       await client.query('ROLLBACK');
       return res.status(404).json({ message: "No pending pickup found to return." });
@@ -774,6 +766,47 @@ async function getStockUpdatesForAdmin(req, res, next) {
   res.json({ data: rows });
 }
 
+// PATCH /api/marketer/stock-pickup/:id/return-request
+async function requestReturn(req, res, next) {
+  try {
+    const marketerId = req.user.id;
+    const id = parseInt(req.params.id, 10);
+
+    // 1) Ensure it’s your own pending pickup
+    const { rows } = await pool.query(
+      `SELECT status, marketer_id
+         FROM stock_updates
+        WHERE id = $1`,
+      [id]
+    );
+    const pickup = rows[0];
+    if (!pickup || pickup.marketer_id !== marketerId) {
+      return res.status(403).json({ message: "Not your pickup." });
+    }
+    if (pickup.status !== 'pending') {
+      return res.status(400).json({ message: "Can only request return on pending pickups." });
+    }
+
+    // 2) Mark as return_pending
+    const { rows: updated } = await pool.query(
+      `UPDATE stock_updates
+          SET status              = 'return_pending',
+              return_requested_at = NOW(),
+              updated_at          = NOW()
+        WHERE id = $1
+        RETURNING *`,
+      [id]
+    );
+
+    res.json({
+      message: "Return requested, awaiting MasterAdmin confirmation.",
+      stock: updated[0]
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
 
 module.exports = {
   listStockPickupDealers,
@@ -787,5 +820,6 @@ module.exports = {
   confirmReturn,
   reviewStockTransfer,
   listSuperAdminStockUpdates,
-  getStockUpdatesForAdmin
+  getStockUpdatesForAdmin,
+  requestReturn,
 };
