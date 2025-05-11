@@ -561,29 +561,42 @@ async function confirmReturn(req, res, next) {
     return res.status(403).json({ message: "Only MasterAdmin may confirm returns." });
   }
 
-  const stockUpdateId = parseInt(req.params.id, 10);
-  const client = await pool.connect();
+  const stockUpdateId = Number(req.params.id);
+  if (!Number.isInteger(stockUpdateId)) {
+    return res.status(400).json({ message: "Invalid pickup ID." });
+  }
 
+  const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
-    // 1) Mark the pickup as returned
-    const { rows: [pickup] } = await client.query(
-            `UPDATE stock_updates
-                SET status      = 'returned',
-                    returned_at = NOW(),
-                    updated_at  = NOW()
-              WHERE id = $1
-               AND status = 'return_pending'
-              RETURNING *`,
-            [stockUpdateId]
-          );
-    if (!pickup) {
+    // 0) Lock that row so no one else can touch it until we finish
+    const lockRes = await client.query(
+      `SELECT id
+         FROM stock_updates
+        WHERE id     = $1
+          AND status = 'return_pending'
+        FOR UPDATE`,
+      [stockUpdateId]
+    );
+    if (!lockRes.rows.length) {
+      // either not found or not in return_pending
       await client.query('ROLLBACK');
-      return res.status(404).json({ message: "No pending pickup found to return." });
+      return res.status(404).json({ message: "No pending return found to confirm." });
     }
 
-    // 2) Release any still-reserved IMEIs
+    // 1) Mark it as returned
+    const { rows: [pickup] } = await client.query(
+      `UPDATE stock_updates
+          SET status      = 'returned',
+              returned_at = NOW(),
+              updated_at  = NOW()
+        WHERE id = $1
+        RETURNING *`,
+      [stockUpdateId]
+    );
+
+    // 2) Release any reserved IMEIs
     await client.query(
       `UPDATE inventory_items
           SET status          = 'available',
@@ -593,7 +606,7 @@ async function confirmReturn(req, res, next) {
       [stockUpdateId]
     );
 
-    // 3) Notify the original marketer
+    // 3) Notify the marketer
     const { rows: [user] } = await client.query(
       `SELECT u.unique_id
          FROM users u
@@ -607,25 +620,23 @@ async function confirmReturn(req, res, next) {
          VALUES ($1, $2, NOW())`,
         [
           user.unique_id,
-          `Your stock pickup #${stockUpdateId} has been marked returned by MasterAdmin.`
+          `Your stock pickup #${stockUpdateId} has been confirmed returned by MasterAdmin.`
         ]
       );
     }
 
     await client.query('COMMIT');
-    res.json({
-      message: "Return confirmed, reserved units released back to inventory.",
+    return res.json({
+      message: "Return confirmed and inventory released.",
       stock: pickup
     });
-
   } catch (err) {
     await client.query('ROLLBACK');
-    next(err);
+    return next(err);
   } finally {
     client.release();
   }
 }
-
 
 /**
  * PATCH /api/marketer/stock-pickup/:id/transfer
