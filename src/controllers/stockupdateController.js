@@ -556,6 +556,8 @@ async function getStockUpdates(req, res, next) {
  * release any reserved IMEIs back to 'available', clear their stock_update_id.
  */
 // PATCH /api/marketer/stock-pickup/:id/return
+// src/controllers/stockupdateController.js
+
 async function confirmReturn(req, res, next) {
   if (req.user.role !== 'MasterAdmin') {
     return res.status(403).json({ message: "Only MasterAdmin may confirm returns." });
@@ -570,22 +572,22 @@ async function confirmReturn(req, res, next) {
   try {
     await client.query('BEGIN');
 
-    // 0) Lock that row so no one else can touch it until we finish
-    const lockRes = await client.query(
-      `SELECT id
+    // 0) LOCK the row & grab product_id + quantity
+    const { rows: [lockRow] } = await client.query(
+      `SELECT product_id, quantity
          FROM stock_updates
         WHERE id     = $1
           AND status = 'return_pending'
         FOR UPDATE`,
       [stockUpdateId]
     );
-    if (!lockRes.rows.length) {
-      // either not found or not in return_pending
+    if (!lockRow) {
       await client.query('ROLLBACK');
-      return res.status(404).json({ message: "No pending return found to confirm." });
+      return res.status(404).json({ message: "No pending return found." });
     }
+    const { product_id, quantity } = lockRow;
 
-    // 1) Mark it as returned
+    // 1) Mark the stock_update as returned
     const { rows: [pickup] } = await client.query(
       `UPDATE stock_updates
           SET status      = 'returned',
@@ -596,7 +598,7 @@ async function confirmReturn(req, res, next) {
       [stockUpdateId]
     );
 
-    // 2) Release any reserved IMEIs
+    // 2) Release reserved IMEIs
     await client.query(
       `UPDATE inventory_items
           SET status          = 'available',
@@ -606,7 +608,16 @@ async function confirmReturn(req, res, next) {
       [stockUpdateId]
     );
 
-    // 3) Notify the marketer
+    // 3) **Boost the dealer’s product inventory**  
+    //    so it immediately shows up under Qty Available
+    await client.query(
+      `UPDATE products
+          SET qty_available = qty_available + $1
+        WHERE id = $2`,
+      [quantity, product_id]
+    );
+
+    // 4) Notify the marketer
     const { rows: [user] } = await client.query(
       `SELECT u.unique_id
          FROM users u
@@ -627,12 +638,13 @@ async function confirmReturn(req, res, next) {
 
     await client.query('COMMIT');
     return res.json({
-      message: "Return confirmed and inventory released.",
+      message: "Return confirmed, reserved units released and inventory updated.",
       stock: pickup
     });
+
   } catch (err) {
     await client.query('ROLLBACK');
-    return next(err);
+    next(err);
   } finally {
     client.release();
   }
