@@ -224,25 +224,36 @@ async function getMyWithdrawals(userId) {
   return rows;
 }
 async function getAllWallets() {
-  // ensure you have the table populated
-  // (optional) you could await ensureWallet for some default users here
-
-  // pull every wallet + maybe user info
+  // pull every marketer’s wallet + outstanding withdrawals
   const { rows: wallets } = await pool.query(`
-    SELECT w.user_unique_id,
-           w.total_balance,
-           w.available_balance,
-           w.withheld_balance,
-           u.role
-      FROM wallets w
-      JOIN users u
-        ON u.unique_id = w.user_unique_id
-     WHERE u.role = 'Marketer'
-     ORDER BY w.user_unique_id
+    SELECT
+      w.user_unique_id,
+      w.total_balance,
+      w.available_balance,
+      w.withheld_balance,
+      u.role,
+      COALESCE(
+        SUM(r.net_amount) FILTER (WHERE r.status = 'pending'),
+        0
+      ) AS pending_cashout
+    FROM wallets w
+    JOIN users u
+      ON u.unique_id = w.user_unique_id
+     AND u.role = 'Marketer'
+    LEFT JOIN withdrawal_requests r
+      ON r.user_unique_id = w.user_unique_id
+    GROUP BY
+      w.user_unique_id,
+      w.total_balance,
+      w.available_balance,
+      w.withheld_balance,
+      u.role
+    ORDER BY w.user_unique_id;
   `);
 
   return wallets;
 }
+
 
 // ─── Queries ────────────────────────────────────────────────────
 // ─── Wallets for Admin’s Marketers ─────────────────────────────
