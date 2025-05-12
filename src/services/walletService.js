@@ -227,8 +227,7 @@ async function getMyWithdrawals(userId) {
   return rows;
 }
 async function getAllWallets() {
-  // pull every marketer’s wallet + outstanding withdrawals
-  const { rows: wallets } = await pool.query(`
+  const { rows } = await pool.query(`
     SELECT
       w.user_unique_id,
       w.total_balance,
@@ -254,8 +253,17 @@ async function getAllWallets() {
     ORDER BY w.user_unique_id;
   `);
 
-  return wallets;
+  // coerce all bigint/text fields into Numbers
+  return rows.map(r => ({
+    user_unique_id:    r.user_unique_id,
+    role:              r.role,
+    total_balance:     Number(r.total_balance)     || 0,
+    available_balance: Number(r.available_balance) || 0,
+    withheld_balance:  Number(r.withheld_balance)  || 0,
+    pending_cashout:   Number(r.pending_cashout)   || 0,
+  }));
 }
+
 
 
 // ─── Queries ────────────────────────────────────────────────────
