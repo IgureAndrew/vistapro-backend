@@ -333,13 +333,11 @@ async function createWithdrawalRequest(userId, amount, { account_name, account_n
   return request;
 }
 
-/**
- * Return sum of all fees collected:
- *   - today
- *   - this week
- *   - this month
- *   - this year
- */
+// ─── Return sum of all fees collected:
+//   - today
+//   - this week
+//   - this month
+//   - this year
 async function getWithdrawalFeeStats() {
   const { rows: [stats] } = await pool.query(`
     SELECT
@@ -355,6 +353,7 @@ async function getWithdrawalFeeStats() {
       COALESCE(SUM(fee) FILTER (
         WHERE date_trunc('year', requested_at) = date_trunc('year', CURRENT_DATE)
       ), 0) AS yearly
+    FROM withdrawal_requests;
   `);
   return stats;
 }
