@@ -102,4 +102,13 @@ router.get(
   verifyRole(['Marketer','Admin','SuperAdmin']),
   wc.getWithdrawalFeeStats
 );
+
+// ―― Common withdrawal endpoint for everyone with a wallet ――
+router.post(
+  '/withdraw',
+  verifyToken,
+  // allow Marketer, Admin, MasterAdmin, SuperAdmin
+  verifyRole(['Marketer','Admin','MasterAdmin','SuperAdmin']),
+  wc.requestWithdrawal
+);
 module.exports = router;
