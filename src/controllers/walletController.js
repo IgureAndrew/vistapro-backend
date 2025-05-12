@@ -47,7 +47,7 @@ async function getMyWithdrawals(req, res, next) {
 
 /**
  * POST /api/wallets/withdraw
- * Create a new withdrawal request (pending)
+ * Create a new withdrawal request (pending, ₦100 fee)
  */
 async function requestWithdrawal(req, res, next) {
   try {
@@ -67,10 +67,9 @@ async function requestWithdrawal(req, res, next) {
   }
 }
 
-
 /**
  * GET /api/wallets/withdrawals/fees
- * Return the total ₦100 fees collected: daily, weekly, monthly, yearly.
+ * Total ₦100 fees collected: daily, weekly, monthly, yearly
  */
 async function getWithdrawalFeeStats(req, res, next) {
   try {
@@ -83,7 +82,7 @@ async function getWithdrawalFeeStats(req, res, next) {
 
 /**
  * GET /api/wallets/master-admin/requests
- * List all pending withdrawal requests (MasterAdmin)
+ * List pending withdrawal requests (MasterAdmin)
  */
 async function listPendingRequests(req, res, next) {
   try {
@@ -97,13 +96,12 @@ async function listPendingRequests(req, res, next) {
 /**
  * PATCH /api/wallets/master-admin/requests/:reqId
  * Approve or reject a withdrawal (MasterAdmin)
- * Body: { action: 'approve' | 'reject' }
  */
 async function reviewRequest(req, res, next) {
   try {
-    const { reqId }  = req.params;
+    const { reqId } = req.params;
     const { action } = req.body;
-    if (!['approve','reject'].includes(action)) {
+    if (!['approve', 'reject'].includes(action)) {
       return res.status(400).json({ message: "Invalid action." });
     }
     const result = await walletService.reviewWithdrawalRequest(
@@ -124,7 +122,7 @@ async function reviewRequest(req, res, next) {
 
 /**
  * POST /api/wallets/master-admin/reset
- * Zero-out all wallets & delete all transactions (MasterAdmin)
+ * Reset all wallets & transactions (MasterAdmin)
  */
 async function resetWallets(req, res, next) {
   try {
@@ -141,8 +139,8 @@ async function resetWallets(req, res, next) {
  */
 async function getAllWallets(req, res, next) {
   try {
-    const all = await walletService.getAllWallets();
-    res.json({ wallets: all });
+    const wallets = await walletService.getAllWallets();
+    res.json({ wallets });
   } catch (err) {
     next(err);
   }
@@ -150,12 +148,12 @@ async function getAllWallets(req, res, next) {
 
 /**
  * POST /api/wallets/master-admin/release-withheld
- * Release all withheld balances into available for all users (MasterAdmin)
+ * Release withheld balances (MasterAdmin)
  */
 async function releaseWithheld(req, res, next) {
   try {
     await walletService.releaseWithheld();
-    res.json({ message: "All withheld balances released to available." });
+    res.json({ message: "All withheld balances released." });
   } catch (err) {
     next(err);
   }
@@ -163,6 +161,7 @@ async function releaseWithheld(req, res, next) {
 
 /**
  * GET /api/wallets/super-admin/activities
+ * Subordinate wallets & transactions (SuperAdmin)
  */
 async function getSuperAdminActivities(req, res, next) {
   try {
@@ -177,31 +176,29 @@ async function getSuperAdminActivities(req, res, next) {
 
 /**
  * GET /api/wallets/admin/marketers
- * List each marketer under this admin + withheld + last commission date
+ * Marketers under this admin + balances + last admin commission date
  */
 async function getAdminWallets(req, res, next) {
   try {
     const adminUid = req.user.unique_id;
-    const wallets  = await walletService.getWalletsForAdmin(adminUid);
+    const wallets = await walletService.getWalletsForAdmin(adminUid);
     res.json({ wallets });
   } catch (err) {
     next(err);
   }
 }
 
-
 module.exports = {
   getMyWallet,
   getWalletStats,
   getMyWithdrawals,
   requestWithdrawal,
+  getWithdrawalFeeStats,
   listPendingRequests,
   reviewRequest,
   resetWallets,
   getAllWallets,
   releaseWithheld,
   getSuperAdminActivities,
-  getAdminWallets,  
-  requestWithdrawal,
-  getWithdrawalFeeStats,
+  getAdminWallets
 };
