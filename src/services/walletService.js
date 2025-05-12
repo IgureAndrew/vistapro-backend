@@ -253,62 +253,35 @@ async function getAllWallets() {
  *   • date of last “commission” transaction
  */
 async function getWalletsForAdmin(adminUid) {
-  // 1) find your DB id
-  const { rows: adm } = await pool.query(
-    `SELECT id FROM users WHERE unique_id = $1`,
-    [adminUid]
+  // 1) find your internal user.id
+  const { rows: [adminRow] } = await pool.query(
+    `SELECT id FROM users WHERE unique_id = $1`, [adminUid]
   );
-  if (!adm.length) return [];
-  const adminId = adm[0].id;
+  const adminId = adminRow?.id;
+  if (!adminId) return [];
 
-  // 2) find all marketer uids under your admin_id
-  const { rows: mrows } = await pool.query(
-    `SELECT unique_id
-       FROM users
-      WHERE admin_id = $1`,
-    [adminId]
-  );
-  const marketerUids = mrows.map(r => r.unique_id);
-  if (marketerUids.length === 0) return [];
+  // 2) pull all your marketers, plus their balance and last commission time
+  const { rows: wallets } = await pool.query(`
+    SELECT
+      w.user_unique_id,
+      w.total_balance,
+      w.available_balance,
+      w.withheld_balance,
+      -- find the most recent commission transaction for this marketer:
+      MAX(wt.created_at) FILTER (WHERE wt.transaction_type = 'admin_commission')
+        AS last_commission_date
+    FROM wallets w
+    JOIN users u
+      ON u.unique_id = w.user_unique_id
+    LEFT JOIN wallet_transactions wt
+      ON wt.user_unique_id = w.user_unique_id
+    WHERE u.admin_id = $1
+    GROUP BY w.user_unique_id, w.total_balance, w.available_balance, w.withheld_balance
+    ORDER BY w.user_unique_id;
+  `, [adminId]);
 
-  // 3) fetch their wallets
-  const { rows: wallets } = await pool.query(
-    `SELECT w.user_unique_id,
-            w.total_balance,
-            w.available_balance,
-            w.withheld_balance
-       FROM wallets w
-      WHERE w.user_unique_id = ANY($1::text[])
-      ORDER BY w.user_unique_id`,
-    [marketerUids]
-  );
-
-  // 4) fetch last commission date per marketer
-  const { rows: dates } = await pool.query(
-    `SELECT user_unique_id,
-            MAX(created_at) AS last_commission
-       FROM wallet_transactions
-      WHERE user_unique_id = ANY($1::text[])
-        AND transaction_type = 'commission'
-      GROUP BY user_unique_id`,
-    [marketerUids]
-  );
-  const dateMap = Object.fromEntries(
-    dates.map(r => [r.user_unique_id, r.last_commission])
-  );
-
-  // 5) merge
-  return wallets.map(w => ({
-    ...w,
-    last_commission: dateMap[w.user_unique_id] || null
-  }));
+  return wallets;
 }
-
-module.exports = {
-  // … your existing exports …
-  getWalletsForAdmin,
-};
-
 
 module.exports = {
   ensureWallet,
