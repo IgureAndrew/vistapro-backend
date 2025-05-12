@@ -77,4 +77,14 @@ router.get(
   wc.getMyWallet                  // re-use your own-wallet controller
 );
 
+// ─── Admin endpoints ───────────────────────────────────────────
+router.get(
+  '/admin/my', verifyToken, verifyRole(['Admin']),
+  wc.getMyWallet              // same as marketer’s own-wallet
+);
+router.get(
+  '/admin/marketers', verifyToken, verifyRole(['Admin']),
+  wc.getAdminWallets          // returns only this admin’s marketers
+);
+
 module.exports = router;

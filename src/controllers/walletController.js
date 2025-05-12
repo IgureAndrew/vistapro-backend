@@ -125,7 +125,6 @@ async function resetWallets(req, res, next) {
  * GET /api/wallets/master-admin/wallets
  * List all marketers’ wallets (MasterAdmin)
  */
-
 async function getAllWallets(req, res, next) {
   try {
     const all = await walletService.getAllWallets();
@@ -148,12 +147,30 @@ async function releaseWithheld(req, res, next) {
   }
 }
 
+/**
+ * GET /api/wallets/super-admin/activities
+ */
 async function getSuperAdminActivities(req, res, next) {
   try {
     const superAdminUid = req.user.unique_id;
     const { wallets, transactions } =
       await walletService.getSubordinateWallets(superAdminUid);
     res.json({ wallets, transactions });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * GET /api/wallets/admin/marketers
+ * List wallets for this admin's marketers (Admin)
+ */
+async function getAdminWallets(req, res, next) {
+  try {
+    const adminUid = req.user.unique_id;
+    // use the service method
+    const wallets  = await walletService.getWalletsForAdmin(adminUid);
+    res.json({ wallets });
   } catch (err) {
     next(err);
   }
@@ -169,5 +186,6 @@ module.exports = {
   resetWallets,
   getAllWallets,
   releaseWithheld,
-  getSuperAdminActivities
+  getSuperAdminActivities,
+  getAdminWallets  // include the new handler here
 };

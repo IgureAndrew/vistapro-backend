@@ -243,6 +243,27 @@ async function getAllWallets() {
 
   return wallets;
 }
+
+// ─── Queries ────────────────────────────────────────────────────
+async function getWalletsForAdmin(adminUid) {
+  // 1) resolve admin’s internal ID
+  const { rows: [a] } = await pool.query(
+    `SELECT id FROM users WHERE unique_id = $1`,
+    [adminUid]
+  );
+  if (!a) throw new Error('Admin not found');
+
+  // 2) fetch all marketers under that admin
+  const { rows: wallets } = await pool.query(
+    `SELECT w.*, u.first_name||' '||u.last_name AS name
+       FROM wallets w
+       JOIN users u ON u.unique_id = w.user_unique_id
+      WHERE u.admin_id = $1`,
+    [a.id]
+  );
+  return wallets;
+}
+
 module.exports = {
   ensureWallet,
   creditSplit,
@@ -254,4 +275,5 @@ module.exports = {
   getMyWallet,
   getMyWithdrawals,
   getAllWallets,
+  getWalletsForAdmin,
 };
