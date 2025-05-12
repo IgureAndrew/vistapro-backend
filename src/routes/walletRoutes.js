@@ -87,4 +87,11 @@ router.get(
   wc.getAdminWallets          // returns only this admin’s marketers
 );
 
+// Admin withdrawal
+router.post(
+  '/admin/withdraw',          // POST /api/wallets/admin/withdraw
+  verifyToken,
+  verifyRole(['Admin']),
+  wc.requestWithdrawal       // reuse the same handler you already have
+);
 module.exports = router;
