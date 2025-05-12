@@ -283,25 +283,24 @@ async function getWalletsForAdmin(adminUid) {
   return wallets;
 }
 
-// ─── src/services/walletService.js ────────────────────────────
-// add at top with your other constants
-
-
-// … inside this file, add:
 
 /**
- * Create a new withdrawal request row, charging the flat fee.
+ * Create a withdrawal request for a user.
+ * Deducts a flat fee, stores both fee and net_amount.
  */
 async function createWithdrawalRequest(userId, amount, { account_name, account_number, bank_name }) {
-  // ensure the wallet record exists
   await ensureWallet(userId);
 
-  // insert the withdrawal request with fee
-  const { rows: [req] } = await pool.query(
+  const fee     = WITHDRAWAL_FEE;
+  const net     = amount - fee;
+  const now     = new Date();
+
+  const { rows: [request] } = await pool.query(
     `INSERT INTO withdrawal_requests
        ( user_unique_id
        , amount_requested
        , fee
+       , net_amount
        , account_name
        , account_number
        , bank_name
@@ -309,28 +308,57 @@ async function createWithdrawalRequest(userId, amount, { account_name, account_n
        , requested_at
        )
      VALUES
-       ($1, $2, $3, $4, $5, $6, 'pending', NOW())
-     RETURNING *`,
-    [ userId, amount, WITHDRAWAL_FEE, account_name, account_number, bank_name ]
+       ($1, $2, $3, $4, $5, $6, $7, 'pending', NOW())
+     RETURNING *;`,
+    [
+      userId,
+      amount,
+      fee,
+      net,
+      account_name,
+      account_number,
+      bank_name
+    ]
   );
 
-  return req;
+  //  – Optionally deduct the total from the user's available balance now…
+  await pool.query(
+    `UPDATE wallets
+        SET available_balance = available_balance - $2,
+            updated_at        = NOW()
+      WHERE user_unique_id = $1`,
+    [userId, amount + fee]
+  );
+
+  return request;
 }
 
 /**
- * Return total fees collected over different time windows.
+ * Return sum of all fees collected:
+ *   - today
+ *   - this week
+ *   - this month
+ *   - this year
  */
 async function getWithdrawalFeeStats() {
-  const { rows: [ stats ] } = await pool.query(`
+  const { rows: [stats] } = await pool.query(`
     SELECT
-      COALESCE(SUM(fee) FILTER (WHERE requested_at >= CURRENT_DATE), 0)                           AS daily,
-      COALESCE(SUM(fee) FILTER (WHERE requested_at >= date_trunc('week', CURRENT_DATE)), 0)     AS weekly,
-      COALESCE(SUM(fee) FILTER (WHERE requested_at >= date_trunc('month', CURRENT_DATE)), 0)    AS monthly,
-      COALESCE(SUM(fee) FILTER (WHERE requested_at >= date_trunc('year', CURRENT_DATE)), 0)     AS yearly
-    FROM withdrawal_requests;
+      COALESCE(SUM(fee) FILTER (
+        WHERE CAST(requested_at AT TIME ZONE 'UTC' AS DATE) = CURRENT_DATE
+      ), 0) AS daily,
+      COALESCE(SUM(fee) FILTER (
+        WHERE date_trunc('week', requested_at) = date_trunc('week', CURRENT_DATE)
+      ), 0) AS weekly,
+      COALESCE(SUM(fee) FILTER (
+        WHERE date_trunc('month', requested_at) = date_trunc('month', CURRENT_DATE)
+      ), 0) AS monthly,
+      COALESCE(SUM(fee) FILTER (
+        WHERE date_trunc('year', requested_at) = date_trunc('year', CURRENT_DATE)
+      ), 0) AS yearly
   `);
   return stats;
 }
+
 
 
 
