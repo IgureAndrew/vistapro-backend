@@ -94,4 +94,12 @@ router.post(
   verifyRole(['Admin']),
   wc.requestWithdrawal       // reuse the same handler you already have
 );
+
+// new: fee‐stats for any authenticated user
+router.get(
+  '/withdrawals/fees',
+  verifyToken,
+  verifyRole(['Marketer','Admin','SuperAdmin']),
+  wc.getWithdrawalFeeStats
+);
 module.exports = router;

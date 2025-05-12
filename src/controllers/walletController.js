@@ -59,9 +59,23 @@ async function requestWithdrawal(req, res, next) {
       { account_name, account_number, bank_name }
     );
     res.status(201).json({
-      message: "Withdrawal request submitted (pending approval).",
+      message: "Withdrawal request submitted (₦100 fee charged).",
       request
     });
+  } catch (err) {
+    next(err);
+  }
+}
+
+
+/**
+ * GET /api/wallets/withdrawals/fees
+ * Return the total ₦100 fees collected: daily, weekly, monthly, yearly.
+ */
+async function getWithdrawalFeeStats(req, res, next) {
+  try {
+    const stats = await walletService.getWithdrawalFeeStats();
+    res.json({ stats });
   } catch (err) {
     next(err);
   }
@@ -187,5 +201,7 @@ module.exports = {
   getAllWallets,
   releaseWithheld,
   getSuperAdminActivities,
-  getAdminWallets  // include the new handler here
+  getAdminWallets,  
+  requestWithdrawal,
+  getWithdrawalFeeStats,
 };

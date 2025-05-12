@@ -283,6 +283,57 @@ async function getWalletsForAdmin(adminUid) {
   return wallets;
 }
 
+// ─── src/services/walletService.js ────────────────────────────
+// add at top with your other constants
+
+
+// … inside this file, add:
+
+/**
+ * Create a new withdrawal request row, charging the flat fee.
+ */
+async function createWithdrawalRequest(userId, amount, { account_name, account_number, bank_name }) {
+  // ensure the wallet record exists
+  await ensureWallet(userId);
+
+  // insert the withdrawal request with fee
+  const { rows: [req] } = await pool.query(
+    `INSERT INTO withdrawal_requests
+       ( user_unique_id
+       , amount_requested
+       , fee
+       , account_name
+       , account_number
+       , bank_name
+       , status
+       , requested_at
+       )
+     VALUES
+       ($1, $2, $3, $4, $5, $6, 'pending', NOW())
+     RETURNING *`,
+    [ userId, amount, WITHDRAWAL_FEE, account_name, account_number, bank_name ]
+  );
+
+  return req;
+}
+
+/**
+ * Return total fees collected over different time windows.
+ */
+async function getWithdrawalFeeStats() {
+  const { rows: [ stats ] } = await pool.query(`
+    SELECT
+      COALESCE(SUM(fee) FILTER (WHERE requested_at >= CURRENT_DATE), 0)                           AS daily,
+      COALESCE(SUM(fee) FILTER (WHERE requested_at >= date_trunc('week', CURRENT_DATE)), 0)     AS weekly,
+      COALESCE(SUM(fee) FILTER (WHERE requested_at >= date_trunc('month', CURRENT_DATE)), 0)    AS monthly,
+      COALESCE(SUM(fee) FILTER (WHERE requested_at >= date_trunc('year', CURRENT_DATE)), 0)     AS yearly
+    FROM withdrawal_requests;
+  `);
+  return stats;
+}
+
+
+
 module.exports = {
   ensureWallet,
   creditSplit,
@@ -295,4 +346,6 @@ module.exports = {
   getMyWithdrawals,
   getAllWallets,
   getWalletsForAdmin,
+  createWithdrawalRequest,
+  getWithdrawalFeeStats,
 };
