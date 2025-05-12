@@ -97,36 +97,53 @@ async function listPendingRequests(req, res, next) {
  * PATCH /api/wallets/master-admin/requests/:reqId
  * Approve or reject a withdrawal (MasterAdmin)
  */
+/**
+ * PATCH /api/wallets/master-admin/requests/:reqId
+ * Approve or reject a withdrawal (MasterAdmin)
+ * Body: { action: 'approve' | 'reject' }
+ *
+ * Also sends a notification back to the requester.
+ */
 async function reviewRequest(req, res, next) {
   try {
     const { reqId }  = req.params;
     const { action } = req.body;
-    if (!['approve','reject'].includes(action)) {
-      return res.status(400).json({ message: "Invalid action." });
+
+    if (!['approve', 'reject'].includes(action)) {
+      return res.status(400).json({ message: "Invalid action: must be 'approve' or 'reject'." });
     }
 
-    // 1) service will mark request approved/rejected and
-    //    disburse or roll back wallet balances
+    // 1) Update the withdrawal_request row and (if rejected) refund the user
     const result = await walletService.reviewWithdrawalRequest(
       Number(reqId),
       action,
       req.user.unique_id
     );
 
-    // 2) if we just approved, send notification to the requester
-    if (action === 'approve') {
-      const msg = `Your withdrawal request #${reqId} has been approved and sent to your bank account.`;
-      await pool.query(
-        `INSERT INTO notifications (user_unique_id, message, created_at)
-           VALUES ($1, $2, NOW())`,
-        [ result.request.user_unique_id, msg ]
-      );
+    // 2) Notify the user who made the request
+    //    You’ll need a notifications table & a way to look up their unique_id:
+    const { rows: [reqRow] } = await pool.query(`
+      SELECT user_unique_id
+        FROM withdrawal_requests
+       WHERE id = $1
+    `, [reqId]);
+
+    if (reqRow?.user_unique_id) {
+      const message =
+        action === 'approve'
+          ? `Your withdrawal request #${reqId} has been approved and sent.`
+          : `Your withdrawal request #${reqId} has been rejected and funds refunded.`;
+
+      await pool.query(`
+        INSERT INTO notifications (user_unique_id, message, created_at)
+        VALUES ($1, $2, NOW())
+      `, [reqRow.user_unique_id, message]);
     }
 
     res.json({
-      message: result.approved
-        ? "Withdrawal approved and funds disbursed."
-        : "Withdrawal request rejected.",
+      message: action === 'approve'
+        ? "Withdrawal approved and disbursed."
+        : "Withdrawal rejected and refunded.",
       result
     });
   } catch (err) {
@@ -197,6 +214,19 @@ async function getAdminWallets(req, res, next) {
     const adminUid = req.user.unique_id;
     const wallets = await walletService.getWalletsForAdmin(adminUid);
     res.json({ wallets });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * GET /api/wallets/master-admin/requests
+ * List all withdrawal requests still pending approval
+ */
+async function listPendingRequests(req, res, next) {
+  try {
+    const requests = await walletService.listPendingRequests();
+    res.json({ requests });
   } catch (err) {
     next(err);
   }

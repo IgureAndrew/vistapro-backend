@@ -358,7 +358,70 @@ async function getWithdrawalFeeStats() {
   return stats;
 }
 
+/**
+ * GET all withdrawal requests still pending approval
+ */
+async function listPendingRequests() {
+  const { rows } = await pool.query(`
+    SELECT
+      id,
+      user_unique_id,
+      amount_requested AS amount,
+      fee,
+      net_amount,
+      status,
+      account_name,
+      account_number,
+      bank_name,
+      requested_at
+    FROM withdrawal_requests
+    WHERE status = 'pending'
+    ORDER BY requested_at DESC
+  `);
+  return rows;
+}
 
+/**
+ * Approve or reject a withdrawal request.
+ * - If approved, mark status, reviewed_by, reviewed_at.
+ * - If rejected, mark status, reviewed_by, reviewed_at,
+ *   and refund the full amount+fee back to available_balance.
+ */
+async function reviewWithdrawalRequest(requestId, action, reviewerUid) {
+  // 1) fetch existing request
+  const { rows: [reqRow] } = await pool.query(
+    `SELECT user_unique_id, amount_requested, fee, net_amount
+       FROM withdrawal_requests
+      WHERE id = $1`,
+    [requestId]
+  );
+  if (!reqRow) throw new Error("Withdrawal request not found");
+
+  // 2) update the request row
+  const newStatus = action === 'approve' ? 'approved' : 'rejected';
+  await pool.query(
+    `UPDATE withdrawal_requests
+        SET status      = $2,
+            reviewed_by = $3,
+            reviewed_at = NOW()
+      WHERE id = $1`,
+    [requestId, newStatus, reviewerUid]
+  );
+
+  // 3) If rejected, refund both amount+fee back to the user's available_balance
+  if (action === 'reject') {
+    const refund = reqRow.amount_requested + reqRow.fee;
+    await pool.query(
+      `UPDATE wallets
+          SET available_balance = available_balance + $2,
+              updated_at        = NOW()
+        WHERE user_unique_id = $1`,
+      [reqRow.user_unique_id, refund]
+    );
+  }
+
+  return { requestId, status: newStatus };
+}
 
 
 module.exports = {
@@ -375,4 +438,6 @@ module.exports = {
   getWalletsForAdmin,
   createWithdrawalRequest,
   getWithdrawalFeeStats,
+  listPendingRequests,
+  reviewWithdrawalRequest,
 };
