@@ -163,13 +163,12 @@ async function getSuperAdminActivities(req, res, next) {
 
 /**
  * GET /api/wallets/admin/marketers
- * List wallets for this admin's marketers (Admin)
+ * List each marketer under this admin + withheld + last commission date
  */
-async function getAdminWallets(req, res, next) {
+async function getWalletsForAdmin(req, res, next) {
   try {
     const adminUid = req.user.unique_id;
-    // use the service method
-    const wallets  = await walletService.getWalletsForAdmin(adminUid);
+    const wallets   = await walletService.getWalletsForAdmin(adminUid);
     res.json({ wallets });
   } catch (err) {
     next(err);

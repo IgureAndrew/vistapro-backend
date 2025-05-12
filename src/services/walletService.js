@@ -245,24 +245,70 @@ async function getAllWallets() {
 }
 
 // ─── Queries ────────────────────────────────────────────────────
+// ─── Wallets for Admin’s Marketers ─────────────────────────────
+
+/**
+ * Returns each marketer under this admin:
+ *   • their wallet balances
+ *   • date of last “commission” transaction
+ */
 async function getWalletsForAdmin(adminUid) {
-  // 1) resolve admin’s internal ID
-  const { rows: [a] } = await pool.query(
+  // 1) find your DB id
+  const { rows: adm } = await pool.query(
     `SELECT id FROM users WHERE unique_id = $1`,
     [adminUid]
   );
-  if (!a) throw new Error('Admin not found');
+  if (!adm.length) return [];
+  const adminId = adm[0].id;
 
-  // 2) fetch all marketers under that admin
-  const { rows: wallets } = await pool.query(
-    `SELECT w.*, u.first_name||' '||u.last_name AS name
-       FROM wallets w
-       JOIN users u ON u.unique_id = w.user_unique_id
-      WHERE u.admin_id = $1`,
-    [a.id]
+  // 2) find all marketer uids under your admin_id
+  const { rows: mrows } = await pool.query(
+    `SELECT unique_id
+       FROM users
+      WHERE admin_id = $1`,
+    [adminId]
   );
-  return wallets;
+  const marketerUids = mrows.map(r => r.unique_id);
+  if (marketerUids.length === 0) return [];
+
+  // 3) fetch their wallets
+  const { rows: wallets } = await pool.query(
+    `SELECT w.user_unique_id,
+            w.total_balance,
+            w.available_balance,
+            w.withheld_balance
+       FROM wallets w
+      WHERE w.user_unique_id = ANY($1::text[])
+      ORDER BY w.user_unique_id`,
+    [marketerUids]
+  );
+
+  // 4) fetch last commission date per marketer
+  const { rows: dates } = await pool.query(
+    `SELECT user_unique_id,
+            MAX(created_at) AS last_commission
+       FROM wallet_transactions
+      WHERE user_unique_id = ANY($1::text[])
+        AND transaction_type = 'commission'
+      GROUP BY user_unique_id`,
+    [marketerUids]
+  );
+  const dateMap = Object.fromEntries(
+    dates.map(r => [r.user_unique_id, r.last_commission])
+  );
+
+  // 5) merge
+  return wallets.map(w => ({
+    ...w,
+    last_commission: dateMap[w.user_unique_id] || null
+  }));
 }
+
+module.exports = {
+  // … your existing exports …
+  getWalletsForAdmin,
+};
+
 
 module.exports = {
   ensureWallet,
