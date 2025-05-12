@@ -99,16 +99,30 @@ async function listPendingRequests(req, res, next) {
  */
 async function reviewRequest(req, res, next) {
   try {
-    const { reqId } = req.params;
+    const { reqId }  = req.params;
     const { action } = req.body;
-    if (!['approve', 'reject'].includes(action)) {
+    if (!['approve','reject'].includes(action)) {
       return res.status(400).json({ message: "Invalid action." });
     }
+
+    // 1) service will mark request approved/rejected and
+    //    disburse or roll back wallet balances
     const result = await walletService.reviewWithdrawalRequest(
       Number(reqId),
       action,
       req.user.unique_id
     );
+
+    // 2) if we just approved, send notification to the requester
+    if (action === 'approve') {
+      const msg = `Your withdrawal request #${reqId} has been approved and sent to your bank account.`;
+      await pool.query(
+        `INSERT INTO notifications (user_unique_id, message, created_at)
+           VALUES ($1, $2, NOW())`,
+        [ result.request.user_unique_id, msg ]
+      );
+    }
+
     res.json({
       message: result.approved
         ? "Withdrawal approved and funds disbursed."
