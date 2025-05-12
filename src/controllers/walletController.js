@@ -171,6 +171,8 @@ async function resetWallets(req, res, next) {
 async function getAllWallets(req, res, next) {
   try {
     const wallets = await walletService.getAllWallets();
+    console.log('controller.getAllWallets →', wallets);
+
     res.json({ wallets });
   } catch (err) {
     next(err);

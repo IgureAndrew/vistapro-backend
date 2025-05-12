@@ -215,7 +215,10 @@ async function getMyWallet(userId) {
 
 async function getMyWithdrawals(userId) {
   await ensureWallet(userId);
-  const { rows } = await pool.query(`
+  const { rows } = await pool.query
+  console.log('getAllWallets rows:', wallets);
+
+  (`
     SELECT id, amount_requested AS amount, fee, status, requested_at
       FROM withdrawal_requests
      WHERE user_unique_id = $1
