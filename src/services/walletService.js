@@ -221,8 +221,8 @@ async function getMyWallet(userId) {
      LIMIT 50
   `, [userId]);
 
-  // 3) withdrawal history
-  const { rows: withdrawals } = await pool.query(`
+  // 3) withdrawal history (raw, with string fields)
+  const { rows: rawWithdrawals } = await pool.query(`
     SELECT
       id,
       amount_requested   AS amount,
@@ -236,8 +236,17 @@ async function getMyWallet(userId) {
     LIMIT 50
   `, [userId]);
 
+  // 4) coerce amount, fee, net_amount into real numbers
+  const withdrawals = rawWithdrawals.map(r => ({
+    ...r,
+    amount:     Number(r.amount),
+    fee:        Number(r.fee),
+    net_amount: Number(r.net_amount),
+  }));
+
   return { wallet, transactions, withdrawals };
 }
+
 
 // If you still need the old standalone version, make sure it’s distinct:
 async function getMyWithdrawals(userId) {
