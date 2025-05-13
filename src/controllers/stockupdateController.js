@@ -762,7 +762,6 @@ async function listSuperAdminStockUpdates(req, res, next) {
 
 async function getStockUpdatesForAdmin(req, res, next) {
   try {
-    // assuming your authMiddleware set req.user.id to the internal `users.id`
     const adminId = req.user.id;
     const { rows } = await pool.query(`
       SELECT
@@ -773,7 +772,9 @@ async function getStockUpdatesForAdmin(req, res, next) {
         su.quantity,
         su.pickup_date,
         su.deadline,
+        -- first check the real status column:
         CASE
+          WHEN su.status = 'returned' THEN 'returned'
           WHEN EXISTS (
             SELECT 1
               FROM orders o
@@ -790,7 +791,7 @@ async function getStockUpdatesForAdmin(req, res, next) {
      ORDER BY su.pickup_date DESC;
     `, [adminId]);
 
-    return res.json({ data: rows });
+    res.json({ data: rows });
   } catch (err) {
     next(err);
   }
