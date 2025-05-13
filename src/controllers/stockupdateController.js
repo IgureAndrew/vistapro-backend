@@ -529,7 +529,17 @@ async function getStockUpdates(req, res, next) {
         su.quantity,
         su.pickup_date,
         su.deadline,
-        su.status,
+        CASE
++         WHEN su.status = 'returned' THEN 'returned'
++         WHEN EXISTS (
++           SELECT 1
+             FROM orders o
+            WHERE o.stock_update_id = su.id
+              AND o.status IN ('confirmed','released_confirmed')
+         ) THEN 'sold'
+         WHEN su.deadline < NOW() THEN 'expired'
+         ELSE 'pending'
+       END AS status,
         su.transfer_requested_at,
         su.transfer_approved_at,
         su.returned_at,
