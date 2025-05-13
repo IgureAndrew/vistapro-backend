@@ -8,9 +8,10 @@ const walletService = require('../services/walletService');
  */
 async function getMyWallet(req, res, next) {
   try {
+    const userId = req.user.unique_id;
     const { wallet, transactions, withdrawals } =
-  await walletService.getMyWallet(userId);
-res.json({ wallet, transactions, withdrawals });
+      await walletService.getMyWallet(userId);
+    res.json({ wallet, transactions, withdrawals });
   } catch (err) {
     next(err);
   }

@@ -193,22 +193,26 @@ async function getSubordinateWallets(superAdminUid) {
   return { wallets, transactions };
 }
 
+/**
+ * Fetch a user’s wallet, ledger transactions, and withdrawal history
+ */
 async function getMyWallet(userId) {
   await ensureWallet(userId);
 
-  // 1) your balances + bank info
+  // 1) balances + bank info
   const { rows: [wallet] } = await pool.query(`
-    SELECT total_balance,
-           available_balance,
-           withheld_balance,
-           account_name,
-           account_number,
-           bank_name
-      FROM wallets
-     WHERE user_unique_id = $1
+    SELECT
+      total_balance,
+      available_balance,
+      withheld_balance,
+      account_name,
+      account_number,
+      bank_name
+    FROM wallets
+    WHERE user_unique_id = $1
   `, [userId]);
 
-  // 2) recent transaction ledger
+  // 2) ledger transactions
   const { rows: transactions } = await pool.query(`
     SELECT id, transaction_type, amount, created_at
       FROM wallet_transactions
@@ -217,36 +221,42 @@ async function getMyWallet(userId) {
      LIMIT 50
   `, [userId]);
 
-  // 3) withdrawal requests history
+  // 3) withdrawal history
   const { rows: withdrawals } = await pool.query(`
-    SELECT id,
-           amount_requested   AS amount,
-           fee,
-           net_amount,
-           status,
-           requested_at
-      FROM withdrawal_requests
-     WHERE user_unique_id = $1
-     ORDER BY requested_at DESC
+    SELECT
+      id,
+      amount_requested   AS amount,
+      fee,
+      net_amount,
+      status,
+      requested_at
+    FROM withdrawal_requests
+    WHERE user_unique_id = $1
+    ORDER BY requested_at DESC
+    LIMIT 50
   `, [userId]);
 
   return { wallet, transactions, withdrawals };
 }
 
-
+// If you still need the old standalone version, make sure it’s distinct:
 async function getMyWithdrawals(userId) {
   await ensureWallet(userId);
-  const { rows } = await pool.query
-  console.log('getAllWallets rows:', wallets);
-
-  (`
-    SELECT id, amount_requested AS amount, fee, status, requested_at
-      FROM withdrawal_requests
-     WHERE user_unique_id = $1
-     ORDER BY requested_at DESC
-  `, [ userId ]);
+  const { rows } = await pool.query(`
+    SELECT
+      id,
+      amount_requested AS amount,
+      fee,
+      net_amount,
+      status,
+      requested_at
+    FROM withdrawal_requests
+    WHERE user_unique_id = $1
+    ORDER BY requested_at DESC
+  `, [userId]);
   return rows;
 }
+
 
 async function getAllWallets() {
   const { rows } = await pool.query(`
