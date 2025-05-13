@@ -560,101 +560,96 @@ async function getStockUpdates(req, res, next) {
 
 // src/controllers/stockupdateController.js
 
+
 async function confirmReturn(req, res, next) {
+  if (req.user.role !== 'MasterAdmin') {
+    return res.status(403).json({ message: "Only MasterAdmin may confirm returns." });
+  }
+
+  const stockUpdateId = Number(req.params.id);
+  if (!Number.isInteger(stockUpdateId)) {
+    return res.status(400).json({ message: "Invalid pickup ID." });
+  }
+
+  const client = await pool.connect();
   try {
-    // 1) Only MasterAdmin allowed
-    if (req.user.role !== 'MasterAdmin') {
-      return res.status(403).json({ message: "Only MasterAdmin may confirm returns." });
-    }
+    await client.query('BEGIN');
 
-    // 2) Parse + validate ID
-    const stockUpdateId = Number(req.params.id);
-    if (!Number.isInteger(stockUpdateId)) {
-      return res.status(400).json({ message: "Invalid pickup ID." });
-    }
-
-    const client = await pool.connect();
-    try {
-      // 3) Begin transaction
-      await client.query('BEGIN');
-
-      // 4) Lock the row & grab product_id + quantity
-      const lockQ = `
-        SELECT product_id, quantity
-          FROM stock_updates
-         WHERE id = $1
-           AND status = 'return_pending'
-         FOR UPDATE
-      `;
-      const { rows: [lockRow] } = await client.query(lockQ, [stockUpdateId]);
-      if (!lockRow) {
-        await client.query('ROLLBACK');
-        return res.status(404).json({ message: "No pending return found." });
-      }
-      const { product_id, quantity } = lockRow;
-
-      // 5) Mark the pickup as returned
-      const updPickupQ = `
-        UPDATE stock_updates
-           SET status      = 'returned',
-               returned_at = NOW(),
-               updated_at  = NOW()
-         WHERE id = $1
-         RETURNING *
-      `;
-      const { rows: [pickup] } = await client.query(updPickupQ, [stockUpdateId]);
-
-      // 6) Release any reserved IMEIs
-      const releaseQ = `
-        UPDATE inventory_items
-           SET status          = 'available',
-               stock_update_id = NULL
-         WHERE stock_update_id = $1
-           AND status = 'reserved'
-      `;
-      await client.query(releaseQ, [stockUpdateId]);
-
-      // 7) Add the quantity back into product inventory
-      const restockQ = `
-        UPDATE products
-           SET qty_available = qty_available + $1
-         WHERE id = $2
-      `;
-      await client.query(restockQ, [quantity, product_id]);
-
-      // 8) Notify the marketer
-      const findUserQ = `
-        SELECT u.unique_id
-          FROM users u
-          JOIN stock_updates su ON su.marketer_id = u.id
-         WHERE su.id = $1
-      `;
-      const { rows: [user] } = await client.query(findUserQ, [stockUpdateId]);
-      if (user?.unique_id) {
-        const noteQ = `
-          INSERT INTO notifications (user_unique_id, message, created_at)
-          VALUES ($1, $2, NOW())
-        `;
-        const msg = `Your stock pickup #${stockUpdateId} has been marked returned by MasterAdmin.`;
-        await client.query(noteQ, [user.unique_id, msg]);
-      }
-
-      // 9) Commit!
-      await client.query('COMMIT');
-      return res.json({
-        message: "Return confirmed, reserved units released and inventory updated.",
-        stock: pickup
-      });
-
-    } catch (err) {
+    // 1) Lock the pending-return row and get product_id + quantity
+    const { rows: [lockRow] } = await client.query(
+      `SELECT product_id, quantity
+         FROM stock_updates
+        WHERE id = $1
+          AND status = 'return_pending'
+        FOR UPDATE`,
+      [stockUpdateId]
+    );
+    if (!lockRow) {
       await client.query('ROLLBACK');
-      next(err);
-    } finally {
-      client.release();
+      return res.status(404).json({ message: "No pending return found." });
     }
+    const { product_id, quantity } = lockRow;
+
+    // 2) Mark the stock_update as returned
+    const { rows: [pickup] } = await client.query(
+      `UPDATE stock_updates
+          SET status      = 'returned',
+              returned_at = NOW(),
+              updated_at  = NOW()
+        WHERE id = $1
+        RETURNING *`,
+      [stockUpdateId]
+    );
+
+    // 3) Release any reserved IMEIs
+    await client.query(
+      `UPDATE inventory_items
+          SET status          = 'available',
+              stock_update_id = NULL
+        WHERE stock_update_id = $1
+          AND status = 'reserved'`,
+      [stockUpdateId]
+    );
+
+    // 4) **Restock the product** by bumping the `quantity` column
+    await client.query(
+      `UPDATE products
+          SET quantity   = quantity + $1,
+              updated_at = NOW()
+        WHERE id = $2`,
+      [quantity, product_id]
+    );
+
+    // 5) Notify the marketer
+    const { rows: [user] } = await client.query(
+      `SELECT u.unique_id
+         FROM users u
+         JOIN stock_updates su ON su.marketer_id = u.id
+        WHERE su.id = $1`,
+      [stockUpdateId]
+    );
+    if (user?.unique_id) {
+      await client.query(
+        `INSERT INTO notifications (user_unique_id, message, created_at)
+         VALUES ($1, $2, NOW())`,
+        [
+          user.unique_id,
+          `Your stock pickup #${stockUpdateId} has been returned and restocked by MasterAdmin.`
+        ]
+      );
+    }
+
+    await client.query('COMMIT');
+    res.json({
+      message: "Return confirmed, reserved units released and product inventory restocked.",
+      stock: pickup
+    });
 
   } catch (err) {
+    await client.query('ROLLBACK');
     next(err);
+  } finally {
+    client.release();
   }
 }
 
