@@ -558,6 +558,8 @@ async function getStockUpdates(req, res, next) {
 // PATCH /api/marketer/stock-pickup/:id/return
 // src/controllers/stockupdateController.js
 
+// src/controllers/stockupdateController.js
+
 async function confirmReturn(req, res, next) {
   if (req.user.role !== 'MasterAdmin') {
     return res.status(403).json({ message: "Only MasterAdmin may confirm returns." });
@@ -608,11 +610,12 @@ async function confirmReturn(req, res, next) {
       [stockUpdateId]
     );
 
-    // 3) **Boost the dealer’s product inventory**  
-    //    so it immediately shows up under Qty Available
+    // 3) Boost the dealer’s product inventory
+    //    (replace `quantity` with your real column name if different)
     await client.query(
       `UPDATE products
-          SET qty_available = qty_available + $1
+          SET quantity   = quantity + $1,
+              updated_at = NOW()
         WHERE id = $2`,
       [quantity, product_id]
     );
@@ -638,10 +641,9 @@ async function confirmReturn(req, res, next) {
 
     await client.query('COMMIT');
     return res.json({
-      message: "Return confirmed, reserved units released and inventory updated.",
+      message: "Return confirmed; reserved units released and inventory updated.",
       stock: pickup
     });
-
   } catch (err) {
     await client.query('ROLLBACK');
     next(err);
@@ -649,6 +651,7 @@ async function confirmReturn(req, res, next) {
     client.release();
   }
 }
+
 
 /**
  * PATCH /api/marketer/stock-pickup/:id/transfer
