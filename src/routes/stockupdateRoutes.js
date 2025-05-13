@@ -92,4 +92,12 @@ router.get(
   ctrl.getStockUpdatesForAdmin
 );
 
+// src/routes/stockupdateRoutes.js
+router.get(
+  '/admin/stock-pickup',          // ← new path
+  verifyToken,
+  verifyRole(['Admin']),
+  ctrl.getStockUpdatesForAdmin
+);
+
 module.exports = router;
