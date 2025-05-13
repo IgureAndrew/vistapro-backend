@@ -517,6 +517,8 @@ async function getMarketerStockUpdates(req, res, next) {
  * GET /api/marketer/stock-pickup
  * (Master/Admin) list all pickups.
  */
+// src/controllers/stockupdateController.js
+
 async function getStockUpdates(req, res, next) {
   try {
     const { rows } = await pool.query(`
@@ -529,17 +531,18 @@ async function getStockUpdates(req, res, next) {
         su.quantity,
         su.pickup_date,
         su.deadline,
+        -- proper comma above, now the CASE expression:
         CASE
-+         WHEN su.status = 'returned' THEN 'returned'
-+         WHEN EXISTS (
-+           SELECT 1
-             FROM orders o
-            WHERE o.stock_update_id = su.id
-              AND o.status IN ('confirmed','released_confirmed')
-         ) THEN 'sold'
-         WHEN su.deadline < NOW() THEN 'expired'
-         ELSE 'pending'
-       END AS status,
+          WHEN su.status = 'returned' THEN 'returned'
+          WHEN EXISTS (
+            SELECT 1
+              FROM orders o
+             WHERE o.stock_update_id = su.id
+               AND o.status IN ('confirmed','released_confirmed')
+          ) THEN 'sold'
+          WHEN su.deadline < NOW() THEN 'expired'
+          ELSE 'pending'
+        END AS status,
         su.transfer_requested_at,
         su.transfer_approved_at,
         su.returned_at,
@@ -552,13 +555,15 @@ async function getStockUpdates(req, res, next) {
       JOIN users d       ON d.id = p.dealer_id
       JOIN users m       ON m.id = su.marketer_id
       LEFT JOIN users tgt ON tgt.id = su.transfer_to_marketer_id
-      ORDER BY su.pickup_date DESC
+      ORDER BY su.pickup_date DESC;
     `);
+
     res.json({ data: rows });
   } catch (err) {
     next(err);
   }
 }
+
 
 /**
  * PATCH /api/marketer/stock-pickup/:id/return
