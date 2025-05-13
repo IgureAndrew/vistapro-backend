@@ -98,53 +98,26 @@ async function listPendingRequests(req, res, next) {
  * PATCH /api/wallets/master-admin/requests/:reqId
  * Approve or reject a withdrawal (MasterAdmin)
  */
-/**
- * PATCH /api/wallets/master-admin/requests/:reqId
- * Approve or reject a withdrawal (MasterAdmin)
- * Body: { action: 'approve' | 'reject' }
- *
- * Also sends a notification back to the requester.
- */
 async function reviewRequest(req, res, next) {
   try {
     const { reqId }  = req.params;
     const { action } = req.body;
 
-    if (!['approve', 'reject'].includes(action)) {
-      return res.status(400).json({ message: "Invalid action: must be 'approve' or 'reject'." });
+    if (!['approve','reject'].includes(action)) {
+      return res.status(400).json({ message: "Invalid action." });
     }
 
-    // 1) Update the withdrawal_request row and (if rejected) refund the user
+    // delegate entirely to your service layer
     const result = await walletService.reviewWithdrawalRequest(
       Number(reqId),
       action,
       req.user.unique_id
     );
 
-    // 2) Notify the user who made the request
-    //    You’ll need a notifications table & a way to look up their unique_id:
-    const { rows: [reqRow] } = await pool.query(`
-      SELECT user_unique_id
-        FROM withdrawal_requests
-       WHERE id = $1
-    `, [reqId]);
-
-    if (reqRow?.user_unique_id) {
-      const message =
-        action === 'approve'
-          ? `Your withdrawal request #${reqId} has been approved and sent.`
-          : `Your withdrawal request #${reqId} has been rejected and funds refunded.`;
-
-      await pool.query(`
-        INSERT INTO notifications (user_unique_id, message, created_at)
-        VALUES ($1, $2, NOW())
-      `, [reqRow.user_unique_id, message]);
-    }
-
     res.json({
-      message: action === 'approve'
-        ? "Withdrawal approved and disbursed."
-        : "Withdrawal rejected and refunded.",
+      message: result.status === 'approved'
+        ? "Withdrawal approved and funds disbursed."
+        : "Withdrawal request rejected.",
       result
     });
   } catch (err) {
