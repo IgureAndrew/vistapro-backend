@@ -195,23 +195,44 @@ async function getSubordinateWallets(superAdminUid) {
 
 async function getMyWallet(userId) {
   await ensureWallet(userId);
+
+  // 1) your balances + bank info
   const { rows: [wallet] } = await pool.query(`
-    SELECT total_balance, available_balance, withheld_balance,
-           account_name, account_number, bank_name
+    SELECT total_balance,
+           available_balance,
+           withheld_balance,
+           account_name,
+           account_number,
+           bank_name
       FROM wallets
      WHERE user_unique_id = $1
-  `, [ userId ]);
+  `, [userId]);
 
+  // 2) recent transaction ledger
   const { rows: transactions } = await pool.query(`
     SELECT id, transaction_type, amount, created_at
       FROM wallet_transactions
      WHERE user_unique_id = $1
      ORDER BY created_at DESC
      LIMIT 50
-  `, [ userId ]);
+  `, [userId]);
 
-  return { wallet, transactions };
+  // 3) withdrawal requests history
+  const { rows: withdrawals } = await pool.query(`
+    SELECT id,
+           amount_requested   AS amount,
+           fee,
+           net_amount,
+           status,
+           requested_at
+      FROM withdrawal_requests
+     WHERE user_unique_id = $1
+     ORDER BY requested_at DESC
+  `, [userId]);
+
+  return { wallet, transactions, withdrawals };
 }
+
 
 async function getMyWithdrawals(userId) {
   await ensureWallet(userId);
@@ -226,6 +247,7 @@ async function getMyWithdrawals(userId) {
   `, [ userId ]);
   return rows;
 }
+
 async function getAllWallets() {
   const { rows } = await pool.query(`
     SELECT
