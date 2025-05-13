@@ -560,7 +560,6 @@ async function getStockUpdates(req, res, next) {
 
 // src/controllers/stockupdateController.js
 
-
 async function confirmReturn(req, res, next) {
   if (req.user.role !== 'MasterAdmin') {
     return res.status(403).json({ message: "Only MasterAdmin may confirm returns." });
