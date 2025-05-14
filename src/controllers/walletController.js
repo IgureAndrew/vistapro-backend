@@ -227,6 +227,30 @@ async function getWithdrawalHistory(req, res, next) {
   }
 }
 
+/**
+ * GET /api/wallets/master-admin/admin-wallets
+ */
+async function getAllAdminWallets(req, res, next) {
+  try {
+    const wallets = await walletService.getWalletsByRole('Admin')
+    res.json({ wallets })
+  } catch (err) {
+    next(err)
+  }
+}
+
+/**
+ * GET /api/wallets/master-admin/super-admin-wallets
+ */
+async function getAllSuperAdminWallets(req, res, next) {
+  try {
+    const wallets = await walletService.getWalletsByRole('SuperAdmin')
+    res.json({ wallets })
+  } catch (err) {
+    next(err)
+  }
+}
+
 module.exports = {
   getMyWallet,
   getWalletStats,
@@ -241,4 +265,6 @@ module.exports = {
   getSuperAdminActivities,
   getAdminWallets,
    getWithdrawalHistory,
+    getAllAdminWallets,
+  getAllSuperAdminWallets,
 };

@@ -119,4 +119,21 @@ router.post(
   verifyRole(['MasterAdmin']),
   wc.getWithdrawalHistory           // <-- make sure this is exported from your controller
 );
+
+// ─── MasterAdmin: view Admin wallets ─────────────────────────
+router.get(
+  '/master-admin/admin-wallets',
+  verifyToken,
+  verifyRole(['MasterAdmin']),
+  wc.getAllAdminWallets
+)
+
+// ─── MasterAdmin: view SuperAdmin wallets ────────────────────
+router.get(
+  '/master-admin/super-admin-wallets',
+  verifyToken,
+  verifyRole(['MasterAdmin']),
+  wc.getAllSuperAdminWallets
+)
+
 module.exports = router;

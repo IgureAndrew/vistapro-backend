@@ -536,6 +536,47 @@ async function getWithdrawalHistory({ startDate, endDate, name, role }) {
   return rows;
 }
 
+/**
+ * Get every user of a given role along with their wallet balances & pending cashouts
+ */
+async function getWalletsByRole(role) {
+  const { rows } = await pool.query(`
+    SELECT
+      w.user_unique_id,
+      u.role,
+      w.total_balance,
+      w.available_balance,
+      w.withheld_balance,
+      COALESCE(
+        SUM(r.net_amount) FILTER (WHERE r.status = 'pending'),
+        0
+      ) AS pending_cashout
+    FROM wallets w
+    JOIN users u
+      ON u.unique_id = w.user_unique_id
+     AND u.role = $1
+    LEFT JOIN withdrawal_requests r
+      ON r.user_unique_id = w.user_unique_id
+    GROUP BY
+      w.user_unique_id,
+      u.role,
+      w.total_balance,
+      w.available_balance,
+      w.withheld_balance
+    ORDER BY w.user_unique_id;
+  `, [role])
+
+  return rows.map(r => ({
+    user_unique_id:    r.user_unique_id,
+    role:              r.role,
+    total_balance:     Number(r.total_balance)     || 0,
+    available_balance: Number(r.available_balance) || 0,
+    withheld_balance:  Number(r.withheld_balance)  || 0,
+    pending_cashout:   Number(r.pending_cashout)   || 0,
+  }))
+}
+
+
 
 module.exports = {
   ensureWallet,
@@ -554,4 +595,5 @@ module.exports = {
   listPendingRequests,
   reviewWithdrawalRequest,
   getWithdrawalHistory,
+  getWalletsByRole,
 };
