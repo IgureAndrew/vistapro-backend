@@ -271,6 +271,7 @@ async function getAllWallets() {
   const { rows } = await pool.query(`
     SELECT
       w.user_unique_id,
+       u.first_name || ' ' || u.last_name AS name,    -- added
       w.total_balance,
       w.available_balance,
       w.withheld_balance,

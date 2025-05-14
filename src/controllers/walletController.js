@@ -143,16 +143,9 @@ async function resetWallets(req, res, next) {
  * List all marketers’ wallets (MasterAdmin)
  */
 async function getAllWallets(req, res, next) {
-  try {
-    const wallets = await walletService.getAllWallets();
-    console.log('controller.getAllWallets →', wallets);
-
-    res.json({ wallets });
-  } catch (err) {
-    next(err);
-  }
+  const wallets = await walletService.getWalletsByRole('Marketer')
+  res.json({ wallets })
 }
-
 /**
  * POST /api/wallets/master-admin/release-withheld
  * Release withheld balances (MasterAdmin)
