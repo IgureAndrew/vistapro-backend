@@ -486,6 +486,56 @@ async function reviewWithdrawalRequest(requestId, action, reviewerUid) {
   return { requestId, status: newStatus };
 }
 
+/**
+ * Fetch confirmed or rejected withdrawal requests,
+ * joined with user info, and filtered by date/name/role.
+ */
+async function getWithdrawalHistory({ startDate, endDate, name, role }) {
+  const conditions = [`wr.status IN ('approved','rejected')`];
+  const params     = [];
+
+  if (startDate) {
+    params.push(startDate);
+    conditions.push(`wr.requested_at >= $${params.length}`);
+  }
+  if (endDate) {
+    params.push(endDate);
+    conditions.push(`wr.requested_at <= $${params.length}`);
+  }
+  if (name) {
+    params.push(`%${name}%`);
+    conditions.push(`(u.first_name || ' ' || u.last_name) ILIKE $${params.length}`);
+  }
+  if (role) {
+    params.push(role);
+    conditions.push(`u.role = $${params.length}`);
+  }
+
+  const sql = `
+    SELECT
+      wr.id,
+      wr.user_unique_id     AS unique_id,
+      u.first_name || ' ' || u.last_name AS name,
+      u.role,
+      u.phone,
+      wr.account_name,
+      wr.bank_name,
+      wr.account_number,
+      wr.amount_requested  AS amount,
+      wr.fee,
+      wr.net_amount,
+      wr.status,
+      wr.requested_at      AS date
+    FROM withdrawal_requests wr
+    JOIN users u
+      ON u.unique_id = wr.user_unique_id
+    WHERE ${conditions.join(' AND ')}
+    ORDER BY wr.requested_at DESC
+  `;
+  const { rows } = await pool.query(sql, params);
+  return rows;
+}
+
 
 module.exports = {
   ensureWallet,
@@ -503,4 +553,5 @@ module.exports = {
   getWithdrawalFeeStats,
   listPendingRequests,
   reviewWithdrawalRequest,
+  getWithdrawalHistory,
 };

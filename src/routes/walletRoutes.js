@@ -111,4 +111,12 @@ router.post(
   verifyRole(['Marketer','Admin','MasterAdmin','SuperAdmin']),
   wc.requestWithdrawal
 );
+
+// ─── MasterAdmin withdrawal history ──────────────────────────
++router.get(
+  '/master-admin/withdrawals',       // GET  /api/wallets/master-admin/withdrawals
+  verifyToken,
+  verifyRole(['MasterAdmin']),
+  wc.getWithdrawalHistory           // <-- make sure this is exported from your controller
+);
 module.exports = router;

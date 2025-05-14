@@ -208,6 +208,25 @@ async function listPendingRequests(req, res, next) {
   }
 }
 
+/**
+ * GET /api/wallets/master-admin/withdrawals
+ * Query params: startDate, endDate, name, role
+ */
+async function getWithdrawalHistory(req, res, next) {
+  try {
+    const filters = {
+      startDate: req.query.startDate,
+      endDate:   req.query.endDate,
+      name:      req.query.name,
+      role:      req.query.role
+    };
+    const data = await walletService.getWithdrawalHistory(filters);
+    return res.json({ data });
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   getMyWallet,
   getWalletStats,
@@ -220,5 +239,6 @@ module.exports = {
   getAllWallets,
   releaseWithheld,
   getSuperAdminActivities,
-  getAdminWallets
+  getAdminWallets,
+   getWithdrawalHistory,
 };
