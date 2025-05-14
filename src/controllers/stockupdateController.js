@@ -743,39 +743,40 @@ async function listSuperAdminStockUpdates(req, res, next) {
         su.quantity,
         su.pickup_date,
         su.deadline,
-        -- derive status: sold if there's a confirmed order, expired if past deadline, else pending
+
+        -- derive status
         CASE
           WHEN EXISTS (
             SELECT 1
-              FROM orders o
-             WHERE o.stock_update_id = su.id
-               AND o.status = ('confirmed','released_confirmed')
+            FROM orders o
+            WHERE o.stock_update_id = su.id
+              AND o.status IN ('confirmed','released_confirmed')
           ) THEN 'sold'
           WHEN su.deadline < NOW() THEN 'expired'
           ELSE 'pending'
         END AS status,
-        m.unique_id          AS marketer_unique_id,
-        m.first_name||' '||m.last_name AS marketer_name,
-        a.unique_id          AS admin_unique_id,
-        a.first_name||' '||a.last_name AS admin_name
+
+        m.unique_id                         AS marketer_unique_id,
+        m.first_name || ' ' || m.last_name  AS marketer_name,
+        a.unique_id                         AS admin_unique_id,
+        a.first_name  || ' ' || a.last_name AS admin_name
+
       FROM stock_updates su
-      JOIN products p
-        ON p.id = su.product_id
-      JOIN users m
-        ON m.id = su.marketer_id
-      JOIN users a
-        ON m.admin_id = a.id
-      JOIN users s
-        ON a.super_admin_id = s.id
+      JOIN products p ON p.id = su.product_id
+      JOIN users m   ON m.id = su.marketer_id
+      JOIN users a   ON a.id = m.admin_id
+      JOIN users s   ON s.id = a.super_admin_id
       WHERE s.unique_id = $1
       ORDER BY su.pickup_date DESC
     `, [superUid]);
 
-    res.json({ data: rows });
+    // Match your frontend’s expectation: { data: rows }
+    return res.json({ data: rows });
   } catch (err) {
     next(err);
   }
 }
+
 
 async function getStockUpdatesForAdmin(req, res, next) {
   try {
