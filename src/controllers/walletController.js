@@ -107,7 +107,6 @@ async function reviewRequest(req, res, next) {
       return res.status(400).json({ message: "Invalid action." });
     }
 
-    // delegate entirely to your service layer
     const result = await walletService.reviewWithdrawalRequest(
       Number(reqId),
       action,
@@ -138,14 +137,6 @@ async function resetWallets(req, res, next) {
   }
 }
 
-/**
- * GET /api/wallets/master-admin/wallets
- * List all marketers’ wallets (MasterAdmin)
- */
-async function getAllWallets(req, res, next) {
-  const wallets = await walletService.getWalletsByRole('Marketer')
-  res.json({ wallets })
-}
 /**
  * POST /api/wallets/master-admin/release-withheld
  * Release withheld balances (MasterAdmin)
@@ -189,19 +180,6 @@ async function getAdminWallets(req, res, next) {
 }
 
 /**
- * GET /api/wallets/master-admin/requests
- * List all withdrawal requests still pending approval
- */
-async function listPendingRequests(req, res, next) {
-  try {
-    const requests = await walletService.listPendingRequests();
-    res.json({ requests });
-  } catch (err) {
-    next(err);
-  }
-}
-
-/**
  * GET /api/wallets/master-admin/withdrawals
  * Query params: startDate, endDate, name, role
  */
@@ -214,16 +192,19 @@ async function getWithdrawalHistory(req, res, next) {
       role:      req.query.role
     };
     const data = await walletService.getWithdrawalHistory(filters);
-    return res.json({ data });
+    res.json({ data });
   } catch (err) {
     next(err);
   }
 }
 
 // ─── MasterAdmin → marketers ───────────────────────────────────
-async function getAllWallets(req, res, next) {
+async function listMarketerWallets(req, res, next) {
   try {
-    const wallets = await walletService.getAllWallets();
+    const wallets = await walletService.getWalletsByRole(
+      'Marketer',
+      req.user.unique_id
+    );
     res.json({ wallets });
   } catch (err) {
     next(err);
@@ -231,7 +212,7 @@ async function getAllWallets(req, res, next) {
 }
 
 // ─── MasterAdmin → admins ──────────────────────────────────────
-async function getAllAdminWallets(req, res, next) {
+async function listAdminWallets(req, res, next) {
   try {
     const wallets = await walletService.getWalletsByRole(
       'Admin',
@@ -244,22 +225,11 @@ async function getAllAdminWallets(req, res, next) {
 }
 
 // ─── MasterAdmin → superadmins ─────────────────────────────────
-async function getAllSuperAdminWallets(req, res, next) {
+async function listSuperAdminWallets(req, res, next) {
   try {
     const wallets = await walletService.getWalletsByRole(
       'SuperAdmin',
       req.user.unique_id
-    );
-    res.json({ wallets });
-  } catch (err) {
-    next(err);
-  }
-}
-
-async function getSuperAdminMarketerWallets(req, res, next) {
-  try {
-    const wallets = await walletService.getSubordinateMarketerWallets(
-      req.user.unique_id  // this is a SuperAdmin UID
     );
     res.json({ wallets });
   } catch (err) {
@@ -276,12 +246,13 @@ module.exports = {
   listPendingRequests,
   reviewRequest,
   resetWallets,
-  getAllWallets,
   releaseWithheld,
   getSuperAdminActivities,
   getAdminWallets,
-   getWithdrawalHistory,
-    getAllAdminWallets,
-  getAllSuperAdminWallets,
-  getSuperAdminMarketerWallets,
+  getWithdrawalHistory,
+
+  // renamed to avoid collision:
+  listMarketerWallets,
+  listAdminWallets,
+  listSuperAdminWallets
 };

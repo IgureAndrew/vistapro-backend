@@ -415,13 +415,30 @@ async function getWalletsForAdmin(adminUid) {
  * Create a withdrawal request for a user.
  * Deducts a flat fee, stores both fee and net_amount.
  */
+// ─── Inside walletService.js ───────────────────────────────────
 async function createWithdrawalRequest(userId, amount, { account_name, account_number, bank_name }) {
   await ensureWallet(userId);
 
-  const fee     = WITHDRAWAL_FEE;
-  const net     = amount - fee;
-  const now     = new Date();
+  const fee        = WITHDRAWAL_FEE;             // ₦100
+  const totalCost  = amount + fee;               // e.g. 3 000 + 100 = 3 100
 
+  // 1) fetch current available balance
+  const { rows: [w] } = await pool.query(
+    `SELECT available_balance
+       FROM wallets
+      WHERE user_unique_id = $1`,
+    [userId]
+  );
+  const avail = Number(w?.available_balance || 0);
+
+  // 2) block if not enough funds
+  if (avail < totalCost) {
+    const err = new Error(`Insufficient funds: you have ₦${avail.toLocaleString()}, you tried to withdraw ₦${amount.toLocaleString()} + ₦${fee} fee`);
+    err.status = 400;
+    throw err;
+  }
+
+  // 3) record the withdrawal request
   const { rows: [request] } = await pool.query(
     `INSERT INTO withdrawal_requests
        ( user_unique_id
@@ -436,25 +453,26 @@ async function createWithdrawalRequest(userId, amount, { account_name, account_n
        )
      VALUES
        ($1, $2, $3, $4, $5, $6, $7, 'pending', NOW())
-     RETURNING *;`,
+     RETURNING
+       id, user_unique_id, amount_requested, fee, net_amount, status, requested_at;`,
     [
       userId,
-      amount,
-      fee,
-      net,
+      amount,      // what they asked for
+      fee,         // platform fee
+      amount,      // net they actually get
       account_name,
       account_number,
       bank_name
     ]
   );
 
-  //  – Optionally deduct the total from the user's available balance now…
+  // 4) deduct totalCost from available balance
   await pool.query(
     `UPDATE wallets
         SET available_balance = available_balance - $2,
             updated_at        = NOW()
       WHERE user_unique_id = $1`,
-    [userId, amount + fee]
+    [userId, totalCost]
   );
 
   return request;
