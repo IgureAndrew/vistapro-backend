@@ -633,46 +633,34 @@ async function getWithdrawalHistory({ startDate, endDate, name, role }) {
  * Get every user of a given role along with their wallet balances
  * *only* from orders that passed through the given superAdminUid
  */
-async function getWalletsByRole(role, superAdminUid) {
-  // 1) look up the internal SuperAdmin id
-  const { rows: [su] } = await pool.query(
-    `SELECT id FROM users WHERE unique_id = $1`,
-    [superAdminUid]
-  );
-  if (!su) throw new Error('SuperAdmin not found');
-
-  // 2) aggregate per-role under this superAdmin
+async function getWalletsByRole(role) {
   const { rows } = await pool.query(`
     SELECT
       u.unique_id                           AS user_unique_id,
       u.first_name || ' ' || u.last_name    AS name,
       u.role,
-      COALESCE(SUM(wt.amount), 0) AS total_balance,
-      COALESCE(SUM(CASE WHEN wt.transaction_type = 'commission_available' THEN wt.amount ELSE 0 END), 0)
-        AS available_balance,
-      COALESCE(SUM(CASE WHEN wt.transaction_type = 'commission_withheld' THEN wt.amount ELSE 0 END), 0)
-        AS withheld_balance,
-      COALESCE(SUM(CASE WHEN r.status = 'pending' THEN r.net_amount ELSE 0 END), 0)
-        AS pending_cashout
+      COALESCE(SUM(wt.amount),0)            AS total_balance,
+      COALESCE(SUM(
+        CASE WHEN wt.transaction_type = 'commission_available' THEN wt.amount ELSE 0 END
+      ),0)                                   AS available_balance,
+      COALESCE(SUM(
+        CASE WHEN wt.transaction_type = 'commission_withheld'  THEN wt.amount ELSE 0 END
+      ),0)                                   AS withheld_balance,
+      COALESCE((
+        SELECT SUM(r.net_amount)
+        FROM withdrawal_requests r
+        WHERE r.user_unique_id = u.unique_id
+          AND r.status = 'pending'
+      ),0)                                   AS pending_cashout
     FROM wallets w
     JOIN users u
       ON u.unique_id = w.user_unique_id
      AND u.role = $1
     LEFT JOIN wallet_transactions wt
       ON wt.user_unique_id = w.user_unique_id
-    LEFT JOIN orders o
-      ON (wt.meta->>'orderId')::int = o.id
-    LEFT JOIN users m
-      ON o.marketer_id = m.id
-    LEFT JOIN users a
-      ON m.admin_id = a.id
-     AND a.super_admin_id = $2
-    LEFT JOIN withdrawal_requests r
-      ON r.user_unique_id = w.user_unique_id
-    WHERE a.id IS NOT NULL
     GROUP BY u.unique_id, name, u.role
-    ORDER BY u.unique_id;
-  `, [role, su.id]);
+    ORDER BY u.unique_id
+  `, [role]);
 
   return rows.map(r => ({
     user_unique_id:    r.user_unique_id,
@@ -684,7 +672,6 @@ async function getWalletsByRole(role, superAdminUid) {
     pending_cashout:   Number(r.pending_cashout),
   }));
 }
-
 
 module.exports = {
   ensureWallet,
