@@ -419,63 +419,60 @@ async function getWalletsForAdmin(adminUid) {
 async function createWithdrawalRequest(userId, amount, { account_name, account_number, bank_name }) {
   await ensureWallet(userId);
 
-  const fee        = WITHDRAWAL_FEE;             // ₦100
-  const totalCost  = amount + fee;               // e.g. 3 000 + 100 = 3 100
+  const fee       = WITHDRAWAL_FEE;            // 100
+  const totalCost = amount + fee;
 
-  // 1) fetch current available balance
-  const { rows: [w] } = await pool.query(
-    `SELECT available_balance
-       FROM wallets
-      WHERE user_unique_id = $1`,
-    [userId]
-  );
-  const avail = Number(w?.available_balance || 0);
+  // open a transaction
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
 
-  // 2) block if not enough funds
-  if (avail < totalCost) {
-    const err = new Error(`Insufficient funds: you have ₦${avail.toLocaleString()}, you tried to withdraw ₦${amount.toLocaleString()} + ₦${fee} fee`);
-    err.status = 400;
+    // lock the wallet row
+    const { rows: [w] } = await client.query(
+      `SELECT available_balance
+         FROM wallets
+        WHERE user_unique_id = $1
+        FOR UPDATE`,
+      [userId]
+    );
+    const avail = Number(w?.available_balance || 0);
+
+    if (avail < totalCost) {
+      throw Object.assign(
+        new Error(`Insufficient funds: ₦${avail.toLocaleString()}, tried ₦${amount.toLocaleString()} + ₦${fee}`),
+        { status: 400 }
+      );
+    }
+
+    // insert request
+    const { rows: [request] } = await client.query(
+      `INSERT INTO withdrawal_requests
+         ( user_unique_id, amount_requested, fee, net_amount,
+           account_name, account_number, bank_name,
+           status, requested_at )
+       VALUES
+         ($1, $2, $3, $4, $5, $6, $7, 'pending', NOW())
+       RETURNING *;`,
+      [ userId, amount, fee, amount, account_name, account_number, bank_name ]
+    );
+
+    // deduct
+    await client.query(
+      `UPDATE wallets
+          SET available_balance = available_balance - $2,
+              updated_at        = NOW()
+        WHERE user_unique_id = $1`,
+      [userId, totalCost]
+    );
+
+    await client.query('COMMIT');
+    return request;
+  } catch (err) {
+    await client.query('ROLLBACK');
     throw err;
+  } finally {
+    client.release();
   }
-
-  // 3) record the withdrawal request
-  const { rows: [request] } = await pool.query(
-    `INSERT INTO withdrawal_requests
-       ( user_unique_id
-       , amount_requested
-       , fee
-       , net_amount
-       , account_name
-       , account_number
-       , bank_name
-       , status
-       , requested_at
-       )
-     VALUES
-       ($1, $2, $3, $4, $5, $6, $7, 'pending', NOW())
-     RETURNING
-       id, user_unique_id, amount_requested, fee, net_amount, status, requested_at;`,
-    [
-      userId,
-      amount,      // what they asked for
-      fee,         // platform fee
-      amount,      // net they actually get
-      account_name,
-      account_number,
-      bank_name
-    ]
-  );
-
-  // 4) deduct totalCost from available balance
-  await pool.query(
-    `UPDATE wallets
-        SET available_balance = available_balance - $2,
-            updated_at        = NOW()
-      WHERE user_unique_id = $1`,
-    [userId, totalCost]
-  );
-
-  return request;
 }
 
 // ─── Return sum of all fees collected:
@@ -633,21 +630,21 @@ async function getWithdrawalHistory({ startDate, endDate, name, role }) {
  * Get every user of a given role along with their wallet balances
  * *only* from orders that passed through the given superAdminUid
  */
+// BEFORE: you were summing wallet_transactions directly, causing duplicate rows.
+// AFTER: just pull from wallets.*, plus a sub-query for pending_cashout:
+
 async function getWalletsByRole(role, masterAdminUniqueId) {
-  // look up the master-admin’s internal PK
+  // 1) look up the master-admin’s PK
   const { rows: [ma] } = await pool.query(
-    `SELECT id FROM users WHERE unique_id = $1`,
-    [masterAdminUniqueId]
+    `SELECT id FROM users WHERE unique_id = $1`, [masterAdminUniqueId]
   );
   if (!ma) throw new Error('MasterAdmin not found');
 
-  // now pull the pre-computed balances directly from wallets,
-  // restrict to users whose super_admin_id matches, and who
-  // have the requested role.
+  // 2) pull straight from wallets (pre-aggregated)
   const { rows } = await pool.query(`
     SELECT
-      u.unique_id                            AS user_unique_id,
-      u.first_name || ' ' || u.last_name     AS name,
+      u.unique_id                          AS user_unique_id,
+      u.first_name || ' ' || u.last_name   AS name,
       u.role,
       w.total_balance,
       w.available_balance,
@@ -656,8 +653,8 @@ async function getWalletsByRole(role, masterAdminUniqueId) {
         SELECT SUM(r.net_amount)::int
         FROM withdrawal_requests r
         WHERE r.user_unique_id = u.unique_id
-          AND r.status = 'pending'
-      ), 0)                                  AS pending_cashout
+          AND r.status          = 'pending'
+      ),0)                                  AS pending_cashout
     FROM wallets w
     JOIN users u
       ON u.unique_id = w.user_unique_id
@@ -676,6 +673,7 @@ async function getWalletsByRole(role, masterAdminUniqueId) {
     pending_cashout:   Number(r.pending_cashout),
   }));
 }
+
 module.exports = {
   ensureWallet,
   creditSplit,
