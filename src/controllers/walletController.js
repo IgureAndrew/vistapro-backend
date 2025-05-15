@@ -203,7 +203,7 @@ async function listMarketerWallets(req, res, next) {
   try {
     const wallets = await walletService.getWalletsByRole(
       'Marketer',
-      req.user.unique_id      // this is the SuperAdmin’s unique_id
+      req.user.unique_id
     );
     res.json({ wallets });
   } catch (err) {

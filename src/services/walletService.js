@@ -641,18 +641,21 @@ async function getWalletsByRole(role, superAdminUid) {
   );
   if (!su) throw new Error('SuperAdmin not found');
 
-  // 2) aggregate wallet balances for those under this superAdmin
+  // 2) aggregate per-role under this superAdmin
   const { rows } = await pool.query(`
     SELECT
       u.unique_id                           AS user_unique_id,
       u.first_name || ' ' || u.last_name    AS name,
       u.role,
-      COALESCE(SUM(wt.amount), 0) FILTER (WHERE wt.transaction_type IN ('commission_available','commission_withheld'))      AS total_balance,
-      COALESCE(SUM(wt.amount) FILTER (WHERE wt.transaction_type = 'commission_available'),                  0) AS available_balance,
-      COALESCE(SUM(wt.amount) FILTER (WHERE wt.transaction_type = 'commission_withheld'),                   0) AS withheld_balance,
-      COALESCE(SUM(r.net_amount::int) FILTER (WHERE r.status = 'pending'),                                  0) AS pending_cashout
+      COALESCE(SUM(wt.amount), 0) AS total_balance,
+      COALESCE(SUM(CASE WHEN wt.transaction_type = 'commission_available' THEN wt.amount ELSE 0 END), 0)
+        AS available_balance,
+      COALESCE(SUM(CASE WHEN wt.transaction_type = 'commission_withheld' THEN wt.amount ELSE 0 END), 0)
+        AS withheld_balance,
+      COALESCE(SUM(CASE WHEN r.status = 'pending' THEN r.net_amount ELSE 0 END), 0)
+        AS pending_cashout
     FROM wallets w
-    JOIN users u 
+    JOIN users u
       ON u.unique_id = w.user_unique_id
      AND u.role = $1
     LEFT JOIN wallet_transactions wt
@@ -663,7 +666,7 @@ async function getWalletsByRole(role, superAdminUid) {
       ON o.marketer_id = m.id
     LEFT JOIN users a
       ON m.admin_id = a.id
-     AND a.super_admin_id = $2       -- restrict to this SuperAdmin’s chain
+     AND a.super_admin_id = $2
     LEFT JOIN withdrawal_requests r
       ON r.user_unique_id = w.user_unique_id
     WHERE a.id IS NOT NULL
