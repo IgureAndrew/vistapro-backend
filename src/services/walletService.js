@@ -575,6 +575,7 @@ async function reviewWithdrawalRequest(requestId, action, reviewerUid) {
  * Fetch confirmed or rejected withdrawal requests,
  * joined with user info, and filtered by date/name/role.
  */
+// src/services/walletService.js
 async function getWithdrawalHistory({ startDate, endDate, name, role }) {
   const conditions = [`wr.status IN ('approved','rejected')`];
   const params     = [];
@@ -599,18 +600,18 @@ async function getWithdrawalHistory({ startDate, endDate, name, role }) {
   const sql = `
     SELECT
       wr.id,
-      wr.user_unique_id               AS unique_id,
+      wr.user_unique_id                AS unique_id,
       u.first_name || ' ' || u.last_name AS name,
       u.role,
       u.phone,
       wr.account_name,
       wr.bank_name,
       wr.account_number,
-      (wr.amount_requested)::int   AS amount,
-      (wr.fee)::int                AS fee,
-      (wr.net_amount)::int         AS net_amount,
+      wr.amount_requested::int           AS amount,
+      wr.fee::int                        AS fee,
+      wr.net_amount::int                 AS net_amount,
       wr.status,
-      wr.requested_at              AS date
+      wr.requested_at                    AS date
     FROM withdrawal_requests wr
     JOIN users u
       ON u.unique_id = wr.user_unique_id
