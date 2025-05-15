@@ -223,7 +223,7 @@ async function getWithdrawalHistory(req, res, next) {
 // ─── MasterAdmin → marketers ───────────────────────────────────
 async function getAllWallets(req, res, next) {
   try {
-    // use the ROLE helper, passing the SA’s own UID
+    // Marketers under this SuperAdmin
     const wallets = await walletService.getWalletsByRole(
       'Marketer',
       req.user.unique_id
