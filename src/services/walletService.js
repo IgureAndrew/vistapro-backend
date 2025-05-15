@@ -613,40 +613,62 @@ async function getWalletsByRole(role) {
       w.user_unique_id,
       u.first_name || ' ' || u.last_name AS name,
       u.role,
-      w.total_balance,
-      w.available_balance,
-      w.withheld_balance,
-      COALESCE(
-        SUM(r.net_amount) FILTER (WHERE r.status = 'pending'),
-        0
-      ) AS pending_cashout
+      COALESCE(SUM(wt.amount) FILTER (
+        WHERE (wt.meta->>'orderId')::int IN (
+          SELECT o.id
+            FROM orders o
+            WHERE o.marketer_id = u.id
+              AND o.status = 'released_confirmed'
+              AND o.super_admin_id = (
+                SELECT s.id FROM users s WHERE s.unique_id = $2
+              )
+        )
+      ), 0) AS total_balance,
+      COALESCE(SUM(wt.amount) FILTER (
+        WHERE wt.transaction_type = 'commission_available'
+          AND (wt.meta->>'orderId')::int IN (
+            SELECT o.id
+              FROM orders o
+              WHERE o.marketer_id = u.id
+                AND o.status = 'released_confirmed'
+                AND o.super_admin_id = (
+                  SELECT s.id FROM users s WHERE s.unique_id = $2
+                )
+          )
+      ), 0) AS available_balance,
+      COALESCE(SUM(wt.amount) FILTER (
+        WHERE wt.transaction_type = 'commission_withheld'
+          AND (wt.meta->>'orderId')::int IN (
+            SELECT o.id
+              FROM orders o
+              WHERE o.marketer_id = u.id
+                AND o.status = 'released_confirmed'
+                AND o.super_admin_id = (
+                  SELECT s.id FROM users s WHERE s.unique_id = $2
+                )
+          )
+      ), 0) AS withheld_balance,
+      0 AS pending_cashout
     FROM wallets w
-    JOIN users u
+    JOIN users u 
       ON u.unique_id = w.user_unique_id
      AND u.role = $1
-    LEFT JOIN withdrawal_requests r
-      ON r.user_unique_id = w.user_unique_id
-    GROUP BY
-      w.user_unique_id,
-      name,
-      u.role,
-      w.total_balance,
-      w.available_balance,
-      w.withheld_balance
+    LEFT JOIN wallet_transactions wt
+      ON wt.user_unique_id = w.user_unique_id
+    GROUP BY w.user_unique_id, name, u.role
     ORDER BY w.user_unique_id;
-  `, [role])
+  `, [ role, superAdminUid ]);  // pass both role and the current SA’s unique_id
 
   return rows.map(r => ({
     user_unique_id:    r.user_unique_id,
     name:              r.name,
     role:              r.role,
-    total_balance:     Number(r.total_balance)     || 0,
-    available_balance: Number(r.available_balance) || 0,
-    withheld_balance:  Number(r.withheld_balance)  || 0,
-    pending_cashout:   Number(r.pending_cashout)   || 0,
-  }))
+    total_balance:     Number(r.total_balance),
+    available_balance: Number(r.available_balance),
+    withheld_balance:  Number(r.withheld_balance),
+    pending_cashout:   Number(r.pending_cashout)
+  }));
 }
-
 
 module.exports = {
   ensureWallet,
