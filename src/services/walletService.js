@@ -612,61 +612,63 @@ async function getWithdrawalHistory({ startDate, endDate, name, role }) {
  * *only* from orders that passed through the given superAdminUid
  */
 async function getWalletsByRole(role, superAdminUid) {
+  // 1) look up the internal SuperAdmin id
+  const { rows: [su] } = await pool.query(
+    `SELECT id FROM users WHERE unique_id = $1`,
+    [superAdminUid]
+  );
+  if (!su) throw new Error('SuperAdmin not found');
+
+  // 2) now aggregate per‐marketer/admin/superadmin under this superAdmin
   const { rows } = await pool.query(`
     SELECT
-      w.user_unique_id,
-      u.first_name || ' ' || u.last_name AS name,
+      u.unique_id                           AS user_unique_id,
+      u.first_name || ' ' || u.last_name    AS name,
       u.role,
-      -- total commissions for orders routed under this SA
-      COALESCE(
-        SUM(wt.amount) FILTER (
-          WHERE o.super_admin_id = (
-            SELECT id FROM users WHERE unique_id = $2
-          )
-        ),
-        0
-      ) AS total_balance,
-      COALESCE(
-        SUM(wt.amount) FILTER (
-          WHERE wt.transaction_type = 'commission_available'
-            AND o.super_admin_id = (
-              SELECT id FROM users WHERE unique_id = $2
-            )
-        ),
-        0
-      ) AS available_balance,
-      COALESCE(
-        SUM(wt.amount) FILTER (
-          WHERE wt.transaction_type = 'commission_withheld'
-            AND o.super_admin_id = (
-              SELECT id FROM users WHERE unique_id = $2
-            )
-        ),
-        0
-      ) AS withheld_balance,
-      COALESCE(
-        SUM(r.net_amount) FILTER (
-          WHERE r.status = 'pending'
-            AND r.user_unique_id = w.user_unique_id
-        ), 0
-      ) AS pending_cashout
+      
+      -- total of all wallet_transactions for orders under this SA
+      COALESCE( SUM(wt.amount), 0 ) AS total_balance,
+      
+      -- available split
+      COALESCE( SUM(wt.amount) FILTER (
+        WHERE wt.transaction_type = 'commission_available'
+      ), 0 ) AS available_balance,
+      
+      -- withheld split
+      COALESCE( SUM(wt.amount) FILTER (
+        WHERE wt.transaction_type = 'commission_withheld'
+      ), 0 ) AS withheld_balance,
+
+      -- any pending withdrawal on their wallet
+      COALESCE( SUM(r.net_amount) FILTER (WHERE r.status = 'pending'), 0 )
+      AS pending_cashout
 
     FROM wallets w
-    JOIN users u
+    JOIN users u 
       ON u.unique_id = w.user_unique_id
      AND u.role = $1
 
     LEFT JOIN wallet_transactions wt
       ON wt.user_unique_id = w.user_unique_id
+
     LEFT JOIN orders o
       ON (wt.meta->>'orderId')::int = o.id
+
+    LEFT JOIN users m
+      ON o.marketer_id = m.id
+
+    LEFT JOIN users a
+      ON m.admin_id = a.id
+     AND a.super_admin_id = $2       -- <<< filter here
 
     LEFT JOIN withdrawal_requests r
       ON r.user_unique_id = w.user_unique_id
 
-    GROUP BY w.user_unique_id, name, u.role
-    ORDER BY w.user_unique_id;
-  `, [role, superAdminUid]);
+    WHERE a.id IS NOT NULL             -- only those under this SA
+
+    GROUP BY u.unique_id, name, u.role
+    ORDER BY u.unique_id;
+  `, [role, su.id]);
 
   return rows.map(r => ({
     user_unique_id:    r.user_unique_id,
@@ -678,12 +680,6 @@ async function getWalletsByRole(role, superAdminUid) {
     pending_cashout:   Number(r.pending_cashout),
   }));
 }
-
-module.exports = {
-  // …
-  getWalletsByRole,
-  // …remove any old getAllWallets if still present…
-};
 
 
 module.exports = {
