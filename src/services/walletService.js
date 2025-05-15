@@ -633,35 +633,32 @@ async function getWithdrawalHistory({ startDate, endDate, name, role }) {
 // BEFORE: you were summing wallet_transactions directly, causing duplicate rows.
 // AFTER: just pull from wallets.*, plus a sub-query for pending_cashout:
 
-async function getWalletsByRole(role, masterAdminUniqueId) {
-  // 1) look up the master-admin’s PK
-  const { rows: [ma] } = await pool.query(
-    `SELECT id FROM users WHERE unique_id = $1`, [masterAdminUniqueId]
-  );
-  if (!ma) throw new Error('MasterAdmin not found');
-
-  // 2) pull straight from wallets (pre-aggregated)
+/**
+ * Get every user of a given role along with their wallet balances & pending cashouts.
+ * (Used by Master-Admin to list all Marketers, Admins or SuperAdmins.)
+ */
+async function getWalletsByRole(role) {
   const { rows } = await pool.query(`
     SELECT
-      u.unique_id                          AS user_unique_id,
-      u.first_name || ' ' || u.last_name   AS name,
+      u.unique_id                            AS user_unique_id,
+      u.first_name || ' ' || u.last_name     AS name,
       u.role,
       w.total_balance,
       w.available_balance,
       w.withheld_balance,
-      COALESCE((
-        SELECT SUM(r.net_amount)::int
-        FROM withdrawal_requests r
-        WHERE r.user_unique_id = u.unique_id
-          AND r.status          = 'pending'
-      ),0)                                  AS pending_cashout
+      COALESCE(
+        (SELECT SUM(r.net_amount)
+           FROM withdrawal_requests r
+          WHERE r.user_unique_id = u.unique_id
+            AND r.status         = 'pending'
+        ),
+      0)::int                                 AS pending_cashout
     FROM wallets w
     JOIN users u
       ON u.unique_id = w.user_unique_id
-    WHERE u.role           = $1
-      AND u.super_admin_id = $2
+    WHERE u.role = $1
     ORDER BY u.unique_id;
-  `, [role, ma.id]);
+  `, [role]);
 
   return rows.map(r => ({
     user_unique_id:    r.user_unique_id,
