@@ -641,53 +641,32 @@ async function getWalletsByRole(role, superAdminUid) {
   );
   if (!su) throw new Error('SuperAdmin not found');
 
-  // 2) now aggregate per‐marketer/admin/superadmin under this superAdmin
+  // 2) aggregate wallet balances for those under this superAdmin
   const { rows } = await pool.query(`
     SELECT
       u.unique_id                           AS user_unique_id,
       u.first_name || ' ' || u.last_name    AS name,
       u.role,
-      
-      -- total of all wallet_transactions for orders under this SA
-      COALESCE( SUM(wt.amount), 0 ) AS total_balance,
-      
-      -- available split
-      COALESCE( SUM(wt.amount) FILTER (
-        WHERE wt.transaction_type = 'commission_available'
-      ), 0 ) AS available_balance,
-      
-      -- withheld split
-      COALESCE( SUM(wt.amount) FILTER (
-        WHERE wt.transaction_type = 'commission_withheld'
-      ), 0 ) AS withheld_balance,
-
-      -- any pending withdrawal on their wallet
-      COALESCE( SUM(r.net_amount) FILTER (WHERE r.status = 'pending'), 0 )
-      AS pending_cashout
-
+      COALESCE(SUM(wt.amount), 0) FILTER (WHERE wt.transaction_type IN ('commission_available','commission_withheld'))      AS total_balance,
+      COALESCE(SUM(wt.amount) FILTER (WHERE wt.transaction_type = 'commission_available'),                  0) AS available_balance,
+      COALESCE(SUM(wt.amount) FILTER (WHERE wt.transaction_type = 'commission_withheld'),                   0) AS withheld_balance,
+      COALESCE(SUM(r.net_amount::int) FILTER (WHERE r.status = 'pending'),                                  0) AS pending_cashout
     FROM wallets w
     JOIN users u 
       ON u.unique_id = w.user_unique_id
      AND u.role = $1
-
     LEFT JOIN wallet_transactions wt
       ON wt.user_unique_id = w.user_unique_id
-
     LEFT JOIN orders o
       ON (wt.meta->>'orderId')::int = o.id
-
     LEFT JOIN users m
       ON o.marketer_id = m.id
-
     LEFT JOIN users a
       ON m.admin_id = a.id
-     AND a.super_admin_id = $2       -- <<< filter here
-
+     AND a.super_admin_id = $2       -- restrict to this SuperAdmin’s chain
     LEFT JOIN withdrawal_requests r
       ON r.user_unique_id = w.user_unique_id
-
-    WHERE a.id IS NOT NULL             -- only those under this SA
-
+    WHERE a.id IS NOT NULL
     GROUP BY u.unique_id, name, u.role
     ORDER BY u.unique_id;
   `, [role, su.id]);
