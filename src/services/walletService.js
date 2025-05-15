@@ -539,7 +539,10 @@ async function reviewWithdrawalRequest(requestId, action, reviewerUid) {
 
   // 3) If rejected, refund both amount+fee back to the user's available_balance
   if (action === 'reject') {
-    const refund = reqRow.amount_requested + reqRow.fee;
+    //const refund = reqRow.amount_requested + reqRow.fee;
+    const refund =
+      Number(reqRow.amount_requested) +
+      Number(reqRow.fee);
     await pool.query(
       `UPDATE wallets
           SET available_balance = available_balance + $2,
