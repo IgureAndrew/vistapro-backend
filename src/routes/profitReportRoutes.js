@@ -1,21 +1,10 @@
-// src/routes/profitReportRoutes.js
 const express = require('express');
-const router = express.Router();
 const { verifyToken } = require('../middlewares/authMiddleware');
+const { profitReport } = require('../controllers/profitReportController');
 
-const {
-  dailyProfitReport,
-  weeklyProfitReport,
-  monthlyProfitReport
-} = require('../controllers/profitReportController');
+const router = express.Router();
 
-// Protected route: Daily profit report
-router.get('/daily', verifyToken, dailyProfitReport);
-
-// Protected route: Weekly profit report
-router.get('/weekly', verifyToken, weeklyProfitReport);
-
-// Protected route: Monthly profit report
-router.get('/monthly', verifyToken, monthlyProfitReport);
+// GET /api/profit-report?from=YYYY-MM-DD&to=YYYY-MM-DD
+router.get('/', verifyToken, profitReport);
 
 module.exports = router;
