@@ -223,11 +223,7 @@ async function getWithdrawalHistory(req, res, next) {
 // ─── MasterAdmin → marketers ───────────────────────────────────
 async function getAllWallets(req, res, next) {
   try {
-    // Marketers under this SuperAdmin
-    const wallets = await walletService.getWalletsByRole(
-      'Marketer',
-      req.user.unique_id
-    );
+    const wallets = await walletService.getAllWallets();
     res.json({ wallets });
   } catch (err) {
     next(err);
@@ -260,6 +256,16 @@ async function getAllSuperAdminWallets(req, res, next) {
   }
 }
 
+async function getSuperAdminMarketerWallets(req, res, next) {
+  try {
+    const wallets = await walletService.getSubordinateMarketerWallets(
+      req.user.unique_id  // this is a SuperAdmin UID
+    );
+    res.json({ wallets });
+  } catch (err) {
+    next(err);
+  }
+}
 
 module.exports = {
   getMyWallet,
@@ -277,4 +283,5 @@ module.exports = {
    getWithdrawalHistory,
     getAllAdminWallets,
   getAllSuperAdminWallets,
+  getSuperAdminMarketerWallets,
 };

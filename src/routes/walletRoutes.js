@@ -136,4 +136,18 @@ router.get(
   wc.getAllSuperAdminWallets
 )
 
+// MasterAdmin sees **all** marketers, unfiltered:
+router.get(
+  '/master-admin/wallets',
+   verifyToken, verifyRole(['MasterAdmin']),
+   wc.getAllWallets
+);
+
+// SuperAdmin sees **only** their own marketers:
+router.get(
+  '/super-admin/activities',  
+   verifyToken, verifyRole(['SuperAdmin']),
+   wc.getSuperAdminMarketerWallets
+);
+
 module.exports = router;

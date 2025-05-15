@@ -335,11 +335,11 @@ async function getAllWallets() {
   const { rows } = await pool.query(`
     SELECT
       w.user_unique_id,
-       u.first_name || ' ' || u.last_name AS name,    -- added
+      u.first_name || ' ' || u.last_name AS name,
+      u.role,
       w.total_balance,
       w.available_balance,
       w.withheld_balance,
-      u.role,
       COALESCE(
         SUM(r.net_amount) FILTER (WHERE r.status = 'pending'),
         0
@@ -352,21 +352,22 @@ async function getAllWallets() {
       ON r.user_unique_id = w.user_unique_id
     GROUP BY
       w.user_unique_id,
+      name,
+      u.role,
       w.total_balance,
       w.available_balance,
-      w.withheld_balance,
-      u.role
+      w.withheld_balance
     ORDER BY w.user_unique_id;
   `);
 
-  // coerce all bigint/text fields into Numbers
   return rows.map(r => ({
     user_unique_id:    r.user_unique_id,
+    name:              r.name,
     role:              r.role,
-    total_balance:     Number(r.total_balance)     || 0,
-    available_balance: Number(r.available_balance) || 0,
-    withheld_balance:  Number(r.withheld_balance)  || 0,
-    pending_cashout:   Number(r.pending_cashout)   || 0,
+    total_balance:     Number(r.total_balance),
+    available_balance: Number(r.available_balance),
+    withheld_balance:  Number(r.withheld_balance),
+    pending_cashout:   Number(r.pending_cashout),
   }));
 }
 
