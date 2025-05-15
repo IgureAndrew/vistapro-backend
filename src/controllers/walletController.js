@@ -200,33 +200,32 @@ async function getWithdrawalHistory(req, res, next) {
 
 // ─── MasterAdmin → marketers ───────────────────────────────────
 async function listMarketerWallets(req, res, next) {
-  try {
-    const wallets = await walletService.getWalletsByRole('Marketer');
-    res.json({ wallets });
-  } catch (err) {
-    next(err);
-  }
-}
+   try {
+     const wallets = await walletService.getAllWalletsByRole('Marketer');
+     res.json({ wallets });
+   } catch (err) {
+     next(err);
+   }
+ }
 
 // ─── MasterAdmin → admins ──────────────────────────────────────
 async function listAdminWallets(req, res, next) {
-  try {
-    const wallets = await walletService.getWalletsByRole('Admin');
-    res.json({ wallets });
-  } catch (err) {
-    next(err);
-  }
-}
-
+   try {
+     const wallets = await walletService.getAllWalletsByRole('Admin');
+     res.json({ wallets });
+   } catch (err) {
+     next(err);
+   }
+ }
 // ─── MasterAdmin → superadmins ─────────────────────────────────
 async function listSuperAdminWallets(req, res, next) {
-  try {
-    const wallets = await walletService.getWalletsByRole('SuperAdmin');
-    res.json({ wallets });
-  } catch (err) {
-    next(err);
-  }
-}
+   try {
+    const wallets = await walletService.getAllWalletsByRole('SuperAdmin');
+     res.json({ wallets });
+   } catch (err) {
+     next(err);
+   }
+ }
 
 module.exports = {
   getMyWallet,
