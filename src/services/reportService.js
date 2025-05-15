@@ -1,72 +1,71 @@
-const { pool } = require('../config/database');
-
-const COMMISSION = {
-  marketer:  { android: 10000, ios: 15000 },
-  admin:     1500,
-  superAdmin:1000
-};
-
 async function getStats(from, to) {
-  // 1) expected profit on inventory:
-  const { rows: inv } = await pool.query(`
-    SELECT 
-      COALESCE(SUM((selling_price - cost_price) * quantity),0)::int 
-      AS expected_profit
-    FROM products
-  `);
-  const expectedProfit = inv[0].expected_profit;
-
-  // 2) daily breakdown of confirmed orders:
-  const { rows: daily } = await pool.query(`
+  const sql = `
     SELECT
-      DATE(o.created_at) AS date,
-      COUNT(*) FILTER (WHERE o.device_type='android') AS soldAndroid,
-      COUNT(*) FILTER (WHERE o.device_type='ios')     AS soldIos,
-      -- profit before expenses:
-      SUM((o.selling_price - o.cost_price))::int
-        FILTER (WHERE o.status='confirmed')          AS profitBefore,
-      -- total commissions paid (expenses):
-      (
-        COUNT(*) FILTER (WHERE o.device_type='android') * ($3 + $4 + $5)
-        + COUNT(*) FILTER (WHERE o.device_type='ios') * ($6 + $4 + $5)
-      )::int                                          AS expenses
+      -- total number of orders in the range
+      COUNT(DISTINCT o.id) AS total_orders,
+
+      -- total devices sold (all types)
+      SUM(o.number_of_devices) AS total_devices_sold,
+
+      -- how many android devices
+      SUM(
+        CASE WHEN p.device_type = 'android'
+             THEN o.number_of_devices
+             ELSE 0
+        END
+      ) AS android_sold,
+
+      -- how many ios devices
+      SUM(
+        CASE WHEN p.device_type = 'ios'
+             THEN o.number_of_devices
+             ELSE 0
+        END
+      ) AS ios_sold,
+
+      -- expected gross profit (sum of (sell_price - cost_price) * qty )
+      SUM( (p.selling_price - p.cost_price) * o.number_of_devices )::int
+        AS gross_profit,
+
+      -- total commission expenses per device:
+      -- android: ₦10,000 to marketer + ₦1,500 to admin + ₦1,000 to super = 12,500
+      -- ios:     ₦15,000 + ₦1,500 + ₦1,000 = 17,500
+      SUM(
+        CASE WHEN p.device_type = 'android'
+             THEN o.number_of_devices * 12500
+             WHEN p.device_type = 'ios'
+             THEN o.number_of_devices * 17500
+             ELSE 0
+        END
+      )::int AS total_commission_expense,
+
+      -- net profit after paying all commissions
+      ( SUM((p.selling_price - p.cost_price) * o.number_of_devices)
+        - SUM(
+            CASE WHEN p.device_type = 'android'
+                 THEN o.number_of_devices * 12500
+                 WHEN p.device_type = 'ios'
+                 THEN o.number_of_devices * 17500
+                 ELSE 0
+            END
+          )
+      )::int AS net_profit
+
     FROM orders o
+    JOIN products p
+      ON p.id = o.product_id
     WHERE o.status = 'confirmed'
-      AND ($1 IS NULL OR o.created_at::date >= $1)
-      AND ($2 IS NULL OR o.created_at::date <= $2)
-    GROUP BY DATE(o.created_at)
-    ORDER BY DATE(o.created_at)
-  `, [
-    from || null,
-    to   || null,
-    COMMISSION.marketer.android,
-    COMMISSION.admin,
-    COMMISSION.superAdmin,
-    COMMISSION.marketer.ios,
-  ]);
+      AND o.created_at BETWEEN $1 AND $2
+  `;
 
-  // 3) compute totals across all days:
-  const totalExpenses = daily.reduce((s,r)=> s + r.expenses, 0);
-  const totalBefore   = daily.reduce((s,r)=> s + r.profitbefore, 0);
-  const netProfit     = totalBefore - totalExpenses;
-
+  const { rows: [stats] } = await pool.query(sql, [from, to]);
   return {
-    expectedProfit,
-    expenses: totalExpenses,
-    netProfit,
-    daily: daily.map(r => ({
-      date:           r.date,
-      soldAndroid:    r.soldandroid,
-      soldIos:        r.soldios,
-      profitAndroid:  COMMISSION.marketer.android  * r.soldandroid,
-      profitIos:      COMMISSION.marketer.ios      * r.soldios,
-      expenseAndroid: (COMMISSION.marketer.android + COMMISSION.admin + COMMISSION.superAdmin) * r.soldandroid,
-      expenseIos:     (COMMISSION.marketer.ios     + COMMISSION.admin + COMMISSION.superAdmin) * r.soldios,
-      netProfit:      ( (COMMISSION.marketer.android * r.soldandroid)
-                      + (COMMISSION.marketer.ios     * r.soldios))
-                     - r.expenses
-    }))
+    totalOrders:            Number(stats.total_orders),
+    totalDevicesSold:       Number(stats.total_devices_sold),
+    androidSold:            Number(stats.android_sold),
+    iosSold:                Number(stats.ios_sold),
+    grossProfit:            Number(stats.gross_profit),
+    totalCommissionExpense: Number(stats.total_commission_expense),
+    netProfit:              Number(stats.net_profit),
   };
 }
-
-module.exports = { getStats };
