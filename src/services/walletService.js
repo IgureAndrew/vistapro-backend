@@ -289,17 +289,15 @@ async function getMyWallet(userId) {
   const { rows: rawWithdrawals } = await pool.query(`
     SELECT
       id,
-      amount_requested   AS amount,
-      fee,
-      net_amount,
-      status,
+      amount_requested::int   AS amount,
+      fee::int                AS fee,
+       status,
       requested_at
     FROM withdrawal_requests
     WHERE user_unique_id = $1
     ORDER BY requested_at DESC
     LIMIT 50
   `, [userId]);
-
   // 4) coerce amount, fee, net_amount into real numbers
   const withdrawals = rawWithdrawals.map(r => ({
     ...r,
@@ -318,9 +316,9 @@ async function getMyWithdrawals(userId) {
   const { rows } = await pool.query(`
     SELECT
       id,
-      amount_requested AS amount,
-      fee,
-      net_amount,
+      amount_requested::int   AS amount,
+     fee::int                AS fee,
+     net_amount::int         AS net_amount,
       status,
       requested_at
     FROM withdrawal_requests
@@ -495,9 +493,9 @@ async function listPendingRequests() {
     SELECT
       id,
       user_unique_id,
-      amount_requested AS amount,
-      fee,
-      net_amount,
+      amount_requested::int   AS amount,
+      fee::int                AS fee,
+      net_amount::int         AS net_amount,
       status,
       account_name,
       account_number,
@@ -583,28 +581,27 @@ async function getWithdrawalHistory({ startDate, endDate, name, role }) {
   const sql = `
     SELECT
       wr.id,
-      wr.user_unique_id     AS unique_id,
-      u.first_name || ' ' || u.last_name AS name,
-      u.role,
+      wr.user_unique_id          AS unique_id,
+      u.first_name || ' ' || u.last_name   AS name,
++     u.role,
       u.phone,
       wr.account_name,
       wr.bank_name,
       wr.account_number,
-      wr.amount_requested  AS amount,
-      wr.fee,
-      wr.net_amount,
+      wr.amount_requested::int   AS amount,
+      wr.fee::int                AS fee,
+      wr.net_amount::int         AS net_amount,
       wr.status,
-      wr.requested_at      AS date
-    FROM withdrawal_requests wr
-    JOIN users u
-      ON u.unique_id = wr.user_unique_id
-    WHERE ${conditions.join(' AND ')}
-    ORDER BY wr.requested_at DESC
-  `;
-  const { rows } = await pool.query(sql, params);
-  return rows;
-}
-
+      wr.requested_at            AS date
+     FROM withdrawal_requests wr
+     JOIN users u
+       ON u.unique_id = wr.user_unique_id
+     WHERE ${conditions.join(' AND ')}
+     ORDER BY wr.requested_at DESC
+   `;
+   const { rows } = await pool.query(sql, params);
+   return rows;
+ }
 /**
  * Get every user of a given role along with their wallet balances & pending cashouts
  */
