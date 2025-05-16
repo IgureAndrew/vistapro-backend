@@ -122,10 +122,15 @@ async function confirmOrder(req, res, next) {
 
     // 5) For each order_item, insert a sales_record row
     const { rows: items } = await client.query(`
-      SELECT id AS order_item_id, product_id, quantity
-        FROM order_items
-       WHERE order_id = $1
-    `, [orderId]);
+   SELECT
+     oi.id               AS order_item_id,
+     ii.product_id       AS product_id,
+     oi.quantity         AS quantity
+   FROM order_items oi
+   JOIN inventory_items ii
+     ON oi.inventory_item_id = ii.id
+   WHERE oi.order_id = $1
+ `, [ orderId ]);
 
     for (let { order_item_id, product_id: pid, quantity: q } of items) {
       let realPid = pid;
