@@ -73,9 +73,34 @@ async function getGoals() {
   const { rows } = await pool.query(sql);
   return rows[0];
 }
+/**
+ * Fetch full inventory details:
+ *  - id, device_name, device_type, quantity, cost_price, selling_price
+ *  - unit_profit, total_selling_value, total_expected_profit
+ */
+async function getInventoryDetails() {
+  const sql = `
+    SELECT
+      p.id,
+      p.device_name,
+      p.device_type,
+      p.quantity,
+      p.cost_price,
+      p.selling_price,
+      (p.selling_price - p.cost_price)        AS unit_profit,
+      (p.selling_price * p.quantity)          AS total_selling_value,
+      ((p.selling_price - p.cost_price) * p.quantity) AS total_expected_profit
+    FROM products p
+    ORDER BY p.device_name;
+  `;
+  const { rows } = await pool.query(sql);
+  return rows;
+}
+
 
 module.exports = {
   getInventorySnapshot,
   getDailySales,
-  getGoals
+  getGoals,
+  getInventoryDetails,
 };

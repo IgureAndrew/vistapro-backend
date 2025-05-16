@@ -42,4 +42,14 @@ router.get('/goals', async (req, res, next) => {
   }
 });
 
+// GET /api/profit-report/inventory-details
+router.get('/inventory-details', async (req, res, next) => {
+  try {
+    const data = await getInventoryDetails();
+    res.json(data);
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;
