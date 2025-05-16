@@ -82,7 +82,7 @@ async function confirmOrder(req, res, next) {
 
     // 2) Pay commissions if not already done
     if (!commission_paid) {
-      // … your walletService calls here …
+      // … your walletService.creditXXXCommission calls here …
       await client.query(`
         UPDATE orders
            SET commission_paid = TRUE
@@ -99,7 +99,7 @@ async function confirmOrder(req, res, next) {
        WHERE id = $1
     `, [orderId]);
 
-    // 4) If this was a stock pickup, mark that stock sold
+    // 4) If it was a stock pickup, mark that stock sold
     if (stock_update_id) {
       await client.query(`
         UPDATE stock_updates
@@ -109,7 +109,7 @@ async function confirmOrder(req, res, next) {
       `, [stock_update_id]);
     }
 
-    // 4.5) If product_id was NULL, resolve it from stock_updates
+    // 4.5) Resolve product_id if it was NULL
     if (!product_id && stock_update_id) {
       const { rows: [su] } = await client.query(`
         SELECT product_id
@@ -120,33 +120,49 @@ async function confirmOrder(req, res, next) {
       product_id = su.product_id;
     }
 
-    // 5) Insert into sales_record with the correct product_id
-    await client.query(`
-       INSERT INTO sales_record (
-    order_item_id,
-    product_id,
-    sale_date,
-    quantity_sold,
-    initial_profit
-  ) VALUES (
-    $1,               -- order_item_id
-    $2,               -- resolved product_id
-    NOW(),            -- sale_date
-    $3::integer,      -- quantity_sold, cast to integer
-    (
-      SELECT (selling_price - cost_price) * $3::integer
-        FROM products
-       WHERE id = $2
-    )::NUMERIC(14,2)  -- ensure numeric precision
-  )
-`, [
-  orderId,
-  product_id,
-  qty
-]);
+    // 5) For each order_item, insert a sales_record row
+    const { rows: items } = await client.query(`
+      SELECT id AS order_item_id, product_id, quantity
+        FROM order_items
+       WHERE order_id = $1
+    `, [orderId]);
+
+    for (let { order_item_id, product_id: pid, quantity: q } of items) {
+      let realPid = pid;
+      // fallback if this line was a stock-pickup
+      if (!realPid && stock_update_id) {
+        const { rows: [su] } = await client.query(
+          `SELECT product_id FROM stock_updates WHERE id = $1`,
+          [stock_update_id]
+        );
+        if (!su) throw new Error("Missing product_id for stock pickup");
+        realPid = su.product_id;
+      }
+
+      await client.query(`
+        INSERT INTO sales_record (
+          order_item_id,
+          product_id,
+          sale_date,
+          quantity_sold,
+          initial_profit
+        ) VALUES (
+          $1,
+          $2,
+          NOW(),
+          $3::integer,
+          (
+            SELECT (selling_price - cost_price) * $3::integer
+              FROM products
+             WHERE id = $2
+          )::NUMERIC(14,2)
+        )
+      `, [order_item_id, realPid, q]);
+    }
+
     await client.query('COMMIT');
     res.json({
-      message: "Order confirmed, commissions paid, stock marked sold, and sale recorded."
+      message: "Order confirmed, commissions paid, stock marked sold, and sales recorded."
     });
 
   } catch (err) {
@@ -156,6 +172,7 @@ async function confirmOrder(req, res, next) {
     client.release();
   }
 }
+
 
 /**
  * PATCH /api/manage-orders/orders/:orderId/confirm-to-dealer
