@@ -51,15 +51,17 @@ async function getPendingOrders(req, res, next) {
  */
 
 
+// src/controllers/manageOrderController.js
+
 async function confirmOrder(req, res, next) {
   const { orderId } = req.params;
-  const client      = await pool.connect();
+  const client = await pool.connect();
 
   try {
     await client.query('BEGIN');
 
-    // 1) Lock & fetch the order
-    const { rows: [o] } = await client.query(`
+    // 1) Lock & fetch the order row
+    const { rows: [order] } = await client.query(`
       SELECT
         marketer_id,
         product_id,
@@ -70,15 +72,13 @@ async function confirmOrder(req, res, next) {
       WHERE id = $1
       FOR UPDATE
     `, [orderId]);
-    if (!o) throw new Error("Order not found");
+    if (!order) throw new Error("Order not found");
 
     let {
-      marketer_id,
       product_id,
       stock_update_id,
-      number_of_devices: qty,
       commission_paid
-    } = o;
+    } = order;
 
     // 2) Pay commissions if not already done
     if (!commission_paid) {
@@ -109,7 +109,7 @@ async function confirmOrder(req, res, next) {
       `, [stock_update_id]);
     }
 
-    // 4.5) Resolve product_id if it was NULL
+    // 4.5) If product_id was NULL, look it up from stock_updates
     if (!product_id && stock_update_id) {
       const { rows: [su] } = await client.query(`
         SELECT product_id
@@ -120,31 +120,32 @@ async function confirmOrder(req, res, next) {
       product_id = su.product_id;
     }
 
-    // 5) For each order_item, insert a sales_record row
+    // 5) For each order_item, insert into sales_record
     const { rows: items } = await client.query(`
-   SELECT
-     oi.id               AS order_item_id,
-     ii.product_id       AS product_id,
-   FROM order_items oi
-   JOIN inventory_items ii
-     ON oi.inventory_item_id = ii.id
-   WHERE oi.order_id = $1
- `, [ orderId ]);
+      SELECT
+        oi.id          AS order_item_id,
+        ii.product_id
+      FROM order_items oi
+      JOIN inventory_items ii
+        ON oi.inventory_item_id = ii.id
+      WHERE oi.order_id = $1
+    `, [orderId]);
 
-    for (let { order_item_id, product_id: pid } of items) {
-     // each order_item represents 1 device
-     const q = 1;
+    for (const { order_item_id, product_id: pid } of items) {
+      // determine real product_id
       let realPid = pid;
-      // fallback if this line was a stock-pickup
       if (!realPid && stock_update_id) {
         const { rows: [su] } = await client.query(
           `SELECT product_id FROM stock_updates WHERE id = $1`,
           [stock_update_id]
         );
-        if (!su) throw new Error("Missing product_id for stock pickup");
         realPid = su.product_id;
       }
 
+      // each order_item is one unit
+      const q = 1;
+
+      // insert into sales_record
       await client.query(`
         INSERT INTO sales_record (
           order_item_id,
@@ -153,12 +154,9 @@ async function confirmOrder(req, res, next) {
           quantity_sold,
           initial_profit
         ) VALUES (
-          $1,
-          $2,
-          NOW(),
-          $3::integer,
+          $1, $2, NOW(), $3,
           (
-            SELECT (selling_price - cost_price) * $3::integer
+            SELECT (selling_price - cost_price) * $3
               FROM products
              WHERE id = $2
           )::NUMERIC(14,2)
