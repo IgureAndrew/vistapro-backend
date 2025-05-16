@@ -83,6 +83,7 @@ async function getInventoryDetails() {
     SELECT
       p.id,
       p.device_name,
+      p.device_model,
       p.device_type,
       COALESCE(i.qty_available, 0) AS quantity,
       p.cost_price,
