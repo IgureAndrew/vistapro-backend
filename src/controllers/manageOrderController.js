@@ -122,29 +122,28 @@ async function confirmOrder(req, res, next) {
 
     // 5) Insert into sales_record with the correct product_id
     await client.query(`
-      INSERT INTO sales_record (
-        order_item_id,
-        product_id,
-        sale_date,
-        quantity_sold,
-        initial_profit
-      ) VALUES (
-        $1,               -- order_item_id
-        $2,               -- resolved product_id
-        NOW(),            -- sale_date
-        $3,               -- quantity_sold
-        (
-          SELECT (selling_price - cost_price) * $3
-            FROM products
-           WHERE id = $2
-        )
-      )
-    `, [
-      orderId,
-      product_id,
-      qty
-    ]);
-
+       INSERT INTO sales_record (
+    order_item_id,
+    product_id,
+    sale_date,
+    quantity_sold,
+    initial_profit
+  ) VALUES (
+    $1,               -- order_item_id
+    $2,               -- resolved product_id
+    NOW(),            -- sale_date
+    $3::integer,      -- quantity_sold, cast to integer
+    (
+      SELECT (selling_price - cost_price) * $3::integer
+        FROM products
+       WHERE id = $2
+    )::NUMERIC(14,2)  -- ensure numeric precision
+  )
+`, [
+  orderId,
+  product_id,
+  qty
+]);
     await client.query('COMMIT');
     res.json({
       message: "Order confirmed, commissions paid, stock marked sold, and sale recorded."
