@@ -125,14 +125,15 @@ async function confirmOrder(req, res, next) {
    SELECT
      oi.id               AS order_item_id,
      ii.product_id       AS product_id,
-     oi.quantity         AS quantity
    FROM order_items oi
    JOIN inventory_items ii
      ON oi.inventory_item_id = ii.id
    WHERE oi.order_id = $1
  `, [ orderId ]);
 
-    for (let { order_item_id, product_id: pid, quantity: q } of items) {
+    for (let { order_item_id, product_id: pid } of items) {
+     // each order_item represents 1 device
+     const q = 1;
       let realPid = pid;
       // fallback if this line was a stock-pickup
       if (!realPid && stock_update_id) {
