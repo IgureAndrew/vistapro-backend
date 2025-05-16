@@ -2,25 +2,27 @@
 
 const { pool } = require('../config/database');
 
-// Fetch overall inventory snapshot based on available inventory_items
+/**
+ * Get overall inventory snapshot:
+ *  - expected_profit_before: sum((selling_price - cost_price) * quantity)
+ *  - total_available_units: sum(quantity)
+ */
 async function getInventorySnapshot() {
   const sql = `
     SELECT
-      SUM((p.selling_price - p.cost_price) * avail.cnt)::NUMERIC(14,2) AS expected_profit_before,
-      SUM(avail.cnt)                                           AS total_available_units
-    FROM (
-      SELECT product_id, COUNT(*) AS cnt
-      FROM inventory_items
-      WHERE status = 'available'
-      GROUP BY product_id
-    ) AS avail
-    JOIN products p ON p.id = avail.product_id;
+      SUM((p.selling_price - p.cost_price) * p.quantity)::NUMERIC(14,2) AS expected_profit_before,
+      SUM(p.quantity)                                         AS total_available_units
+    FROM products p;
   `;
   const { rows } = await pool.query(sql);
   return rows[0];
 }
 
-// Fetch daily sales from materialized view
+/**
+ * Get daily sales from the materialized view, with optional filters:
+ *  - start/end: ISO dates
+ *  - deviceType, deviceName: optional
+ */
 async function getDailySales({ start, end, deviceType, deviceName }) {
   const conditions = [];
   const params = [start, end];
@@ -45,28 +47,27 @@ async function getDailySales({ start, end, deviceType, deviceName }) {
       ${whereClause}
     ORDER BY sale_day, device_type, device_name;
   `;
-
   const { rows } = await pool.query(sql, params);
   return rows;
 }
 
-// Fetch goal metrics based on current available inventory
+/**
+ * Get goals based on current product quantities and commission rates:
+ *  - goal_units
+ *  - goal_profit_before
+ *  - goal_expenses
+ *  - goal_profit_after
+ */
 async function getGoals() {
   const sql = `
     SELECT
-      SUM(avail.cnt)                                                           AS goal_units,
-      SUM((p.selling_price - p.cost_price) * avail.cnt)::NUMERIC(14,2)         AS goal_profit_before,
-      SUM(avail.cnt * (cr.marketer_rate + cr.admin_rate + cr.superadmin_rate)) AS goal_expenses,
-      (SUM((p.selling_price - p.cost_price) * avail.cnt)
-       - SUM(avail.cnt * (cr.marketer_rate + cr.admin_rate + cr.superadmin_rate))
-      )::NUMERIC(14,2)                                                         AS goal_profit_after
-    FROM (
-      SELECT product_id, COUNT(*) AS cnt
-      FROM inventory_items
-      WHERE status = 'available'
-      GROUP BY product_id
-    ) AS avail
-    JOIN products p ON p.id = avail.product_id
+      SUM(p.quantity)                                                       AS goal_units,
+      SUM((p.selling_price - p.cost_price) * p.quantity)::NUMERIC(14,2)      AS goal_profit_before,
+      SUM(p.quantity * (cr.marketer_rate + cr.admin_rate + cr.superadmin_rate))::NUMERIC(14,2) AS goal_expenses,
+      SUM((p.selling_price - p.cost_price) * p.quantity
+          - p.quantity * (cr.marketer_rate + cr.admin_rate + cr.superadmin_rate)
+      )::NUMERIC(14,2)                                                       AS goal_profit_after
+    FROM products p
     JOIN commission_rates cr ON p.device_type = cr.device_type;
   `;
   const { rows } = await pool.query(sql);
