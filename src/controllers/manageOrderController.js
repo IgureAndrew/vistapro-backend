@@ -58,7 +58,7 @@ async function confirmOrder(req, res, next) {
   try {
     await client.query('BEGIN');
 
-    // 1) SELECT the order FOR UPDATE…
+    // 1) SELECT the order FOR UPDATE
     const { rows: [o] } = await client.query(`
       SELECT
         marketer_id,
@@ -72,7 +72,7 @@ async function confirmOrder(req, res, next) {
     `, [orderId]);
     if (!o) throw new Error("Order not found");
 
-    const {
+    let {
       marketer_id,
       product_id,
       stock_update_id,
@@ -80,9 +80,10 @@ async function confirmOrder(req, res, next) {
       commission_paid
     } = o;
 
-    // 2) Pay commissions if needed…
+    // 2) Pay commissions if needed
     if (!commission_paid) {
-      // … your existing commission logic …
+      // … your existing commission logic here …
+
       await client.query(`
         UPDATE orders
            SET commission_paid = TRUE
@@ -109,6 +110,17 @@ async function confirmOrder(req, res, next) {
       `, [stock_update_id]);
     }
 
+    // 4.5) If product_id was NULL, look it up from stock_updates
+    if (!product_id && stock_update_id) {
+      const { rows: [su] } = await client.query(`
+        SELECT product_id
+          FROM stock_updates
+         WHERE id = $1
+      `, [stock_update_id]);
+      if (!su) throw new Error("Stock update record not found");
+      product_id = su.product_id;
+    }
+
     // 5) Record the sale in sales_record
     await client.query(`
       INSERT INTO sales_record (
@@ -119,13 +131,13 @@ async function confirmOrder(req, res, next) {
         initial_profit
       ) VALUES (
         $1,               -- order_item_id
-        $2,               -- product_id
+        $2,               -- resolved product_id
         NOW(),            -- sale_date
         $3,               -- quantity_sold
         (
           SELECT (selling_price - cost_price) * $3
-          FROM products
-          WHERE id = $2
+            FROM products
+           WHERE id = $2
         )
       )
     `, [
