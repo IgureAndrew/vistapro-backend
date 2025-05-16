@@ -84,19 +84,27 @@ async function getInventoryDetails() {
       p.id,
       p.device_name,
       p.device_type,
-      p.quantity,
+      COALESCE(i.qty_available, 0) AS quantity,
       p.cost_price,
       p.selling_price,
-      (p.selling_price - p.cost_price)        AS unit_profit,
-      (p.selling_price * p.quantity)          AS total_selling_value,
-      ((p.selling_price - p.cost_price) * p.quantity) AS total_expected_profit
+      (p.selling_price - p.cost_price)                     AS unit_profit,
+      (p.selling_price * COALESCE(i.qty_available, 0))     AS total_selling_value,
+      ((p.selling_price - p.cost_price) * COALESCE(i.qty_available, 0))
+        AS total_expected_profit
     FROM products p
+    LEFT JOIN (
+      SELECT
+        product_id,
+        COUNT(*) FILTER (WHERE status = 'available')        AS qty_available
+      FROM inventory_items
+      GROUP BY product_id
+    ) i ON p.id = i.product_id
+    WHERE COALESCE(i.qty_available, 0) > 0
     ORDER BY p.device_name;
   `;
   const { rows } = await pool.query(sql);
   return rows;
 }
-
 
 module.exports = {
   getInventorySnapshot,
