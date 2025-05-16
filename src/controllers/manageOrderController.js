@@ -58,7 +58,7 @@ async function confirmOrder(req, res, next) {
   try {
     await client.query('BEGIN');
 
-    // 1) SELECT the order FOR UPDATE
+    // 1) Lock & fetch the order
     const { rows: [o] } = await client.query(`
       SELECT
         marketer_id,
@@ -80,10 +80,9 @@ async function confirmOrder(req, res, next) {
       commission_paid
     } = o;
 
-    // 2) Pay commissions if needed
+    // 2) Pay commissions if not already done
     if (!commission_paid) {
-      // … your existing commission logic here …
-
+      // … your walletService calls here …
       await client.query(`
         UPDATE orders
            SET commission_paid = TRUE
@@ -91,7 +90,7 @@ async function confirmOrder(req, res, next) {
       `, [orderId]);
     }
 
-    // 3) Flip the order status to released_confirmed
+    // 3) Mark the order confirmed
     await client.query(`
       UPDATE orders
          SET status       = 'released_confirmed',
@@ -100,7 +99,7 @@ async function confirmOrder(req, res, next) {
        WHERE id = $1
     `, [orderId]);
 
-    // 4) If it was a stock pickup, mark that sold too
+    // 4) If this was a stock pickup, mark that stock sold
     if (stock_update_id) {
       await client.query(`
         UPDATE stock_updates
@@ -110,7 +109,7 @@ async function confirmOrder(req, res, next) {
       `, [stock_update_id]);
     }
 
-    // 4.5) If product_id was NULL, look it up from stock_updates
+    // 4.5) If product_id was NULL, resolve it from stock_updates
     if (!product_id && stock_update_id) {
       const { rows: [su] } = await client.query(`
         SELECT product_id
@@ -121,7 +120,7 @@ async function confirmOrder(req, res, next) {
       product_id = su.product_id;
     }
 
-    // 5) Record the sale in sales_record
+    // 5) Insert into sales_record with the correct product_id
     await client.query(`
       INSERT INTO sales_record (
         order_item_id,
@@ -148,7 +147,7 @@ async function confirmOrder(req, res, next) {
 
     await client.query('COMMIT');
     res.json({
-      message: "Order released_confirmed, stock marked sold, commissions paid, and sale recorded."
+      message: "Order confirmed, commissions paid, stock marked sold, and sale recorded."
     });
 
   } catch (err) {
