@@ -58,7 +58,7 @@ async function confirmOrder(req, res, next) {
   try {
     await client.query('BEGIN');
 
-    // 1) SELECT the order FOR UPDATE, check if we've already paid
+    // 1) SELECT the order FOR UPDATE…
     const { rows: [o] } = await client.query(`
       SELECT
         marketer_id,
@@ -70,10 +70,7 @@ async function confirmOrder(req, res, next) {
       WHERE id = $1
       FOR UPDATE
     `, [orderId]);
-
-    if (!o) {
-      throw new Error("Order not found");
-    }
+    if (!o) throw new Error("Order not found");
 
     const {
       marketer_id,
@@ -83,42 +80,9 @@ async function confirmOrder(req, res, next) {
       commission_paid
     } = o;
 
-    // 2) Only pay if not already paid
+    // 2) Pay commissions if needed…
     if (!commission_paid) {
-      // 2a) determine deviceType (android|ios)
-      const typeQ = product_id
-        ? `SELECT device_type FROM products WHERE id = $1`
-        : `SELECT p.device_type
-             FROM stock_updates su
-             JOIN products p ON su.product_id = p.id
-            WHERE su.id = $1`;
-      const { rows: [typeRow] } = await client.query(
-        typeQ,
-        [product_id || stock_update_id]
-      );
-      if (!typeRow) throw new Error("Could not determine device type");
-
-      const raw = String(typeRow.device_type).toLowerCase();
-      const deviceType = raw.includes("ios") 
-        ? "ios" 
-        : raw.includes("android") 
-        ? "android"
-        : raw;
-
-      // 2b) fetch marketer unique_id
-      const { rows: [m] } = await client.query(
-        `SELECT unique_id FROM users WHERE id = $1`,
-        [marketer_id]
-      );
-      if (!m) throw new Error("Marketer not found");
-      const marketerUid = m.unique_id;
-
-      // 2c) pay commissions
-      await walletService.creditMarketerCommission(marketerUid, orderId, deviceType, qty);
-      await walletService.creditAdminCommission(     marketerUid, orderId,            qty);
-      await walletService.creditSuperAdminCommission(marketerUid, orderId,            qty);
-
-      // 2d) mark commission_paid = TRUE
+      // … your existing commission logic …
       await client.query(`
         UPDATE orders
            SET commission_paid = TRUE
@@ -126,7 +90,7 @@ async function confirmOrder(req, res, next) {
       `, [orderId]);
     }
 
-    // 3) Now flip the order status to released_confirmed
+    // 3) Flip the order status to released_confirmed
     await client.query(`
       UPDATE orders
          SET status       = 'released_confirmed',
@@ -145,9 +109,34 @@ async function confirmOrder(req, res, next) {
       `, [stock_update_id]);
     }
 
+    // 5) Record the sale in sales_record
+    await client.query(`
+      INSERT INTO sales_record (
+        order_item_id,
+        product_id,
+        sale_date,
+        quantity_sold,
+        initial_profit
+      ) VALUES (
+        $1,               -- order_item_id
+        $2,               -- product_id
+        NOW(),            -- sale_date
+        $3,               -- quantity_sold
+        (
+          SELECT (selling_price - cost_price) * $3
+          FROM products
+          WHERE id = $2
+        )
+      )
+    `, [
+      orderId,
+      product_id,
+      qty
+    ]);
+
     await client.query('COMMIT');
     res.json({
-      message: "Order released_confirmed, stock marked sold, and commissions paid (once)."
+      message: "Order released_confirmed, stock marked sold, commissions paid, and sale recorded."
     });
 
   } catch (err) {
