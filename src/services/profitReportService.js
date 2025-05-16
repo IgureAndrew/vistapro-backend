@@ -107,9 +107,56 @@ async function getInventoryDetails() {
   return rows;
 }
 
+/**
+ * Get individual products sold, with:
+ *  - device_name, device_model, device_type
+ *  - qty_sold, selling_price, profit (after commissions)
+ * Optional filters: start/end dates, deviceType, deviceName
+ */
+async function getProductsSold({ start, end, deviceType, deviceName }) {
+  const conditions = [ `sr.sale_date BETWEEN $1 AND $2` ];
+  const params     = [ start, end ];
+
+  if (deviceType) {
+    params.push(deviceType);
+    conditions.push(`p.device_type = $${params.length}`);
+  }
+  if (deviceName) {
+    params.push(deviceName);
+    conditions.push(`p.device_name = $${params.length}`);
+  }
+
+  const whereClause = conditions.length
+    ? 'WHERE ' + conditions.join(' AND ')
+    : '';
+
+  const sql = `
+    SELECT
+      p.device_name,
+      p.device_model,
+      p.device_type,
+      sr.quantity_sold     AS qty,
+      p.selling_price,
+      -- profit = initial_profit - commission_expense
+      (
+        (p.selling_price - p.cost_price) * sr.quantity_sold
+        - (cr.marketer_rate + cr.admin_rate + cr.superadmin_rate) * sr.quantity_sold
+      )::NUMERIC(14,2)       AS profit
+    FROM sales_record sr
+    JOIN products p  ON p.id = sr.product_id
+    JOIN commission_rates cr ON p.device_type = cr.device_type
+    ${whereClause}
+    ORDER BY sr.sale_date DESC;
+  `;
+
+  const { rows } = await pool.query(sql, params);
+  return rows;
+}
+
 module.exports = {
   getInventorySnapshot,
   getDailySales,
   getGoals,
   getInventoryDetails,
+  getProductsSold 
 };
