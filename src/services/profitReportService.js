@@ -1,6 +1,6 @@
 // backend/src/services/profitReportService.js
-const { Pool } = require('pg');
-const pool = new Pool();  // configure via your env vars
+
+const { pool } = require('../config/database');
 
 async function getInventorySnapshot() {
   const sql = `
