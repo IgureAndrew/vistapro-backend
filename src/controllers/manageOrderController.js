@@ -133,35 +133,36 @@ async function confirmOrder(req, res, next) {
 
     for (const { order_item_id, product_id: pid } of items) {
       // Determine real product_id
-      let realPid = pid;
-      if (!realPid && stock_update_id) {
-        const { rows: [su] } = await client.query(
-          `SELECT product_id FROM stock_updates WHERE id = $1`,
-          [stock_update_id]
-        );
-        realPid = su.product_id;
-      }
+     let realPid = order.product_id;
+if (!realPid && stock_update_id) {
+  const { rows: [su] } = await client.query(
+    `SELECT product_id FROM stock_updates WHERE id = $1`,
+    [stock_update_id]
+  );
+  realPid = su.product_id;
+}
 
-      // Each order_item is one unit
-      const q = 1;
-
-      // Insert into sales_record
-      await client.query(`
-        INSERT INTO sales_record (
-          order_item_id,
-          product_id,
-          sale_date,
-          quantity_sold,
-          initial_profit
-        ) VALUES (
-          $1, $2, NOW(), $3,
-          (
-            SELECT (selling_price - cost_price) * $3
-              FROM products
-             WHERE id = $2
-          )::NUMERIC(14,2)
-        )
-      `, [order_item_id, realPid, q]);
+// insert one row for this order
+await client.query(`
+  INSERT INTO sales_record (
+    order_id,
+    product_id,
+    sale_date,
+    quantity_sold,
+    initial_profit
+  ) VALUES (
+    $1, $2, NOW(), $3,
+    (
+      SELECT (selling_price - cost_price) * $3
+        FROM products
+       WHERE id = $2
+    )::NUMERIC(14,2)
+  )
+`, [
+  orderId,
+  realPid,
+  order.number_of_devices    // your qty field
+]);
     }
 
     await client.query('COMMIT');

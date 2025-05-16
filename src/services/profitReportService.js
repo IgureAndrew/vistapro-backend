@@ -131,21 +131,26 @@ async function getProductsSold({ start, end, deviceType, deviceName }) {
 
   const sql = `
     SELECT
-      o.confirmed_at::date                              AS sale_date,
-      p.device_name,
-      p.device_model,
-      p.device_type,
-      o.number_of_devices                               AS qty,
-      p.selling_price,
-      (
-        (p.selling_price - p.cost_price)
-        - (cr.marketer_rate + cr.admin_rate + cr.superadmin_rate)
-      ) * o.number_of_devices                           AS profit
-    FROM orders o
-    JOIN products p       ON p.id = o.product_id
-    JOIN commission_rates cr ON cr.device_type = p.device_type
-    WHERE ${conditions.join(' AND ')}
-    ORDER BY o.confirmed_at DESC;
+  sr.sale_date::date   AS sale_date,
+  p.device_name,
+  p.device_model,
+  p.device_type,
+  sr.quantity_sold      AS qty,
+  p.selling_price,
+  (
+    (p.selling_price - p.cost_price) * sr.quantity_sold
+    - (cr.marketer_rate + cr.admin_rate + cr.superadmin_rate)
+      * sr.quantity_sold
+  )::NUMERIC(14,2)      AS profit
+FROM sales_record sr
+JOIN orders o   ON o.id = sr.order_id
+JOIN products p ON p.id = sr.product_id
+JOIN commission_rates cr
+               ON cr.device_type = p.device_type
+WHERE sr.sale_date::date BETWEEN $1 AND $2
+  [ AND p.device_type = $3 ]
+  [ AND p.device_name = $4 ]
+ORDER BY sr.sale_date DESC;
   `;
 
   const { rows } = await pool.query(sql, params);
