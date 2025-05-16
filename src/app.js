@@ -75,6 +75,8 @@ io.on('connection', socket => {
 // Import routes
 require('./jobs/releaseWithheld');
 require('./jobs/expireStockPickups');
+require('./jobs/refreshSummary');
+
 
 app.use('/api', (req, res, next) => {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');

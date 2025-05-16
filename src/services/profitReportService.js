@@ -1,79 +1,65 @@
-const { pool } = require('../config/database');
+// backend/src/services/profitReportService.js
+const { Pool } = require('pg');
+const pool = new Pool();  // configure via your env vars
 
-async function getProfitReport(from, to) {
-  // 1) Expected inventory profit (unchanged)
-  const invSql = `
+async function getInventorySnapshot() {
+  const sql = `
     SELECT
-      COALESCE(SUM((selling_price - cost_price) * quantity), 0) AS expected_profit
+      SUM((selling_price - cost_price) * available_quantity)::NUMERIC(14,2) AS expected_profit_before,
+      SUM(available_quantity)                              AS total_available_units
     FROM products;
   `;
-  const { rows: [inv] } = await pool.query(invSql);
-  const expectedInventoryProfit = Number(inv.expected_profit);
-
-  // 2) Sales breakdown using confirmed_at instead of sale_date
-  const salesSql = `
-    SELECT
-      DATE(o.confirmed_at)                                                         AS sale_date,
-      p.device_name,
-      p.device_type,
-      SUM(o.number_of_devices)                                                     AS total_qty,
-      SUM(p.profit * o.number_of_devices)                                          AS gross_profit,
-      SUM(
-        CASE
-          WHEN p.device_type = 'android' THEN 12500 * o.number_of_devices
-          WHEN p.device_type = 'ios'     THEN 17500 * o.number_of_devices
-          ELSE 0
-        END
-      )                                                                             AS commission_expense,
-      SUM(
-        (p.profit * o.number_of_devices)
-        - CASE
-            WHEN p.device_type = 'android' THEN 12500 * o.number_of_devices
-            WHEN p.device_type = 'ios'     THEN 17500 * o.number_of_devices
-            ELSE 0
-          END
-      )                                                                             AS net_profit
-    FROM orders o
-    JOIN products p ON o.product_id = p.id
-    WHERE o.status = 'confirmed'
-      AND o.confirmed_at BETWEEN $1 AND $2
-    GROUP BY 1,2,3
-    ORDER BY 1,2;
-  `;
-  const { rows: breakdown } = await pool.query(salesSql, [from, to]);
-
-  // 3) Totals
-  let gross = 0, expense = 0, net = 0;
-  breakdown.forEach(r => {
-    gross   += Number(r.gross_profit);
-    expense += Number(r.commission_expense);
-    net     += Number(r.net_profit);
-  });
-
-  // 4) Goal progress
-  const goalProgress = expectedInventoryProfit
-    ? Math.min(100, Math.round((gross / expectedInventoryProfit) * 100))
-    : 0;
-
-  // 5) Return payload
-  return {
-    expectedInventoryProfit,
-    goalProgress,
-    totals: {
-      gross_profit:       gross,
-      commission_expense: expense,
-      net_profit:         net
-    },
-    breakdown: breakdown.map(r => ({
-      sale_date:          r.sale_date.toISOString().slice(0,10),
-      device_name:        r.device_name,
-      device_type:        r.device_type,
-      total_qty:          Number(r.total_qty),
-      gross_profit:       Number(r.gross_profit),
-      commission_expense: Number(r.commission_expense),
-      net_profit:         Number(r.net_profit),
-    }))
-  };
+  const { rows } = await pool.query(sql);
+  return rows[0];
 }
 
-module.exports = { getProfitReport };
+async function getDailySales({ start, end, deviceType, deviceName }) {
+  const conditions = [];
+  const params = [start, end];
+
+  if (deviceType) {
+    params.push(deviceType);
+    conditions.push(`device_type = $${params.length}`);
+  }
+  if (deviceName) {
+    params.push(deviceName);
+    conditions.push(`device_name = $${params.length}`);
+  }
+
+  const whereClause = conditions.length
+    ? 'AND ' + conditions.join(' AND ')
+    : '';
+
+  const sql = `
+    SELECT *
+    FROM daily_sales_summary
+    WHERE sale_day BETWEEN $1 AND $2
+      ${whereClause}
+    ORDER BY sale_day, device_type, device_name;
+  `;
+
+  const { rows } = await pool.query(sql, params);
+  return rows;
+}
+
+async function getGoals() {
+  const sql = `
+    SELECT
+      SUM(available_quantity)                                                   AS goal_units,
+      SUM((selling_price - cost_price) * available_quantity)::NUMERIC(14,2)      AS goal_profit_before,
+      SUM(available_quantity * (marketer_rate + admin_rate + superadmin_rate)) AS goal_expenses,
+      (SUM((selling_price - cost_price) * available_quantity)
+       - SUM(available_quantity * (marketer_rate + admin_rate + superadmin_rate))
+      )::NUMERIC(14,2)                                                          AS goal_profit_after
+    FROM products p
+    JOIN commission_rates cr ON p.device_type = cr.device_type;
+  `;
+  const { rows } = await pool.query(sql);
+  return rows[0];
+}
+
+module.exports = {
+  getInventorySnapshot,
+  getDailySales,
+  getGoals
+};

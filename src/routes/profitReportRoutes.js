@@ -1,10 +1,43 @@
+// backend/src/routes/profitReportRoutes.js
 const express = require('express');
-const { verifyToken } = require('../middlewares/authMiddleware');
-const { profitReport } = require('../controllers/profitReportController');
+const {
+  getInventorySnapshot,
+  getDailySales,
+  getGoals
+} = require('../services/profitReportService');
 
 const router = express.Router();
 
-// GET /api/profit-report?from=YYYY-MM-DD&to=YYYY-MM-DD
-router.get('/', verifyToken, profitReport);
+// GET /api/profit-report/inventory-snapshot
+router.get('/inventory-snapshot', async (req, res, next) => {
+  try {
+    const data = await getInventorySnapshot();
+    res.json(data);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/profit-report/daily-sales
+// Query params: start=YYYY-MM-DD, end=YYYY-MM-DD, deviceType, deviceName
+router.get('/daily-sales', async (req, res, next) => {
+  try {
+    const { start, end, deviceType, deviceName } = req.query;
+    const data = await getDailySales({ start, end, deviceType, deviceName });
+    res.json(data);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/profit-report/goals
+router.get('/goals', async (req, res, next) => {
+  try {
+    const data = await getGoals();
+    res.json(data);
+  } catch (err) {
+    next(err);
+  }
+});
 
 module.exports = router;
