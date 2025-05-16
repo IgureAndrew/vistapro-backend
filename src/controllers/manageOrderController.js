@@ -55,12 +55,12 @@ async function getPendingOrders(req, res, next) {
 
 async function confirmOrder(req, res, next) {
   const { orderId } = req.params;
-  const client = await pool.connect();
+  const client      = await pool.connect();
 
   try {
     await client.query('BEGIN');
 
-    // 1) Lock & fetch the order row
+    // 1) Lock & fetch the order
     const { rows: [order] } = await client.query(`
       SELECT
         marketer_id,
@@ -109,7 +109,7 @@ async function confirmOrder(req, res, next) {
       `, [stock_update_id]);
     }
 
-    // 4.5) If product_id was NULL, look it up from stock_updates
+    // 4.5) If product_id was NULL, resolve it from stock_updates
     if (!product_id && stock_update_id) {
       const { rows: [su] } = await client.query(`
         SELECT product_id
@@ -123,8 +123,8 @@ async function confirmOrder(req, res, next) {
     // 5) For each order_item, insert into sales_record
     const { rows: items } = await client.query(`
       SELECT
-        oi.id          AS order_item_id,
-        ii.product_id
+        oi.id               AS order_item_id,
+        ii.product_id       AS product_id
       FROM order_items oi
       JOIN inventory_items ii
         ON oi.inventory_item_id = ii.id
@@ -132,7 +132,7 @@ async function confirmOrder(req, res, next) {
     `, [orderId]);
 
     for (const { order_item_id, product_id: pid } of items) {
-      // determine real product_id
+      // Determine real product_id
       let realPid = pid;
       if (!realPid && stock_update_id) {
         const { rows: [su] } = await client.query(
@@ -142,10 +142,10 @@ async function confirmOrder(req, res, next) {
         realPid = su.product_id;
       }
 
-      // each order_item is one unit
+      // Each order_item is one unit
       const q = 1;
 
-      // insert into sales_record
+      // Insert into sales_record
       await client.query(`
         INSERT INTO sales_record (
           order_item_id,
@@ -168,7 +168,6 @@ async function confirmOrder(req, res, next) {
     res.json({
       message: "Order confirmed, commissions paid, stock marked sold, and sales recorded."
     });
-
   } catch (err) {
     await client.query('ROLLBACK');
     next(err);
