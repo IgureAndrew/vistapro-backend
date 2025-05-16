@@ -237,39 +237,32 @@ async function deleteProduct(req, res, next) {
  * getAllProducts
  * For SuperAdmin: full product list with profit & inventory details.
  */
-async function getAllProducts(req, res, next) {
-  try {
-    const { rows } = await pool.query(`
+async function getInventoryDetails() {
+  const sql = `
+    SELECT
+      p.id,
+      p.device_name,
+      p.device_type,
+      COALESCE(i.qty_available, 0) AS quantity,
+      p.cost_price,
+      p.selling_price,
+      (p.selling_price - p.cost_price)                     AS unit_profit,
+      (p.selling_price * COALESCE(i.qty_available, 0))     AS total_selling_value,
+      ((p.selling_price - p.cost_price) * COALESCE(i.qty_available, 0))
+        AS total_expected_profit
+    FROM products p
+    LEFT JOIN (
       SELECT
-        p.id,
-        u.business_name       AS dealer_business_name,
-        u.location            AS dealer_location,
-        p.device_type,
-        p.device_name,
-        p.device_model,
-        p.cost_price,
-        p.selling_price,
-        (p.selling_price - p.cost_price) AS profit,
-        COALESCE(i.qty_available, 0)      AS qty_available,
-        COALESCE(i.available_imeis, ARRAY[]::text[]) AS available_imeis
-      FROM products p
-      JOIN users u
-        ON p.dealer_id = u.id
-      LEFT JOIN (
-        SELECT
-          product_id,
-          COUNT(*) FILTER (WHERE status = 'available')      AS qty_available,
-          ARRAY_AGG(imei) FILTER (WHERE status = 'available') AS available_imeis
-        FROM inventory_items
-        GROUP BY product_id
-      ) i
-        ON p.id = i.product_id
-      ORDER BY p.device_name, p.device_model
-    `);
-    res.json({ products: rows });
-  } catch (err) {
-    next(err);
-  }
+        product_id,
+        COUNT(*) FILTER (WHERE status = 'available')        AS qty_available
+      FROM inventory_items
+      GROUP BY product_id
+    ) i ON p.id = i.product_id
+    WHERE COALESCE(i.qty_available, 0) > 0
+    ORDER BY p.device_name;
+  `;
+  const { rows } = await pool.query(sql);
+  return rows;
 }
 
 module.exports = {
