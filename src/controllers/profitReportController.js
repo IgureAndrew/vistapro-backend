@@ -5,7 +5,7 @@ import {
   getDailySales,
   getGoals
 } from './profitReportService.js';
-
+const { pool } = require('../config/database');
 const router = express.Router();
 
 // GET /reports/inventory-snapshot

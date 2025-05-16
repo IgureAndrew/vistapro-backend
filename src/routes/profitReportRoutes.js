@@ -5,6 +5,8 @@ const {
   getDailySales,
   getGoals
 } = require('../services/profitReportService');
+const { verifyToken }   = require('../middlewares/authMiddleware');
+const { verifyRole }    = require('../middlewares/roleMiddleware');
 
 const router = express.Router();
 
