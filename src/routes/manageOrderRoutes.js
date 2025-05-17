@@ -10,6 +10,7 @@ const {
   getOrderHistory,
   updateOrder,
   deleteOrder,
+  getConfirmedOrderDetail,
 } = require("../controllers/manageOrderController");
 
 // ──────────────────────────────────────────────────────────
@@ -78,5 +79,13 @@ router.delete(
   verifyRole(["MasterAdmin"]),
   deleteOrder
 );
+
+router.get(
+  '/orders/:orderId/detail',
+  verifyToken,
+  verifyRole('MasterAdmin'),
+  getConfirmedOrderDetail
+);
+
 
 module.exports = router;

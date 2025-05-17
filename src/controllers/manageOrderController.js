@@ -312,6 +312,45 @@ async function deleteOrder(req, res, next) {
   }
 }
 
+async function getConfirmedOrderDetail(req, res, next) {
+  const { orderId } = req.params;
+  try {
+    const { rows } = await pool.query(
+      `
+      SELECT
+        p.device_name,
+        p.device_model,
+        p.device_type,
+        o.sold_amount     AS selling_price,
+        sr.quantity_sold  AS qty,
+        -- gross profit before commissions
+        (p.selling_price - p.cost_price) * sr.quantity_sold AS total_profit_before,
+        -- total expense = qty * (marketer + admin + superadmin)
+        sr.quantity_sold *
+          (cr.marketer_rate + cr.admin_rate + cr.superadmin_rate)
+        AS total_expenses,
+        -- net profit
+        ((p.selling_price - p.cost_price) * sr.quantity_sold
+         - sr.quantity_sold * (cr.marketer_rate + cr.admin_rate + cr.superadmin_rate)
+        ) AS total_profit_after
+      FROM sales_record sr
+      JOIN orders o ON o.id = sr.order_id
+      JOIN products p ON p.id = sr.product_id
+      JOIN commission_rates cr
+        ON cr.device_type = p.device_type
+      WHERE sr.order_id = $1
+      `,
+      [orderId]
+    );
+    if (!rows.length) {
+      return res.status(404).json({ message: "No confirmed sale found for that order." });
+    }
+    res.json(rows);
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   getPendingOrders,
   confirmOrder,
@@ -319,4 +358,5 @@ module.exports = {
   getOrderHistory,
   updateOrder,
   deleteOrder,
+  getConfirmedOrderDetail,
 };
