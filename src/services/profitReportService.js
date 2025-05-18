@@ -113,7 +113,10 @@ async function getInventoryDetails() {
  *  - device_name, device_model, device_type
  *  - qty, selling_price, profit
  */
+// backend/src/services/profitReportService.js
+
 async function getProductsSold({ start, end, deviceType, deviceName }) {
+  // 1) base conditions + params
   const conditions = [
     `o.status = 'released_confirmed'`,
     `o.confirmed_at::date BETWEEN $1 AND $2`
@@ -122,35 +125,37 @@ async function getProductsSold({ start, end, deviceType, deviceName }) {
 
   if (deviceType) {
     params.push(deviceType);
-    conditions.push(`p.device_type = $${params.length}`);
+    conditions.push(`LOWER(p.device_type) = LOWER($${params.length})`);
   }
   if (deviceName) {
     params.push(deviceName);
-    conditions.push(`p.device_name = $${params.length}`);
+    conditions.push(`LOWER(p.device_name) = LOWER($${params.length})`);
   }
 
+  // 2) stitch them into a WHERE clause
+  const whereClause = `WHERE ${conditions.join(' AND ')}`;
+
+  // 3) final SQL
   const sql = `
     SELECT
-  sr.sale_date::date   AS sale_date,
-  p.device_name,
-  p.device_model,
-  p.device_type,
-  sr.quantity_sold      AS qty,
-  p.selling_price,
-  (
-    (p.selling_price - p.cost_price) * sr.quantity_sold
-    - (cr.marketer_rate + cr.admin_rate + cr.superadmin_rate)
-      * sr.quantity_sold
-  )::NUMERIC(14,2)      AS profit
-FROM sales_record sr
-JOIN orders o   ON o.id = sr.order_id
-JOIN products p ON p.id = sr.product_id
-JOIN commission_rates cr
-               ON cr.device_type = p.device_type
-WHERE sr.sale_date::date BETWEEN $1 AND $2
-  [ AND p.device_type = $3 ]
-  [ AND p.device_name = $4 ]
-ORDER BY sr.sale_date DESC;
+      o.confirmed_at::date                         AS sale_date,
+      p.device_name,
+      p.device_model,
+      p.device_type,
+      sr.quantity_sold                             AS qty,
+      p.selling_price,
+      (
+        (p.selling_price - p.cost_price) * sr.quantity_sold
+        - (cr.marketer_rate + cr.admin_rate + cr.superadmin_rate)
+          * sr.quantity_sold
+      )::NUMERIC(14,2)                             AS profit
+    FROM orders o
+    JOIN sales_record sr ON sr.order_id = o.id
+    JOIN products p     ON p.id         = sr.product_id
+    JOIN commission_rates cr
+      ON LOWER(cr.device_type) = LOWER(p.device_type)
+    ${whereClause}
+    ORDER BY o.confirmed_at DESC;
   `;
 
   const { rows } = await pool.query(sql, params);
