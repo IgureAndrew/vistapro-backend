@@ -515,10 +515,8 @@ async function getMarketerStockUpdates(req, res, next) {
 }
 /**
  * GET /api/marketer/stock-pickup
- * (Master/Admin) list all pickups.
+ * (Master/Admin) list all pickups with human-friendly status
  */
-// src/controllers/stockupdateController.js
-
 async function getStockUpdates(req, res, next) {
   try {
     const { rows } = await pool.query(`
@@ -526,28 +524,31 @@ async function getStockUpdates(req, res, next) {
         su.id,
         p.device_name,
         p.device_model,
-        d.business_name   AS dealer_name,
-        d.location        AS dealer_location,
+        d.business_name       AS dealer_name,
+        d.location            AS dealer_location,
         su.quantity,
         su.pickup_date,
         su.deadline,
-        -- proper comma above, now the CASE expression:
+
+        -- map every status to a friendly label
         CASE
-          WHEN su.status = 'returned' THEN 'returned'
+          WHEN su.status = 'return_pending'   THEN 'Pending Return'
+          WHEN su.status = 'returned'         THEN 'Returned'
+          WHEN su.status = 'transfer_pending' THEN 'Pending Transfer'
+          WHEN su.status = 'transfer_approved' THEN 'Transfer Approved'
+          WHEN su.status = 'transfer_rejected' THEN 'Transfer Rejected'
           WHEN EXISTS (
             SELECT 1
               FROM orders o
              WHERE o.stock_update_id = su.id
                AND o.status IN ('confirmed','released_confirmed')
-          ) THEN 'sold'
-          WHEN su.deadline < NOW() THEN 'expired'
-          ELSE 'pending'
+          ) THEN 'Sold'
+          WHEN su.deadline < NOW() THEN 'Expired'
+          ELSE 'Pending'
         END AS status,
-        su.transfer_requested_at,
-        su.transfer_approved_at,
-        su.returned_at,
-        m.first_name || ' ' || m.last_name AS marketer_name,
-        m.unique_id                       AS marketer_unique_id,
+
+        m.first_name || ' ' || m.last_name   AS marketer_name,
+        m.unique_id                         AS marketer_unique_id,
         tgt.first_name || ' ' || tgt.last_name AS transfer_to_name,
         tgt.unique_id                           AS transfer_to_uid
       FROM stock_updates su
@@ -563,7 +564,6 @@ async function getStockUpdates(req, res, next) {
     next(err);
   }
 }
-
 
 /**
  * PATCH /api/marketer/stock-pickup/:id/return
@@ -778,6 +778,10 @@ async function listSuperAdminStockUpdates(req, res, next) {
 }
 
 
+/**
+ * GET /api/marketer/stock-pickup/:admin
+ * (Admin view) list all pickups under this admin
+ */
 async function getStockUpdatesForAdmin(req, res, next) {
   try {
     const adminId = req.user.id;
@@ -790,18 +794,23 @@ async function getStockUpdatesForAdmin(req, res, next) {
         su.quantity,
         su.pickup_date,
         su.deadline,
-        -- first check the real status column:
+
         CASE
-          WHEN su.status = 'returned' THEN 'returned'
+          WHEN su.status = 'return_pending'   THEN 'Pending Return'
+          WHEN su.status = 'returned'         THEN 'Returned'
+          WHEN su.status = 'transfer_pending' THEN 'Pending Transfer'
+          WHEN su.status = 'transfer_approved' THEN 'Transfer Approved'
+          WHEN su.status = 'transfer_rejected' THEN 'Transfer Rejected'
           WHEN EXISTS (
             SELECT 1
               FROM orders o
              WHERE o.stock_update_id = su.id
                AND o.status IN ('confirmed','released_confirmed')
-          ) THEN 'sold'
-          WHEN su.deadline < NOW() THEN 'expired'
-          ELSE 'pending'
+          ) THEN 'Sold'
+          WHEN su.deadline < NOW() THEN 'Expired'
+          ELSE 'Pending'
         END AS status
+
       FROM stock_updates su
       JOIN users m    ON su.marketer_id = m.id
       JOIN products p ON su.product_id  = p.id
@@ -814,8 +823,6 @@ async function getStockUpdatesForAdmin(req, res, next) {
     next(err);
   }
 }
-
-
 
 // PATCH /api/marketer/stock-pickup/:id/return-request
 async function requestReturn(req, res, next) {
