@@ -3,10 +3,7 @@
 const { pool } = require('../config/database');
 
 // ─── Config ─────────────────────────────────────────────────────
-// Marketer commission: ₦10 000 on Android, ₦15 000 on iOS
-const COMMISSION_RATES = { android: 10000, ios: 15000 };
-const HIERARCHY_COMM   = { admin: 1500, superAdmin: 1000 };
-const WITHDRAWAL_FEE   = 100;
+const WITHDRAWAL_FEE = 100;
 
 // ─── Helpers ────────────────────────────────────────────────────
 async function ensureWallet(userId) {
@@ -92,56 +89,71 @@ async function creditFull(userId, orderId, amount, typeTag) {
 }
 
 // ─── Commission Credits ─────────────────────────────────────────
+
+/**
+ * Credits marketer commission from the commission_rates table.
+ */
 async function creditMarketerCommission(marketerUid, orderId, deviceType, qty) {
-  const typeStr = deviceType != null ? String(deviceType) : "";
-  const lower   = typeStr.toLowerCase();
-
-  let key;
-  if (lower.includes("ios")) {
-    key = "ios";
-  } else if (lower.includes("android")) {
-    key = "android";
-  } else {
-    key = "";
-  }
-
-  const rate  = COMMISSION_RATES[key] || 0;
+  // fetch dynamic rate
+  const { rows: [cr] } = await pool.query(
+    `SELECT marketer_rate
+       FROM commission_rates
+      WHERE device_type = LOWER($1)`,
+    [deviceType]
+  );
+  const rate  = cr?.marketer_rate || 0;
   const total = rate * qty;
-
-  return creditSplit(marketerUid, orderId, total, "commission");
+  return creditSplit(marketerUid, orderId, total, 'marketer_commission');
 }
 
+/**
+ * Credits admin commission based on commission_rates.admin_rate.
+ */
 async function creditAdminCommission(marketerUid, orderId, qty) {
-  const { rows } = await pool.query(
-    `SELECT u2.unique_id AS adminUid
+  // find the admin's unique_id and rate
+  const { rows: [userRow] } = await pool.query(
+    `SELECT u2.unique_id AS adminUid, cr.admin_rate
        FROM users m
-       JOIN users u2 ON m.admin_id = u2.id
-      WHERE m.unique_id = $1`,
-    [marketerUid]
+       JOIN users u2       ON m.admin_id = u2.id
+       JOIN orders o       ON o.id = $1
+       JOIN products p     ON p.id = o.product_id
+       JOIN commission_rates cr
+         ON cr.device_type = LOWER(p.device_type)
+      WHERE m.unique_id = $2`,
+    [orderId, marketerUid]
   );
-  const adminUid = rows[0]?.adminuid;
+  const adminUid = userRow?.adminuid;
+  const rate     = userRow?.admin_rate || 0;
   if (!adminUid) return { totalComm: 0 };
 
-  const total = HIERARCHY_COMM.admin * qty;
+  const total = rate * qty;
   return creditFull(adminUid, orderId, total, 'admin_commission');
 }
 
+/**
+ * Credits superadmin commission based on commission_rates.superadmin_rate.
+ */
 async function creditSuperAdminCommission(marketerUid, orderId, qty) {
-  const { rows } = await pool.query(
-    `SELECT su.unique_id AS superUid
+  // find superadmin's unique_id and rate
+  const { rows: [row] } = await pool.query(
+    `SELECT su.unique_id AS superUid, cr.superadmin_rate
        FROM users m
-       JOIN users a  ON m.admin_id        = a.id
-       JOIN users su ON a.super_admin_id = su.id
-      WHERE m.unique_id = $1`,
-    [marketerUid]
+       JOIN users a       ON m.admin_id        = a.id
+       JOIN users su      ON a.super_admin_id = su.id
+       JOIN orders o      ON o.id = $1
+       JOIN products p    ON p.id = o.product_id
+       JOIN commission_rates cr
+         ON cr.device_type = LOWER(p.device_type)
+      WHERE m.unique_id = $2`,
+    [orderId, marketerUid]
   );
-  const superUid = rows[0]?.superuid;
+  const superUid = row?.superuid;
+  const rate     = row?.superadmin_rate || 0;
   if (!superUid) return { totalComm: 0 };
 
-  const total = HIERARCHY_COMM.superAdmin * qty;
-  return creditFull(superUid, orderId, total, 'super_commission');
+  const total = rate * qty;
+  return creditFull(superUid, orderId, total, 'superadmin_commission');
 }
-
 // ─── Queries ────────────────────────────────────────────────────
 async function getSubordinateWallets(superAdminUid) {
   // 1) find our internal SuperAdmin ID

@@ -51,18 +51,17 @@ async function getPendingOrders(req, res, next) {
  */
 
 
-// src/controllers/manageOrderController.js
-
 async function confirmOrder(req, res, next) {
   const { orderId } = req.params;
-  const client = await pool.connect();
+  const client      = await pool.connect();
 
   try {
-    await client.query('BEGIN');
+    await client.query("BEGIN");
 
-    // 1) Fetch & lock the order
+    // 1) Fetch & lock the order (including marketer_id)
     const { rows: [o] } = await client.query(`
       SELECT
+        marketer_id,
         product_id,
         stock_update_id,
         number_of_devices AS qty,
@@ -73,38 +72,9 @@ async function confirmOrder(req, res, next) {
     `, [orderId]);
     if (!o) throw new Error("Order not found");
 
-    let { product_id, stock_update_id, qty, commission_paid } = o;
+    let { marketer_id, product_id, stock_update_id, qty, commission_paid } = o;
 
-    // 2) Pay commissions if needed
-    if (!commission_paid) {
-      // … your walletService.creditXXXCommission calls here …
-      await client.query(`
-        UPDATE orders
-          SET commission_paid = TRUE
-        WHERE id = $1
-      `, [orderId]);
-    }
-
-    // 3) Mark the order confirmed
-    await client.query(`
-      UPDATE orders
-        SET status       = 'released_confirmed',
-            confirmed_at = NOW(),
-            updated_at   = NOW()
-      WHERE id = $1
-    `, [orderId]);
-
-    // 4) Mark stock sold if applicable
-    if (stock_update_id) {
-      await client.query(`
-        UPDATE stock_updates
-          SET status     = 'sold',
-              updated_at = NOW()
-        WHERE id = $1
-      `, [stock_update_id]);
-    }
-
-    // 5) If product_id was NULL on the order, pull it from stock_updates
+    // 2) Resolve product_id if this was a stock pickup
     if (!product_id && stock_update_id) {
       const { rows: [su] } = await client.query(`
         SELECT product_id
@@ -115,7 +85,55 @@ async function confirmOrder(req, res, next) {
       product_id = su.product_id;
     }
 
-    // 6) Record the sale in sales_record (one row per order)
+    // 3) Look up device_type for commission rates
+    const { rows: [prd] } = await client.query(`
+      SELECT device_type
+        FROM products
+       WHERE id = $1
+    `, [product_id]);
+    const deviceType = prd.device_type;
+
+    // 4) Look up marketer's unique_id
+    const { rows: [mu] } = await client.query(`
+      SELECT unique_id
+        FROM users
+       WHERE id = $1
+    `, [marketer_id]);
+    const marketerUid = mu.unique_id;
+
+    // 5) Pay commissions if not already done
+    if (!commission_paid) {
+      await creditMarketerCommission(marketerUid, orderId, deviceType, qty);
+      await creditAdminCommission(     marketerUid, orderId,          qty);
+      await creditSuperAdminCommission(marketerUid, orderId,          qty);
+
+      await client.query(`
+        UPDATE orders
+           SET commission_paid = TRUE
+         WHERE id = $1
+      `, [orderId]);
+    }
+
+    // 6) Mark the order confirmed
+    await client.query(`
+      UPDATE orders
+         SET status       = 'released_confirmed',
+             confirmed_at = NOW(),
+             updated_at   = NOW()
+       WHERE id = $1
+    `, [orderId]);
+
+    // 7) If it was a stock pickup, mark that stock sold
+    if (stock_update_id) {
+      await client.query(`
+        UPDATE stock_updates
+           SET status     = 'sold',
+               updated_at = NOW()
+         WHERE id = $1
+      `, [stock_update_id]);
+    }
+
+    // 8) Record the sale in sales_record
     await client.query(`
       INSERT INTO sales_record (
         order_id,
@@ -140,17 +158,18 @@ async function confirmOrder(req, res, next) {
       qty
     ]);
 
-    await client.query('COMMIT');
+    await client.query("COMMIT");
     res.json({
-      message: "Order confirmed, commissions paid, stock marked sold, and sale recorded."
+      message: "Order released_confirmed, commissions paid, stock marked sold, and sale recorded."
     });
   } catch (err) {
-    await client.query('ROLLBACK');
+    await client.query("ROLLBACK");
     next(err);
   } finally {
     client.release();
   }
 }
+
 
 
 /**
