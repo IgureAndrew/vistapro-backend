@@ -70,4 +70,15 @@ router.get('/products-sold', async (req, res, next) => {
   }
 });
 
+// GET /api/profit-report/aggregated
+router.get('/aggregated', async (req, res, next) => {
+  try {
+    const { start, end, deviceType, deviceName } = req.query;
+    const data = await getDailyAggregated({ start, end, deviceType, deviceName });
+    res.json(data);
+  } catch (err) {
+    next(err);
+  }
+});
+
 module.exports = router;
