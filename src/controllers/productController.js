@@ -1,67 +1,94 @@
 // src/controllers/productController.js
 const { pool } = require('../config/database');
 
+
 /**
  * addProduct
- * - Inserts the product model.
- * - Then inserts one inventory_items row per IMEI.
+ * - Inserts the product.
+ * - Bulk-inserts inventory_items via unnest and handles duplicates gracefully.
  * Expects `imeis: string[]` in the body.
  */
 async function addProduct(req, res, next) {
+  const {
+    dealer_id,
+    device_type,
+    device_name,
+    device_model,
+    cost_price,
+    selling_price,
+    imeis,
+  } = req.body;
+
+  // 1) Validate required fields
+  if (!dealer_id || !device_type || !device_name || !device_model ||
+      cost_price == null || selling_price == null ||
+      !Array.isArray(imeis) || imeis.length === 0) {
+    return res.status(400).json({ message: "Missing required fields or imeis array." });
+  }
+
+  // 2) Validate IMEI format
+  if (!imeis.every(i => /^\d{15}$/.test(i))) {
+    return res.status(400).json({ message: "All IMEIs must be 15-digit strings." });
+  }
+
   const client = await pool.connect();
   try {
-    const {
-      dealer_id,
-      device_type,
-      device_name,
-      device_model,
-      cost_price,
-      selling_price,
-      imeis,
-    } = req.body;
-
-    // 1) validate…
-    if (!dealer_id || !device_type || !device_name || !device_model ||
-        cost_price == null || selling_price == null ||
-        !Array.isArray(imeis) || imeis.length === 0) {
-      return res.status(400).json({ message: "Missing required fields or imeis array." });
-    }
-    if (!imeis.every(i => /^\d{15}$/.test(i))) {
-      return res.status(400).json({ message: "All IMEIs must be 15-digit strings." });
-    }
-
+    // 3) Start transaction
     await client.query('BEGIN');
 
-    // 2) create the product
+    // 4) Optionally verify dealer exists
+    const dealerCheck = await client.query(
+      'SELECT 1 FROM users WHERE id = $1',
+      [dealer_id]
+    );
+    if (!dealerCheck.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: "Dealer not found." });
+    }
+
+    // 5) Insert product
+    const insertProductSql = `
+      INSERT INTO products (
+        dealer_id, device_type, device_name, device_model,
+        cost_price, selling_price, created_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,NOW())
+      RETURNING *
+    `;
     const { rows: [product] } = await client.query(
-      `INSERT INTO products (
-         dealer_id, device_type, device_name, device_model,
-         cost_price, selling_price, created_at
-       ) VALUES ($1,$2,$3,$4,$5,$6,NOW())
-       RETURNING *`,
+      insertProductSql,
       [dealer_id, device_type, device_name, device_model, cost_price, selling_price]
     );
 
-    // 3) bulk-insert IMEIs
-    const placeholders = imeis
-      .map((_, idx) => `($1, $${idx+2}, 'available', NOW())`)
-      .join(',');
-    await client.query(
-      `INSERT INTO inventory_items
-         (product_id, imei, status, created_at)
-       VALUES ${placeholders}`,
-      [product.id, ...imeis]
-    );
+    // 6) Bulk-insert IMEIs via unnest, skip duplicates
+    const insertImeisSql = `
+      INSERT INTO inventory_items (product_id, imei, status, created_at)
+      SELECT $1, unnest($2::text[]), 'available', NOW()
+      ON CONFLICT (imei) DO NOTHING
+    `;
+    await client.query(insertImeisSql, [product.id, imeis]);
 
+    // 7) Commit transaction
     await client.query('COMMIT');
-    res.status(201).json({ message: "Product + units added.", product });
+    res.status(201).json({ message: "Product and IMEIs added successfully.", product });
   } catch (err) {
+    // Rollback on error
     await client.query('ROLLBACK');
+
+    // Friendly error for duplicate IMEIs
+    if (err.code === '23505') {
+      return res.status(409).json({ message: "One or more IMEIs already exist." });
+    }
+    // Foreign key violation (e.g. dealer not found)
+    if (err.code === '23503') {
+      return res.status(400).json({ message: "Invalid foreign key reference." });
+    }
+
     next(err);
   } finally {
     client.release();
   }
 }
+
 
 /**
  * getProducts
