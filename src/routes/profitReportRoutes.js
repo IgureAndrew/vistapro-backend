@@ -6,14 +6,15 @@ const {
   getDailySales,
   getGoals,
   getInventoryDetails,
-  getProductsSold
+  getProductsSold,
+  getAggregatedSales      // ← make sure your service exports this
 } = require('../services/profitReportService');
 const { verifyToken } = require('../middlewares/authMiddleware');
- const { verifyRole } = require('../middlewares/roleMiddleware'); // if you want role‐based protection
+const { verifyRole }  = require('../middlewares/roleMiddleware'); // optional
 
 const router = express.Router();
 
-// Protect all profit‐report routes
+// apply auth to *all* profit‐report endpoints
 router.use(verifyToken);
 
 // GET /api/profit-report/inventory-snapshot
@@ -27,7 +28,6 @@ router.get('/inventory-snapshot', async (req, res, next) => {
 });
 
 // GET /api/profit-report/daily-sales
-// Query params: start=YYYY-MM-DD, end=YYYY-MM-DD, deviceType, deviceName
 router.get('/daily-sales', async (req, res, next) => {
   try {
     const { start, end, deviceType, deviceName } = req.query;
@@ -59,7 +59,6 @@ router.get('/inventory-details', async (req, res, next) => {
 });
 
 // GET /api/profit-report/products-sold
-// Query params: start=YYYY-MM-DD, end=YYYY-MM-DD, deviceType, deviceName
 router.get('/products-sold', async (req, res, next) => {
   try {
     const { start, end, deviceType, deviceName } = req.query;
@@ -71,10 +70,11 @@ router.get('/products-sold', async (req, res, next) => {
 });
 
 // GET /api/profit-report/aggregated
+// returns per‐day totals: units, revenue, commissions by tier, expenses, net profit
 router.get('/aggregated', async (req, res, next) => {
   try {
     const { start, end, deviceType, deviceName } = req.query;
-    const data = await getDailyAggregated({ start, end, deviceType, deviceName });
+    const data = await getAggregatedSales({ start, end, deviceType, deviceName });
     res.json(data);
   } catch (err) {
     next(err);

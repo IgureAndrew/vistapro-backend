@@ -5,7 +5,8 @@ import {
   getDailySales,
   getGoals,
   getInventoryDetails,
-  getProductsSold
+  getProductsSold,
+   getAggregatedSales
 } from '../services/profitReportService.js';
 
 const router = express.Router();
@@ -62,4 +63,15 @@ router.get('/products-sold', async (req, res, next) => {
   }
 });
 
+// NEW: GET /api/profit-report/aggregated
+// Query params: start=YYYY-MM-DD, end=YYYY-MM-DD, deviceType, deviceName
+router.get('/aggregated', async (req, res, next) => {
+  const { start, end, deviceType, deviceName } = req.query;
+  try {
+    const data = await getAggregatedSales({ start, end, deviceType, deviceName });
+    res.json(data);
+  } catch (err) {
+    next(err);
+  }
+});
 export default router;
