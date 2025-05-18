@@ -163,47 +163,65 @@ async function getProductsSold({ start, end, deviceType, deviceName }) {
 }
 
 
-// backend/src/services/profitReportService.js
+// at the bottom of profitReportService.js
 
-async function getDailyAggregated({ start, end, deviceType, deviceName }) {
-  const conditions = [ `sr.sale_date::date BETWEEN $1 AND $2` ];
-  const params     = [ start, end ];
+/**
+ * Get a per-day aggregation of sales:
+ *  • sale_day
+ *  • device_type, device_model, device_name
+ *  • total_units_sold
+ *  • total_revenue (selling_price × qty)
+ *  • total_initial_profit ((price–cost) × qty)
+ *  • total_marketer_commission, total_admin_commission, total_superadmin_commission
+ *  • total_commission_expense (sum of 3 above)
+ *  • total_final_profit (initial_profit – total_commission_expense)
+ */
+async function getAggregatedSales({ start, end, deviceType, deviceName }) {
+  const conditions = ['sr.sale_date::date BETWEEN $1 AND $2'];
+  const params     = [start, end];
 
   if (deviceType) {
     params.push(deviceType);
-    conditions.push(`LOWER(p.device_type) = LOWER($${params.length})`);
+    conditions.push(`LOWER(p.device_type) = $${params.length}`);
   }
   if (deviceName) {
     params.push(deviceName);
-    conditions.push(`p.device_name ILIKE '%'||$${params.length}||'%'`);
+    conditions.push(`p.device_name = $${params.length}`);
   }
 
   const sql = `
     SELECT
-      sr.sale_date::date                                     AS sale_day,
+      sr.sale_date::date                              AS sale_day,
       p.device_type,
       p.device_model,
       p.device_name,
-      SUM(sr.quantity_sold)                                  AS total_devices_sold,
-      SUM(sr.quantity_sold * p.selling_price)::NUMERIC(14,2) AS total_revenue,
-      SUM((p.selling_price - p.cost_price) * sr.quantity_sold)
-        ::NUMERIC(14,2)                                      AS total_profit_before,
+      SUM(sr.quantity_sold)                           AS total_units_sold,
+      SUM(p.selling_price * sr.quantity_sold)::NUMERIC(14,2)
+        AS total_revenue,
+      SUM((p.selling_price - p.cost_price) * sr.quantity_sold)::NUMERIC(14,2)
+        AS total_initial_profit,
+      SUM(sr.quantity_sold * cr.marketer_rate)::NUMERIC(14,2)
+        AS total_marketer_commission,
+      SUM(sr.quantity_sold * cr.admin_rate)::NUMERIC(14,2)
+        AS total_admin_commission,
+      SUM(sr.quantity_sold * cr.superadmin_rate)::NUMERIC(14,2)
+        AS total_superadmin_commission,
       SUM(
         sr.quantity_sold
         * (cr.marketer_rate + cr.admin_rate + cr.superadmin_rate)
-      )::NUMERIC(14,2)                                       AS total_expenses,
+      )::NUMERIC(14,2)                                AS total_commission_expense,
       SUM(
         (p.selling_price - p.cost_price) * sr.quantity_sold
         - sr.quantity_sold * (cr.marketer_rate + cr.admin_rate + cr.superadmin_rate)
-      )::NUMERIC(14,2)                                       AS total_profit_after
+      )::NUMERIC(14,2)                                AS total_final_profit
     FROM sales_record sr
-    JOIN orders o      ON o.id = sr.order_id
-    JOIN products p    ON p.id = sr.product_id
+    JOIN products p
+      ON p.id = sr.product_id
     JOIN commission_rates cr
-      ON cr.device_type = LOWER(p.device_type)
+      ON LOWER(cr.device_type) = LOWER(p.device_type)
     WHERE ${conditions.join(' AND ')}
     GROUP BY sale_day, p.device_type, p.device_model, p.device_name
-    ORDER BY sale_day, p.device_type, p.device_model, p.device_name;
+    ORDER BY sale_day;
   `;
 
   const { rows } = await pool.query(sql, params);
@@ -218,5 +236,5 @@ module.exports = {
   getGoals,
   getInventoryDetails,
   getProductsSold,
-  getDailyAggregated  
+  getAggregatedSales    // ← newly exported
 };
