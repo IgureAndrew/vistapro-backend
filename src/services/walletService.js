@@ -290,27 +290,33 @@ async function getMyWallet(userId) {
 
   // 2) ledger transactions
   const { rows: transactions } = await pool.query(`
-    SELECT id, transaction_type, amount, created_at
-      FROM wallet_transactions
-     WHERE user_unique_id = $1
-     ORDER BY created_at DESC
-     LIMIT 50
+    SELECT
+      id,
+      transaction_type,
+      amount,
+      created_at
+    FROM wallet_transactions
+    WHERE user_unique_id = $1
+    ORDER BY created_at DESC
+    LIMIT 50
   `, [userId]);
 
-  // 3) withdrawal history (raw, with string fields)
+  // 3) withdrawal history (now including net_amount)
   const { rows: rawWithdrawals } = await pool.query(`
     SELECT
       id,
       amount_requested::int   AS amount,
       fee::int                AS fee,
-       status,
+      net_amount::int         AS net_amount,
+      status,
       requested_at
     FROM withdrawal_requests
     WHERE user_unique_id = $1
     ORDER BY requested_at DESC
     LIMIT 50
   `, [userId]);
-  // 4) coerce amount, fee, net_amount into real numbers
+
+  // 4) Coerce into numbers (now net_amount is present)
   const withdrawals = rawWithdrawals.map(r => ({
     ...r,
     amount:     Number(r.amount),
