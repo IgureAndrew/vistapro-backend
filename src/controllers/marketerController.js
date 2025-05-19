@@ -705,6 +705,33 @@ async function listDealerProducts(req, res, next) {
     next(err);
   }
 }
+
+/**
+ * GET /api/marketer/orders
+ * Returns all orders belonging to the logged-in marketer,
+ * most recent first, including device info.
+ */
+async function getMarketerOrders(req, res, next) {
+  try {
+    const marketerId = req.user.id;
+    const { rows } = await pool.query(`
+      SELECT
+        o.*,
+        p.device_name,
+        p.device_model,
+        p.device_type
+      FROM orders o
+      JOIN products p
+        ON p.id = o.product_id
+      WHERE o.marketer_id = $1
+      ORDER BY o.sale_date DESC
+    `, [marketerId]);
+    res.json({ orders: rows });
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   getAccountSettings,
   updateAccountSettings,
@@ -716,4 +743,5 @@ module.exports = {
   submitCommitmentForm,
   listDealersByState,
   listDealerProducts,
+   getMarketerOrders,
 };

@@ -18,7 +18,8 @@ const {
   submitGuarantorForm,
   submitCommitmentForm,
   listDealersByState, 
-  listDealerProducts
+  listDealerProducts,
+  getMarketerOrders
 } = require('../controllers/marketerController');
 
 // ensure upload dirs exist
@@ -102,5 +103,6 @@ router.post(
 
 router.get('/dealers', verifyToken, listDealersByState);
 router.get('/dealers/:dealerUniqueId/products', verifyToken, listDealerProducts);
+router.get("/marketer/orders", verifyToken, getMarketerOrders);
 
 module.exports = router;
