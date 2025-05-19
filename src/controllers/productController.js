@@ -221,37 +221,31 @@ async function updateProduct(req, res, next) {
   }
 }
 
-/**
- * deleteProduct
- * Only MasterAdmin may delete.
- * Refuses if any non-completed stock_updates exist.
- */
 async function deleteProduct(req, res, next) {
   const productId = req.params.id;
-  const client = await pool.connect();
-  try {
-    // ensure no live stock_updates
-    const { rows: live } = await client.query(`
-      SELECT 1 FROM stock_updates
-       WHERE product_id = $1 AND status != 'completed'
-      LIMIT 1`, [productId]);
-    if (live.length) {
-      return res.status(409).json({
-        message: "Cannot delete product: there are active stock‐updates for it."
-      });
-    }
+  const client    = await pool.connect();
 
+  try {
     await client.query('BEGIN');
-    await client.query(`DELETE FROM stock_updates WHERE product_id = $1`, [productId]);
-    await client.query(`DELETE FROM inventory_items WHERE product_id = $1`, [productId]);
-    const { rows } = await client.query(`
-      DELETE FROM products WHERE id = $1 RETURNING *`, [productId]);
+
+    // (optional) explicitly clean up child rows if you didn't set ON DELETE CASCADE:
+    // await client.query(`DELETE FROM stock_updates WHERE product_id = $1`, [productId]);
+    // await client.query(`DELETE FROM inventory_items WHERE product_id = $1`, [productId]);
+
+    const { rows } = await client.query(
+      `DELETE FROM products
+         WHERE id = $1
+       RETURNING *`,
+      [productId]
+    );
+
     await client.query('COMMIT');
 
     if (!rows.length) {
-      return res.status(404).json({ message: "Product not found." });
+      return res.status(404).json({ message: 'Product not found.' });
     }
-    res.json({ message: "Product deleted successfully.", product: rows[0] });
+
+    res.json({ message: 'Product deleted successfully.', product: rows[0] });
   } catch (err) {
     await client.query('ROLLBACK');
     next(err);
@@ -259,6 +253,7 @@ async function deleteProduct(req, res, next) {
     client.release();
   }
 }
+
 
 /**
  * getAllProducts
