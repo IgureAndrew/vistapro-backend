@@ -227,6 +227,38 @@ async function getAggregatedSales({ start, end, deviceType, deviceName }) {
   const { rows } = await pool.query(sql, params);
   return rows;
 }
+/**
+ * Get one‐row summary for a given day (or date range):
+ *  • total_units_sold
+ *  • total_revenue
+ *  • total_initial_profit
+ *  • total_commission_expense
+ *  • total_final_profit
+ */
+async function getDailyTotals({ start, end }) {
+  const sql = `
+    SELECT
+      SUM(sr.quantity_sold)                                         AS total_units_sold,
+      SUM(p.selling_price * sr.quantity_sold)::NUMERIC(14,2)        AS total_revenue,
+      SUM((p.selling_price - p.cost_price) * sr.quantity_sold)::NUMERIC(14,2)
+                                                                    AS total_initial_profit,
+      SUM(sr.quantity_sold * (cr.marketer_rate + cr.admin_rate + cr.superadmin_rate))::NUMERIC(14,2)
+                                                                    AS total_commission_expense,
+      SUM(
+        (p.selling_price - p.cost_price) * sr.quantity_sold
+        - sr.quantity_sold * (cr.marketer_rate + cr.admin_rate + cr.superadmin_rate)
+      )::NUMERIC(14,2)                                              AS total_final_profit
+    FROM sales_record sr
+    JOIN products p    ON p.id = sr.product_id
+    JOIN commission_rates cr
+      ON LOWER(cr.device_type) = LOWER(p.device_type)
+    WHERE sr.sale_date::date BETWEEN $1 AND $2
+  `;
+  const { rows: [totals] } = await pool.query(sql, [start, end]);
+  return totals;
+}
+
+
 
 
 
@@ -236,5 +268,6 @@ module.exports = {
   getGoals,
   getInventoryDetails,
   getProductsSold,
-  getAggregatedSales    // ← newly exported
+  getAggregatedSales,    // ← newly exported
+  getDailyTotals,
 };

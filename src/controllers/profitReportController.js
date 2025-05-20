@@ -1,4 +1,3 @@
-// backend/src/routes/profitReportController.js
 import express from 'express';
 import {
   getInventorySnapshot,
@@ -6,7 +5,8 @@ import {
   getGoals,
   getInventoryDetails,
   getProductsSold,
-   getAggregatedSales
+  getAggregatedSales,
+  getDailyTotals
 } from '../services/profitReportService.js';
 
 const router = express.Router();
@@ -63,15 +63,28 @@ router.get('/products-sold', async (req, res, next) => {
   }
 });
 
-// NEW: GET /api/profit-report/aggregated
-// Query params: start=YYYY-MM-DD, end=YYYY-MM-DD, deviceType, deviceName
+// GET /api/profit-report/aggregated
 router.get('/aggregated', async (req, res, next) => {
-  const { start, end, deviceType, deviceName } = req.query;
   try {
+    const { start, end, deviceType, deviceName } = req.query;
     const data = await getAggregatedSales({ start, end, deviceType, deviceName });
     res.json(data);
   } catch (err) {
     next(err);
   }
 });
+
+// NEW: GET /api/profit-report/daily-summary
+// Returns grand totals for the specified date range
+router.get('/daily-summary', async (req, res, next) => {
+  try {
+    const { start, end } = req.query;
+    // validate dates presence?
+    const totals = await getDailyTotals({ start, end });
+    res.json({ totals });
+  } catch (err) {
+    next(err);
+  }
+});
+
 export default router;
