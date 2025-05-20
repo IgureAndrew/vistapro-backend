@@ -101,12 +101,31 @@ async function confirmOrder(req, res, next) {
     `, [marketer_id]);
     const marketerUid = mu.unique_id;
 
-    // 5) Pay commissions if not already done
+    // 5) Pay commissions *and record the sale* if not already done
     if (!commission_paid) {
       await creditMarketerCommission(marketerUid, orderId, deviceType, qty);
       await creditAdminCommission(     marketerUid, orderId,          qty);
       await creditSuperAdminCommission(marketerUid, orderId,          qty);
 
+      // insert into sales_record exactly once
+      await client.query(`
+        INSERT INTO sales_record (
+          order_id,
+          product_id,
+          sale_date,
+          quantity_sold,
+          initial_profit
+        ) VALUES (
+          $1, $2, NOW(), $3::integer,
+          (
+            SELECT (selling_price - cost_price) * $3::integer
+              FROM products
+             WHERE id = $2
+          )::NUMERIC(14,2)
+        )
+      `, [orderId, product_id, qty]);
+
+      // mark commissions and sale as done
       await client.query(`
         UPDATE orders
            SET commission_paid = TRUE
@@ -133,34 +152,10 @@ async function confirmOrder(req, res, next) {
       `, [stock_update_id]);
     }
 
-    // 8) Record the sale in sales_record
-    await client.query(`
-      INSERT INTO sales_record (
-        order_id,
-        product_id,
-        sale_date,
-        quantity_sold,
-        initial_profit
-      ) VALUES (
-        $1,                -- order_id
-        $2,                -- product_id
-        NOW(),             -- sale_date
-        $3::integer,       -- quantity_sold
-        (
-          SELECT (selling_price - cost_price) * $3::integer
-            FROM products
-           WHERE id = $2
-        )::NUMERIC(14,2)   -- initial_profit
-      )
-    `, [
-      orderId,
-      product_id,
-      qty
-    ]);
-
     await client.query("COMMIT");
     res.json({
-      message: "Order released_confirmed, commissions paid, stock marked sold, and sale recorded."
+      message:
+        "Order released_confirmed, commissions & sale recorded once, stock marked sold."
     });
   } catch (err) {
     await client.query("ROLLBACK");
@@ -169,8 +164,6 @@ async function confirmOrder(req, res, next) {
     client.release();
   }
 }
-
-
 
 /**
  * PATCH /api/manage-orders/orders/:orderId/confirm-to-dealer
