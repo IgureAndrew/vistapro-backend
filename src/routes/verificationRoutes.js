@@ -2,12 +2,13 @@
 const express = require("express");
 const router = express.Router();
 const multer = require("multer");
+const { body, validationResult } = require("express-validator");
 
 // Use memory storage so that files are available as buffers (for Cloudinary uploads).
 const memoryStorage = multer.memoryStorage();
 const upload = multer({ storage: memoryStorage });
 
-// Import authentication and role‐verification middleware.
+// Import authentication and role-verification middleware.
 const { verifyToken } = require("../middlewares/authMiddleware");
 const { verifyRole }  = require("../middlewares/roleMiddleware");
 
@@ -34,10 +35,7 @@ const {
   getVerifiedMarketersAdmin,
 } = require("../controllers/verificationController");
 
-
-/**
- * *********************** Submission Endpoints *************************
- */
+/** *********************** Submission Endpoints *************************/
 
 // Marketer submits biodata
 router.post(
@@ -48,7 +46,23 @@ router.post(
     { name: "passport_photo", maxCount: 1 },
     { name: "id_document",    maxCount: 1 },
   ]),
-  submitBiodata
+  // Validate phone (11 digits) and account_number (10 digits)
+  [
+    body("phone")
+      .matches(/^[0-9]{11}$/)
+      .withMessage("Phone number must be exactly 11 digits."),
+    body("account_number")
+      .matches(/^[0-9]{10}$/)
+      .withMessage("Account number must be exactly 10 digits."),
+  ],
+  (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      const { param, msg } = errors.array()[0];
+      return res.status(400).json({ field: param, message: msg });
+    }
+    submitBiodata(req, res, next);
+  }
 );
 
 // Marketer submits guarantor form
@@ -72,10 +86,7 @@ router.post(
   submitCommitment
 );
 
-
-/**
- * *********************** Admin / Master Admin Endpoints *************************
- */
+/** *********************** Admin / Master Admin Endpoints *************************/
 
 // MasterAdmin allows a refill
 router.patch(
@@ -85,7 +96,7 @@ router.patch(
   allowRefillForm
 );
 
-// Admin reviews (first‐line)
+// Admin reviews (first-line)
 router.patch(
   "/admin-review",
   verifyToken,
@@ -109,10 +120,7 @@ router.patch(
   masterApprove
 );
 
-
-/**
- * *********************** Deletion Endpoints (Master Admin Only) *************************
- */
+/** *********************** Deletion Endpoints (Master Admin Only) *************************/
 
 router.delete(
   "/biodata/:submissionId",
@@ -135,10 +143,7 @@ router.delete(
   deleteCommitmentSubmission
 );
 
-
-/**
- * *********************** GET Submissions Lists *************************
- */
+/** *********************** GET Submissions Lists *************************/
 
 // MasterAdmin sees _all_ submissions
 router.get(
@@ -156,7 +161,7 @@ router.get(
   getSubmissionsForAdmin
 );
 
-// SuperAdmin sees submissions for all marketers under _their_ admins
+// SuperAdmin sees submissions under their admins
 router.get(
   "/submissions/superadmin",
   verifyToken,
@@ -164,14 +169,7 @@ router.get(
   getSubmissionsForSuperAdmin
 );
 
-
-/**
- * *********************** GET Verified‐Marketers Lists *************************
- *
- * MasterAdmin: all approved marketers
- * SuperAdmin: only marketers assigned to admins under this super‐admin
- * Admin: only marketers assigned to this admin
- */
+/** *********************** GET Verified-Marketers Lists *************************/
 
 router.get(
   "/verified-master",
@@ -194,10 +192,7 @@ router.get(
   getVerifiedMarketersAdmin
 );
 
-
-/**
- * *********************** “Success” Endpoints (no‐ops to avoid 404s) *************************
- */
+/** *********************** “Success” Endpoints *************************/
 
 router.patch(
   "/biodata-success",
@@ -216,6 +211,5 @@ router.patch(
   verifyToken,
   commitmentSuccess
 );
-
 
 module.exports = router;

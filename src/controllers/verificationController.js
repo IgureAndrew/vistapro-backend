@@ -12,139 +12,110 @@ const sendSocketNotification = require("../utils/sendSocketNotification");
  * - "id_document": the image for the selected means of identification.
  * Uses the marketer's unique ID (req.user.unique_id) for all records.
  */
-const submitBiodata = async (req, res, next) => { 
+const submitBiodata = async (req, res, next) => {
   try {
     const {
-      name,
-      address,
-      phone,
-      religion,
-      date_of_birth,
-      marital_status,
-      state_of_origin,
-      state_of_residence,
-      mothers_maiden_name,
-      school_attended,
-      means_of_identification,
-      last_place_of_work,
-      job_description,
-      reason_for_quitting,
-      medical_condition,
-      next_of_kin_name,
-      next_of_kin_phone,
-      next_of_kin_address,
-      next_of_kin_relationship,
-      bank_name,
-      account_name,
+      name, address, phone, religion, date_of_birth, marital_status,
+      state_of_origin, state_of_residence, mothers_maiden_name,
+      school_attended, means_of_identification, last_place_of_work,
+      job_description, reason_for_quitting, medical_condition,
+      next_of_kin_name, next_of_kin_phone, next_of_kin_address,
+      next_of_kin_relationship, bank_name, account_name,
       account_number,
     } = req.body;
-    
+
     let passportPhotoUrl = null;
     let identificationFileUrl = null;
-    
-    if (req.files && req.files["passport_photo"] && req.files["passport_photo"][0].buffer) {
+    if (req.files?.passport_photo?.[0]?.buffer) {
       const uploadResult = await uploadToCloudinary(
-        req.files["passport_photo"][0].buffer,
+        req.files.passport_photo[0].buffer,
         { folder: "Vistaprouploads", allowed_formats: ["jpg", "jpeg", "png"] }
       );
       passportPhotoUrl = uploadResult.secure_url;
     }
-    
-    if (req.files && req.files["id_document"] && req.files["id_document"][0].buffer) {
+    if (req.files?.id_document?.[0]?.buffer) {
       const uploadResult = await uploadToCloudinary(
-        req.files["id_document"][0].buffer,
+        req.files.id_document[0].buffer,
         { folder: "Vistaprouploads", allowed_formats: ["jpg", "jpeg", "png"] }
       );
       identificationFileUrl = uploadResult.secure_url;
     }
-    
+
     const marketerUniqueId = req.user.unique_id;
     if (!marketerUniqueId) {
-      return res.status(400).json({ message: "Marketer Unique ID is missing from token." });
+      return res.status(400).json({ field: null, message: "Marketer Unique ID is missing." });
     }
-    
-    // Check if the marketer already submitted biodata.
-    const checkQuery = "SELECT bio_submitted FROM users WHERE unique_id = $1";
-    const checkResult = await pool.query(checkQuery, [marketerUniqueId]);
-    if (checkResult.rowCount > 0 && checkResult.rows[0].bio_submitted) {
-      return res.status(400).json({ message: "Biodata form has already been submitted." });
-    }
-    
-    const dob = date_of_birth === "" ? null : date_of_birth;
-    
-    const query = `
-      INSERT INTO marketer_biodata (
-        marketer_unique_id,
-        name,
-        address,
-        phone,
-        religion,
-        date_of_birth,
-        marital_status,
-        state_of_origin,
-        state_of_residence,
-        mothers_maiden_name,
-        school_attended,
-        means_of_identification,
-        id_document_url,
-        last_place_of_work,
-        job_description,
-        reason_for_quitting,
-        medical_condition,
-        next_of_kin_name,
-        next_of_kin_phone,
-        next_of_kin_address,
-        next_of_kin_relationship,
-        bank_name,
-        account_name,
-        account_number,
-        passport_photo_url
-      )
-      VALUES (
-        $1, $2, $3, $4, $5, $6, $7,
-        $8, $9, $10, $11, $12, $13, $14,
-        $15, $16, $17, $18, $19, $20, $21,
-        $22, $23, $24, $25
-      )
-      RETURNING *
-    `;
-    
-    const values = [
-      marketerUniqueId,
-      name,
-      address,
-      phone,
-      religion,
-      dob,
-      marital_status,
-      state_of_origin,
-      state_of_residence,
-      mothers_maiden_name,
-      school_attended,
-      means_of_identification,
-      identificationFileUrl,
-      last_place_of_work,
-      job_description,
-      reason_for_quitting,
-      medical_condition,
-      next_of_kin_name,
-      next_of_kin_phone,
-      next_of_kin_address,
-      next_of_kin_relationship,
-      bank_name,
-      account_name,
-      account_number,
-      passportPhotoUrl,
-    ];
-    
-    const result = await pool.query(query, values);
-    
-    // Update marketer's submission flag and fetch updated user.
-    const updatedUserResult = await pool.query(
-      "UPDATE users SET bio_submitted = true, updated_at = NOW() WHERE unique_id = $1 RETURNING *",
+
+    // Prevent duplicate submission
+    const checkResult = await pool.query(
+      "SELECT bio_submitted FROM users WHERE unique_id = $1",
       [marketerUniqueId]
     );
-    
+    if (checkResult.rows[0]?.bio_submitted) {
+      return res.status(400).json({ field: null, message: "Biodata form has already been submitted." });
+    }
+
+    const dob = date_of_birth === "" ? null : date_of_birth;
+    const insertQuery = `
+      INSERT INTO marketer_biodata (
+        marketer_unique_id, name, address, phone, religion,
+        date_of_birth, marital_status, state_of_origin,
+        state_of_residence, mothers_maiden_name, school_attended,
+        means_of_identification, id_document_url, last_place_of_work,
+        job_description, reason_for_quitting, medical_condition,
+        next_of_kin_name, next_of_kin_phone, next_of_kin_address,
+        next_of_kin_relationship, bank_name, account_name,
+        account_number, passport_photo_url
+      ) VALUES (
+        $1, $2, $3, $4, $5,
+        $6, $7, $8,
+        $9, $10, $11,
+        $12, $13, $14,
+        $15, $16, $17,
+        $18, $19, $20,
+        $21, $22, $23,
+        $24, $25
+      )
+      RETURNING *;
+    `;
+    const values = [
+      marketerUniqueId, name, address, phone, religion,
+      dob, marital_status, state_of_origin,
+      state_of_residence, mothers_maiden_name, school_attended,
+      means_of_identification, identificationFileUrl, last_place_of_work,
+      job_description, reason_for_quitting, medical_condition,
+      next_of_kin_name, next_of_kin_phone, next_of_kin_address,
+      next_of_kin_relationship, bank_name, account_name,
+      account_number, passportPhotoUrl,
+    ];
+
+    let result;
+    try {
+      result = await pool.query(insertQuery, values);
+    } catch (error) {
+      if (error.code === "23505") {
+        if (error.constraint === "users_phone_key") {
+          return res.status(400).json({
+            field: "phone",
+            message: "That phone number is already in use."
+          });
+        }
+        if (error.constraint === "users_account_number_key") {
+          return res.status(400).json({
+            field: "account_number",
+            message: "That account number is already in use."
+          });
+        }
+      }
+      return next(error);
+    }
+
+    // Mark flag true
+    const updatedUserResult = await pool.query(
+      "UPDATE users SET bio_submitted = TRUE, updated_at = NOW() WHERE unique_id = $1 RETURNING *",
+      [marketerUniqueId]
+    );
+
     res.status(201).json({
       message: "Biodata submitted successfully.",
       biodata: result.rows[0],
@@ -154,7 +125,6 @@ const submitBiodata = async (req, res, next) => {
     next(error);
   }
 };
-
 /**
  * submitGuarantor
  * Inserts a new record into the guarantor_employment_form table and updates the user's flag.
@@ -166,100 +136,90 @@ const submitBiodata = async (req, res, next) => {
 const submitGuarantor = async (req, res, next) => {
   try {
     const {
-      is_candidate_known,
-      relationship,
-      known_duration,
-      occupation,
-      means_of_identification,
-      guarantor_full_name,
-      guarantor_home_address,
-      guarantor_office_address,
-      guarantor_email,
-      guarantor_phone,
-      candidate_name,
+      is_candidate_known, relationship, known_duration, occupation,
+      means_of_identification, guarantor_full_name,
+      guarantor_home_address, guarantor_office_address,
+      guarantor_email, guarantor_phone, candidate_name
     } = req.body;
-    
+
     let identificationFileUrl = null;
     let signatureUrl = null;
-    
-    if (req.files && req.files["identification_file"] && req.files["identification_file"][0].buffer) {
+    if (req.files?.identification_file?.[0]?.buffer) {
       const uploadResult = await uploadToCloudinary(
-        req.files["identification_file"][0].buffer,
+        req.files.identification_file[0].buffer,
         { folder: "Vistaprouploads", allowed_formats: ["jpg", "jpeg", "png"] }
       );
       identificationFileUrl = uploadResult.secure_url;
     }
-    
-    if (req.files && req.files["signature"] && req.files["signature"][0].buffer) {
+    if (req.files?.signature?.[0]?.buffer) {
       const uploadResult = await uploadToCloudinary(
-        req.files["signature"][0].buffer,
+        req.files.signature[0].buffer,
         { folder: "Vistaprouploads", allowed_formats: ["jpg", "jpeg", "png"] }
       );
       signatureUrl = uploadResult.secure_url;
     }
-    
+
     const marketerUniqueId = req.user.unique_id;
     if (!marketerUniqueId) {
-      return res.status(400).json({ message: "Marketer Unique ID is missing from token." });
+      return res.status(400).json({ field: null, message: "Marketer Unique ID is missing." });
     }
-    
-    // Check if the marketer already submitted guarantor.
-    const checkQuery = "SELECT guarantor_submitted FROM users WHERE unique_id = $1";
-    const checkResult = await pool.query(checkQuery, [marketerUniqueId]);
-    if (checkResult.rowCount > 0 && checkResult.rows[0].guarantor_submitted) {
-      return res.status(400).json({ message: "Guarantor form has already been submitted." });
-    }
-    
-    const query = `
-      INSERT INTO guarantor_employment_form (
-        marketer_unique_id,
-        is_candidate_known,
-        relationship,
-        known_duration,
-        occupation,
-        means_of_identification,
-        identification_file_url,
-        guarantor_full_name,
-        guarantor_home_address,
-        guarantor_office_address,
-        guarantor_email,
-        guarantor_phone,
-        candidate_name,
-        signature_url,
-        created_at,
-        updated_at
-      )
-      VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-      )
-      RETURNING *
-    `;
-    
-    const values = [
-      marketerUniqueId,
-      is_candidate_known,
-      relationship,
-      known_duration,
-      occupation,
-      means_of_identification,
-      identificationFileUrl,
-      guarantor_full_name,
-      guarantor_home_address,
-      guarantor_office_address,
-      guarantor_email,
-      guarantor_phone,
-      candidate_name || null,
-      signatureUrl,
-    ];
-    
-    const result = await pool.query(query, values);
-    
-    // Update the guarantor flag and fetch updated user record.
-    const updatedUserResult = await pool.query(
-      "UPDATE users SET guarantor_submitted = true, updated_at = NOW() WHERE unique_id = $1 RETURNING *",
+
+    const checkResult = await pool.query(
+      "SELECT guarantor_submitted FROM users WHERE unique_id = $1",
       [marketerUniqueId]
     );
-    
+    if (checkResult.rows[0]?.guarantor_submitted) {
+      return res.status(400).json({ field: null, message: "Guarantor form has already been submitted." });
+    }
+
+    const insertQuery = `
+      INSERT INTO guarantor_employment_form (
+        marketer_unique_id, is_candidate_known, relationship,
+        known_duration, occupation, means_of_identification,
+        identification_file_url, guarantor_full_name,
+        guarantor_home_address, guarantor_office_address,
+        guarantor_email, guarantor_phone, candidate_name,
+        signature_url, created_at, updated_at
+      ) VALUES (
+        $1, $2, $3,
+        $4, $5, $6,
+        $7, $8,
+        $9, $10,
+        $11, $12, $13,
+        $14, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+      )
+      RETURNING *;
+    `;
+    const values = [
+      marketerUniqueId, is_candidate_known, relationship,
+      known_duration, occupation, means_of_identification,
+      identificationFileUrl, guarantor_full_name,
+      guarantor_home_address, guarantor_office_address,
+      guarantor_email, guarantor_phone,
+      candidate_name || null, signatureUrl
+    ];
+
+    let result;
+    try {
+      result = await pool.query(insertQuery, values);
+    } catch (error) {
+      if (error.code === "23505") {
+        // example constraint name
+        if (error.constraint === "guarantor_employment_form_identification_file_key") {
+          return res.status(400).json({
+            field: "identification_file",
+            message: "That identification file has already been uploaded."
+          });
+        }
+      }
+      return next(error);
+    }
+
+    const updatedUserResult = await pool.query(
+      "UPDATE users SET guarantor_submitted = TRUE, updated_at = NOW() WHERE unique_id = $1 RETURNING *",
+      [marketerUniqueId]
+    );
+
     res.status(201).json({
       message: "Guarantor form submitted successfully.",
       guarantor: result.rows[0],
@@ -269,6 +229,7 @@ const submitGuarantor = async (req, res, next) => {
     next(error);
   }
 };
+
 
 /**
  * submitCommitment
@@ -291,28 +252,24 @@ const submitCommitment = async (req, res, next) => {
       promise_ensure_loan_recovery,
       promise_abide_by_system,
       direct_sales_rep_name,
-      date_signed,
+      date_signed
     } = req.body;
-    
-    if (!req.file || !req.file.buffer) {
-      return res.status(400).json({ message: "Direct Sales Rep signature image is required." });
-    }
 
+    if (!req.file?.buffer) {
+      return res.status(400).json({ field: "signature", message: "Signature image is required." });
+    }
     const uploadResult = await uploadToCloudinary(req.file.buffer, {
-      folder: "Vistaprouploads",
-      allowed_formats: ["jpg", "jpeg", "png"],
+      folder: "Vistaprouploads", allowed_formats: ["jpg", "jpeg", "png"]
     });
-    const directSalesRepSignatureUrl = uploadResult.secure_url;
-    
+    const signatureUrl = uploadResult.secure_url;
+
     const marketerUniqueId = req.user.unique_id;
     if (!marketerUniqueId) {
-      return res.status(400).json({ message: "Marketer Unique ID is missing from token." });
+      return res.status(400).json({ field: null, message: "Marketer Unique ID is missing." });
     }
-    
-    const parseBoolean = (val) =>
-      val && val.toLowerCase() === "yes" ? true : false;
-    
-    const query = `
+
+    const parseBool = val => (val?.toLowerCase() === "yes");
+    const insertQuery = `
       INSERT INTO direct_sales_commitment_form (
         marketer_unique_id,
         promise_accept_false_documents,
@@ -329,58 +286,66 @@ const submitCommitment = async (req, res, next) => {
         direct_sales_rep_name,
         direct_sales_rep_signature_url,
         date_signed,
-        created_at,
-        updated_at
+        created_at, updated_at
+      ) VALUES (
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP
       )
-      VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-      )
-      RETURNING *
+      RETURNING *;
     `;
-    
     const values = [
       marketerUniqueId,
-      parseBoolean(promise_accept_false_documents),
-      parseBoolean(promise_not_request_unrelated_info),
-      parseBoolean(promise_not_charge_customer_fees),
-      parseBoolean(promise_not_modify_contract_info),
-      parseBoolean(promise_not_sell_unapproved_phones),
-      parseBoolean(promise_not_make_unofficial_commitment),
-      parseBoolean(promise_not_operate_customer_account),
-      parseBoolean(promise_accept_fraud_firing),
-      parseBoolean(promise_not_share_company_info),
-      parseBoolean(promise_ensure_loan_recovery),
-      parseBoolean(promise_abide_by_system),
+      parseBool(promise_accept_false_documents),
+      parseBool(promise_not_request_unrelated_info),
+      parseBool(promise_not_charge_customer_fees),
+      parseBool(promise_not_modify_contract_info),
+      parseBool(promise_not_sell_unapproved_phones),
+      parseBool(promise_not_make_unofficial_commitment),
+      parseBool(promise_not_operate_customer_account),
+      parseBool(promise_accept_fraud_firing),
+      parseBool(promise_not_share_company_info),
+      parseBool(promise_ensure_loan_recovery),
+      parseBool(promise_abide_by_system),
       direct_sales_rep_name,
-      directSalesRepSignatureUrl,
-      date_signed,
+      signatureUrl,
+      date_signed
     ];
-    
-    const result = await pool.query(query, values);
-    
-    // Update the commitment flag and fetch updated user record.
-    const updatedUserResult = await pool.query(
-      "UPDATE users SET commitment_submitted = true, updated_at = NOW() WHERE unique_id = $1 RETURNING *",
+
+    let result;
+    try {
+      result = await pool.query(insertQuery, values);
+    } catch (error) {
+      if (error.code === "23505" && error.constraint === "direct_sales_commitment_form_direct_sales_rep_name_key") {
+        return res.status(400).json({
+          field: "direct_sales_rep_name",
+          message: "That Direct Sales Rep name has already been used."
+        });
+      }
+      return next(error);
+    }
+
+    await pool.query(
+      "UPDATE users SET commitment_submitted = TRUE, updated_at = NOW() WHERE unique_id = $1",
       [marketerUniqueId]
     );
-    
-    // Check if all three forms have been submitted.
-    const statusQuery = "SELECT bio_submitted, guarantor_submitted, commitment_submitted FROM users WHERE unique_id = $1";
-    const statusResult = await pool.query(statusQuery, [marketerUniqueId]);
-    const { bio_submitted, guarantor_submitted, commitment_submitted } = statusResult.rows[0];
-    
+
+    const { bio_submitted, guarantor_submitted, commitment_submitted } =
+      (await pool.query(
+        "SELECT bio_submitted, guarantor_submitted, commitment_submitted FROM users WHERE unique_id = $1",
+        [marketerUniqueId]
+      )).rows[0];
+
     if (bio_submitted && guarantor_submitted && commitment_submitted) {
       await sendSocketNotification(
         marketerUniqueId,
-        "All your forms have been submitted successfully. Your submission is complete. You will be notified once reviewed and approved; your dashboard is now unlocked.",
+        "All your forms have been submitted successfully. Your submission is under review and your dashboard is unlocked.",
         req.app
       );
     }
-    
-    return res.status(201).json({
-      message: "Commitment form submitted successfully. All forms have been submitted and your submission is under review.",
+
+    res.status(201).json({
+      message: "Commitment form submitted successfully.",
       commitment: result.rows[0],
-      updatedUser: updatedUserResult.rows[0],
+      updatedUser: { bio_submitted, guarantor_submitted, commitment_submitted }
     });
   } catch (error) {
     next(error);
