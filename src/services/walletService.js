@@ -22,7 +22,8 @@ async function ensureWallet(userId) {
 }
 
 /**
- * Credits a split commission (40% available, 60% withheld) to the given user.
+ * Credits a split commission (40% available, 60% withheld) to the given user,
+ * but only if no prior row exists for this order/typeTag.
  */
 async function creditSplit(userId, orderId, totalComm, typeTag) {
   await ensureWallet(userId);
@@ -31,8 +32,8 @@ async function creditSplit(userId, orderId, totalComm, typeTag) {
   const withheld  = totalComm - available;
   const meta      = JSON.stringify({ orderId });
 
-  // 1) insert the three ledger entries
-  await pool.query(
+  // 1) attempt to insert the three ledger entries
+  const insertRes = await pool.query(
     `INSERT INTO wallet_transactions
        (user_unique_id, amount, transaction_type, meta)
      VALUES
@@ -40,9 +41,15 @@ async function creditSplit(userId, orderId, totalComm, typeTag) {
        ($1, $5, $3 || '_available', $4::jsonb),
        ($1, $6, $3 || '_withheld',  $4::jsonb)
      ON CONFLICT (user_unique_id, transaction_type, (meta->>'orderId'))
-       DO NOTHING;`,
+       DO NOTHING
+     RETURNING 1;`,
     [ userId, totalComm, typeTag, meta, available, withheld ]
   );
+
+  // nothing new inserted → skip balances
+  if (insertRes.rowCount === 0) {
+    return { totalComm: 0, available: 0, withheld: 0 };
+  }
 
   // 2) bump the running balances
   await pool.query(
@@ -59,21 +66,27 @@ async function creditSplit(userId, orderId, totalComm, typeTag) {
 }
 
 /**
- * Credits the full amount to the user's available balance.
+ * Credits the full amount to the user's available balance,
+ * but only if no prior row exists for this order/typeTag.
  */
 async function creditFull(userId, orderId, amount, typeTag) {
   await ensureWallet(userId);
   const meta = JSON.stringify({ orderId });
 
-  // 1) ledger entry
-  await pool.query(
+  // 1) attempt the ledger entry
+  const ins = await pool.query(
     `INSERT INTO wallet_transactions
        (user_unique_id, amount, transaction_type, meta)
      VALUES ($1, $2, $3, $4::jsonb)
      ON CONFLICT (user_unique_id, transaction_type, (meta->>'orderId'))
-       DO NOTHING;`,
+       DO NOTHING
+     RETURNING 1;`,
     [ userId, amount, typeTag, meta ]
   );
+
+  if (ins.rowCount === 0) {
+    return { totalComm: 0 };
+  }
 
   // 2) bump balances
   await pool.query(
@@ -88,13 +101,10 @@ async function creditFull(userId, orderId, amount, typeTag) {
   return { totalComm: amount };
 }
 
+
 // ─── Commission Credits ─────────────────────────────────────────
 
-/**
- * Credits marketer commission from the commission_rates table.
- */
 async function creditMarketerCommission(marketerUid, orderId, deviceType, qty) {
-  // fetch dynamic rate
   const { rows: [cr] } = await pool.query(
     `SELECT marketer_rate
        FROM commission_rates
@@ -106,11 +116,7 @@ async function creditMarketerCommission(marketerUid, orderId, deviceType, qty) {
   return creditSplit(marketerUid, orderId, total, 'marketer_commission');
 }
 
-/**
- * Credits admin commission based on commission_rates.admin_rate.
- */
 async function creditAdminCommission(marketerUid, orderId, qty) {
-  // find the admin's unique_id and rate, coalescing stock vs. direct product_id
   const { rows: [userRow] } = await pool.query(
     `SELECT
         u2.unique_id   AS adminUid,
@@ -139,12 +145,7 @@ async function creditAdminCommission(marketerUid, orderId, qty) {
   return creditFull(adminUid, orderId, total, 'admin_commission');
 }
 
-
-/**
- * Credits superadmin commission based on commission_rates.superadmin_rate.
- */
 async function creditSuperAdminCommission(marketerUid, orderId, qty) {
-  // find superadmin's unique_id and rate, same coalesce logic
   const { rows: [row] } = await pool.query(
     `SELECT
         su.unique_id     AS superUid,
