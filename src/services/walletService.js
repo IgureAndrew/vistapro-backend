@@ -110,18 +110,27 @@ async function creditMarketerCommission(marketerUid, orderId, deviceType, qty) {
  * Credits admin commission based on commission_rates.admin_rate.
  */
 async function creditAdminCommission(marketerUid, orderId, qty) {
-  // find the admin's unique_id and rate
+  // find the admin's unique_id and rate, coalescing stock vs. direct product_id
   const { rows: [userRow] } = await pool.query(
-    `SELECT u2.unique_id AS adminUid, cr.admin_rate
-       FROM users m
-       JOIN users u2       ON m.admin_id = u2.id
-       JOIN orders o       ON o.id = $1
-       JOIN products p     ON p.id = o.product_id
-       JOIN commission_rates cr
-         ON cr.device_type = LOWER(p.device_type)
-      WHERE m.unique_id = $2`,
+    `SELECT
+        u2.unique_id   AS adminUid,
+        cr.admin_rate
+      FROM orders o
+      JOIN users m
+        ON o.marketer_id   = m.id
+      JOIN users u2
+        ON m.admin_id      = u2.id
+      LEFT JOIN stock_updates su
+        ON o.stock_update_id = su.id
+      JOIN products p
+        ON p.id = COALESCE(o.product_id, su.product_id)
+      JOIN commission_rates cr
+        ON LOWER(cr.device_type) = LOWER(p.device_type)
+      WHERE o.id = $1
+        AND m.unique_id = $2`,
     [orderId, marketerUid]
   );
+
   const adminUid = userRow?.adminuid;
   const rate     = userRow?.admin_rate || 0;
   if (!adminUid) return { totalComm: 0 };
@@ -130,23 +139,34 @@ async function creditAdminCommission(marketerUid, orderId, qty) {
   return creditFull(adminUid, orderId, total, 'admin_commission');
 }
 
+
 /**
  * Credits superadmin commission based on commission_rates.superadmin_rate.
  */
 async function creditSuperAdminCommission(marketerUid, orderId, qty) {
-  // find superadmin's unique_id and rate
+  // find superadmin's unique_id and rate, same coalesce logic
   const { rows: [row] } = await pool.query(
-    `SELECT su.unique_id AS superUid, cr.superadmin_rate
-       FROM users m
-       JOIN users a       ON m.admin_id        = a.id
-       JOIN users su      ON a.super_admin_id = su.id
-       JOIN orders o      ON o.id = $1
-       JOIN products p    ON p.id = o.product_id
-       JOIN commission_rates cr
-         ON cr.device_type = LOWER(p.device_type)
-      WHERE m.unique_id = $2`,
+    `SELECT
+        su.unique_id     AS superUid,
+        cr.superadmin_rate
+      FROM orders o
+      JOIN users m
+        ON o.marketer_id      = m.id
+      JOIN users a
+        ON m.admin_id         = a.id
+      JOIN users su
+        ON a.super_admin_id   = su.id
+      LEFT JOIN stock_updates su_up
+        ON o.stock_update_id  = su_up.id
+      JOIN products p
+        ON p.id = COALESCE(o.product_id, su_up.product_id)
+      JOIN commission_rates cr
+        ON LOWER(cr.device_type) = LOWER(p.device_type)
+      WHERE o.id = $1
+        AND m.unique_id = $2`,
     [orderId, marketerUid]
   );
+
   const superUid = row?.superuid;
   const rate     = row?.superadmin_rate || 0;
   if (!superUid) return { totalComm: 0 };
@@ -154,6 +174,7 @@ async function creditSuperAdminCommission(marketerUid, orderId, qty) {
   const total = rate * qty;
   return creditFull(superUid, orderId, total, 'superadmin_commission');
 }
+
 // ─── Queries ────────────────────────────────────────────────────
 async function getSubordinateWallets(superAdminUid) {
   // 1) find our internal SuperAdmin ID
