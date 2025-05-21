@@ -2,7 +2,7 @@
 const { pool } = require("../config/database");
 
 async function sendSocketNotification(marketerUniqueId, message, app) {
-  // 1) Grab your io instance (make sure in app.js you did app.set('socketio', io))
+  // 1) Grab your io instance
   const io = app.get("socketio");
   if (!io) {
     console.warn("⚠️  Socket.IO instance not found on app");
@@ -29,9 +29,9 @@ async function sendSocketNotification(marketerUniqueId, message, app) {
 
   // 4) Emit the new notification for the dropdown
   io.to(marketerUniqueId).emit("newNotification", {
-    id: notif.id,
+    id,
     message,
-    created_at: notif.created_at,
+    created_at,
     is_read: false
   });
 
