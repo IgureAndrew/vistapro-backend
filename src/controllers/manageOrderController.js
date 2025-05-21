@@ -51,6 +51,7 @@ async function getPendingOrders(req, res, next) {
  */
 
 
+// src/controllers/manageOrderController.js
 async function confirmOrder(req, res, next) {
   const { orderId } = req.params;
   const client      = await pool.connect();
@@ -83,6 +84,13 @@ async function confirmOrder(req, res, next) {
       `, [stock_update_id]);
       if (!su) throw new Error("Stock update record not found");
       product_id = su.product_id;
+
+      // ★ Persist the resolved product_id back onto the order ★
+      await client.query(`
+        UPDATE orders
+           SET product_id = $1
+         WHERE id = $2
+      `, [product_id, orderId]);
     }
 
     // 3) Look up device_type for commission rates
@@ -101,13 +109,12 @@ async function confirmOrder(req, res, next) {
     `, [marketer_id]);
     const marketerUid = mu.unique_id;
 
-    // 5) Pay commissions *and record the sale* if not already done
+    // 5) Pay commissions and record sale exactly once
     if (!commission_paid) {
       await creditMarketerCommission(marketerUid, orderId, deviceType, qty);
       await creditAdminCommission(     marketerUid, orderId,          qty);
       await creditSuperAdminCommission(marketerUid, orderId,          qty);
 
-      // insert into sales_record exactly once
       await client.query(`
         INSERT INTO sales_record (
           order_id,
@@ -125,7 +132,6 @@ async function confirmOrder(req, res, next) {
         )
       `, [orderId, product_id, qty]);
 
-      // mark commissions and sale as done
       await client.query(`
         UPDATE orders
            SET commission_paid = TRUE
@@ -155,7 +161,7 @@ async function confirmOrder(req, res, next) {
     await client.query("COMMIT");
     res.json({
       message:
-        "Order released_confirmed, commissions & sale recorded once, stock marked sold."
+        "Order released_confirmed, product_id persisted, commissions & sale recorded once, stock marked sold."
     });
   } catch (err) {
     await client.query("ROLLBACK");
@@ -164,6 +170,7 @@ async function confirmOrder(req, res, next) {
     client.release();
   }
 }
+
 
 /**
  * PATCH /api/manage-orders/orders/:orderId/confirm-to-dealer
