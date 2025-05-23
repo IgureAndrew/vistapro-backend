@@ -11,10 +11,11 @@ const {
   updateOrder,
   deleteOrder,
   getConfirmedOrderDetail,
+  cancelOrder,                 // ← new import
 } = require("../controllers/manageOrderController");
 
 // ──────────────────────────────────────────────────────────
-// 0) Confirm a pending order (shortcut GET for browser + PATCH for API)
+// 0) Confirm a pending order
 //    GET  /api/manage-orders/orders/:orderId/confirm
 //    PATCH /api/manage-orders/orders/:orderId/confirm
 // ──────────────────────────────────────────────────────────
@@ -36,9 +37,19 @@ router.get(
 );
 
 // ──────────────────────────────────────────────────────────
+// 1a) Cancel an order (new)
+//    PATCH /api/manage-orders/orders/:orderId/cancel
+// ──────────────────────────────────────────────────────────
+router.patch(
+  "/orders/:orderId/cancel",
+  verifyToken,
+  verifyRole(["MasterAdmin"]),
+  cancelOrder
+);
+
+// ──────────────────────────────────────────────────────────
 // 2) Order History
 //    GET /api/manage-orders/orders/history
-//    (Master/Super/Admin as appropriate)
 // ──────────────────────────────────────────────────────────
 router.get(
   "/orders/history",
@@ -80,12 +91,15 @@ router.delete(
   deleteOrder
 );
 
+// ──────────────────────────────────────────────────────────
+// 6) Order Detail (no-op for avoiding 404s)
+//    GET /api/manage-orders/orders/:orderId/detail
+// ──────────────────────────────────────────────────────────
 router.get(
-  '/orders/:orderId/detail',
+  "/orders/:orderId/detail",
   verifyToken,
-  verifyRole('MasterAdmin'),
+  verifyRole(["MasterAdmin"]),
   getConfirmedOrderDetail
 );
-
 
 module.exports = router;
