@@ -28,14 +28,16 @@ async function getPendingOrders(req, res, next) {
         o.sale_date,
         o.status,
         m.first_name || ' ' || m.last_name AS marketer_name,
-        -- aggregate imeis from the order_items table
-        COALESCE(
-          ARRAY_AGG(oi.imei ORDER BY oi.id) FILTER (WHERE oi.imei IS NOT NULL),
+        -- aggregate IMEIs via the inventory_items table
+       COALESCE(
+          ARRAY_AGG(iv.imei ORDER BY iv.id)
+            FILTER (WHERE iv.imei IS NOT NULL),
           ARRAY[]::text[]
         ) AS imeis
       FROM orders o
       JOIN users m ON o.marketer_id = m.id
       LEFT JOIN order_items oi ON oi.order_id = o.id
+      LEFT JOIN inventory_items iv ON iv.id = oi.inventory_item_id
       WHERE o.status = 'pending'
       GROUP BY o.id, m.first_name, m.last_name
       ORDER BY o.sale_date DESC
@@ -211,13 +213,15 @@ async function getOrderHistory(req, res, next) {
         o.sale_date,
         o.status,
         m.first_name || ' ' || m.last_name AS marketer_name,
-        COALESCE(
-          ARRAY_AGG(oi.imei ORDER BY oi.id) FILTER (WHERE oi.imei IS NOT NULL),
+         COALESCE(
+          ARRAY_AGG(iv.imei ORDER BY iv.id)
+            FILTER (WHERE iv.imei IS NOT NULL),
           ARRAY[]::text[]
         ) AS imeis
       FROM orders o
       JOIN users m ON o.marketer_id = m.id
       LEFT JOIN order_items oi ON oi.order_id = o.id
+      LEFT JOIN inventory_items iv ON iv.id = oi.inventory_item_id
       /* add your WHERE clauses for adminId / superAdminId here if needed */
       GROUP BY o.id, m.first_name, m.last_name
       ORDER BY o.sale_date DESC
