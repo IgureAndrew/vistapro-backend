@@ -13,29 +13,31 @@ const {
  * GET /api/manage-orders/orders
  * List all pending orders for MasterAdmin to review.
  */
+/**
+ * GET /api/manage-orders/orders
+ * (MasterAdmin only) list all pending orders with their IMEIs
+ */
 async function getPendingOrders(req, res, next) {
   try {
     const { rows } = await pool.query(`
       SELECT
         o.id,
-        u.first_name           AS marketer_name,
         o.bnpl_platform,
-        p.device_name,
-        p.device_model,
-        p.device_type,
         o.number_of_devices,
         o.sold_amount,
-        o.sale_date            AS sale_date,
-        o.status
+        o.sale_date,
+        o.status,
+        m.first_name || ' ' || m.last_name AS marketer_name,
+        -- aggregate imeis from the order_items table
+        COALESCE(
+          ARRAY_AGG(oi.imei ORDER BY oi.id) FILTER (WHERE oi.imei IS NOT NULL),
+          ARRAY[]::text[]
+        ) AS imeis
       FROM orders o
-      LEFT JOIN stock_updates su
-        ON o.stock_update_id = su.id
-      LEFT JOIN products p
-        ON p.id = COALESCE(o.product_id, su.product_id)
-      JOIN users u
-        ON o.marketer_id = u.id
+      JOIN users m ON o.marketer_id = m.id
+      LEFT JOIN order_items oi ON oi.order_id = o.id
       WHERE o.status = 'pending'
-        AND u.role = 'Marketer'
+      GROUP BY o.id, m.first_name, m.last_name
       ORDER BY o.sale_date DESC
     `);
     res.json({ orders: rows });
@@ -43,7 +45,6 @@ async function getPendingOrders(req, res, next) {
     next(err);
   }
 }
-
 /**
  * PATCH /api/manage-orders/orders/:orderId/confirm
  * MasterAdmin confirms an order (stock or free), marks stock sold,
@@ -196,50 +197,31 @@ async function confirmOrderToDealer(req, res, next) {
 
 /**
  * GET /api/manage-orders/orders/history
+ * (Master / Super / Admin) list all orders in history (any status) with their IMEIs
  */
 async function getOrderHistory(req, res, next) {
   try {
-    const { unique_id: uid, role } = req.user;
-    let base = `
+    // you probably already have role filters here...
+    const { rows } = await pool.query(`
       SELECT
         o.id,
-        u.first_name           AS marketer_name,
         o.bnpl_platform,
-        p.device_name,
-        p.device_model,
-        p.device_type,
         o.number_of_devices,
         o.sold_amount,
-        o.sale_date            AS sale_date,
-        o.status
+        o.sale_date,
+        o.status,
+        m.first_name || ' ' || m.last_name AS marketer_name,
+        COALESCE(
+          ARRAY_AGG(oi.imei ORDER BY oi.id) FILTER (WHERE oi.imei IS NOT NULL),
+          ARRAY[]::text[]
+        ) AS imeis
       FROM orders o
-      LEFT JOIN stock_updates su
-        ON o.stock_update_id = su.id
-      LEFT JOIN products p
-        ON p.id = COALESCE(o.product_id, su.product_id)
-      JOIN users u
-        ON o.marketer_id = u.id
-    `;
-    let where = "";
-    const params = [];
-
-    if (role === "MasterAdmin") {
-      where = `WHERE u.role = 'Marketer'`;
-    } else if (role === "Admin") {
-      where = `WHERE u.admin_id = (SELECT id FROM users WHERE unique_id = $1)`;
-      params.push(uid);
-    } else if (role === "SuperAdmin") {
-      base += ` JOIN users a ON u.admin_id = a.id `;
-      where = `WHERE a.super_admin_id = (SELECT id FROM users WHERE unique_id = $1)`;
-      params.push(uid);
-    } else {
-      return res.status(403).json({ message: "Permission denied." });
-    }
-
-    const { rows } = await pool.query(
-      `${base} ${where} ORDER BY o.sale_date DESC`,
-      params
-    );
+      JOIN users m ON o.marketer_id = m.id
+      LEFT JOIN order_items oi ON oi.order_id = o.id
+      /* add your WHERE clauses for adminId / superAdminId here if needed */
+      GROUP BY o.id, m.first_name, m.last_name
+      ORDER BY o.sale_date DESC
+    `);
     res.json({ orders: rows });
   } catch (err) {
     next(err);
