@@ -347,51 +347,84 @@ async function getConfirmedOrderDetail(req, res, next) {
 
 
 async function cancelOrder(req, res, next) {
+  const rawId = req.params.orderId;
+  const orderId = parseInt(rawId, 10);
+
+  // 1) Validate
+  if (Number.isNaN(orderId)) {
+    return res.status(400).json({ message: "Invalid order ID." });
+  }
+
+  const client = await pool.connect();
   try {
-    const orderId = parseInt(req.params.id, 10);
-    // 1) Look up the order
-    const { rows } = await pool.query(
-      `SELECT stock_update_id
+    await client.query('BEGIN');
+
+    // 2) Fetch the order and make sure it's pending
+    const { rows: ordRows } = await client.query(
+      `SELECT status, stock_update_id, number_of_devices, product_id
          FROM orders
         WHERE id = $1`,
       [orderId]
     );
-    if (!rows.length) {
+    if (!ordRows.length) {
+      await client.query('ROLLBACK');
       return res.status(404).json({ message: "Order not found." });
     }
-    const { stock_update_id } = rows[0];
+    const order = ordRows[0];
+    if (order.status !== 'pending') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: "Only pending orders can be canceled." });
+    }
 
-    // 2) Mark the order cancelled
-    await pool.query(
+    // 3) Restore inventory
+    if (order.stock_update_id) {
+      // It was a reserved‐stock pickup → release the reserved IMEIs
+      await client.query(
+        `UPDATE inventory_items
+            SET status = 'available',
+                stock_update_id = NULL
+          WHERE stock_update_id = $1`,
+        [order.stock_update_id]
+      );
+      // Optionally you could also reset the stock_update status back to pending
+      await client.query(
+        `UPDATE stock_updates
+            SET status = 'pending',
+                updated_at = NOW()
+          WHERE id = $1`,
+        [order.stock_update_id]
+      );
+    } else {
+      // It was a free‐mode order → bump the product quantity back
+      await client.query(
+        `UPDATE products
+            SET quantity   = quantity + $1,
+                updated_at = NOW()
+          WHERE id = $2`,
+        [order.number_of_devices, order.product_id]
+      );
+    }
+
+    // 4) Mark the order canceled
+    const { rows: updRows } = await client.query(
       `UPDATE orders
-          SET status     = 'cancelled',
+          SET status     = 'canceled',
               updated_at = NOW()
-        WHERE id = $1`,
+        WHERE id = $1
+      RETURNING *`,
       [orderId]
     );
 
-    // 3) If it was tied to a stock_update, release the reserved IMEIs
-    if (stock_update_id) {
-      await pool.query(
-        `UPDATE inventory_items
-            SET status          = 'available',
-                stock_update_id = NULL
-          WHERE stock_update_id = $1`,
-        [stock_update_id]
-      );
-      // Optionally set the pickup back to "pending" so they can re-sell
-      await pool.query(
-        `UPDATE stock_updates
-            SET status     = 'pending',
-                updated_at = NOW()
-          WHERE id = $1`,
-        [stock_update_id]
-      );
-    }
-
-    return res.json({ message: "Order cancelled successfully." });
+    await client.query('COMMIT');
+    return res.json({
+      message: "Order canceled and inventory restored.",
+      order: updRows[0]
+    });
   } catch (err) {
+    await client.query('ROLLBACK');
     next(err);
+  } finally {
+    client.release();
   }
 }
 
