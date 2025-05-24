@@ -12,7 +12,7 @@ const {
  */
 async function getPendingOrders(req, res, next) {
   try {
-    const { rows } = await pool.query(`
+     const { rows } = await pool.query(`
       SELECT
         o.id,
         o.bnpl_platform,
@@ -24,21 +24,17 @@ async function getPendingOrders(req, res, next) {
         p.device_name,
         p.device_model,
         p.device_type,
-        -- use DISTINCT to guard against accidental duplicates
+        -- no DISTINCT, keep ORDER BY
         COALESCE(
-          ARRAY_AGG(DISTINCT ii.imei ORDER BY ii.id) 
+          ARRAY_AGG(ii.imei ORDER BY ii.id)
             FILTER (WHERE ii.imei IS NOT NULL),
           ARRAY[]::text[]
         ) AS imeis
       FROM orders o
-      JOIN users m
-        ON m.id = o.marketer_id
-      LEFT JOIN products p
-        ON p.id = o.product_id
-      LEFT JOIN order_items oi
-        ON oi.order_id = o.id
-      LEFT JOIN inventory_items ii
-        ON ii.id = oi.inventory_item_id
+      JOIN users m ON m.id = o.marketer_id
+      LEFT JOIN products p        ON p.id = o.product_id
+      LEFT JOIN order_items oi    ON oi.order_id = o.id
+      LEFT JOIN inventory_items ii ON ii.id = oi.inventory_item_id
       WHERE o.status = 'pending'
       GROUP BY
         o.id, m.first_name, m.last_name,
@@ -50,7 +46,6 @@ async function getPendingOrders(req, res, next) {
     next(err);
   }
 }
-
 
 /**
  * PATCH /api/manage-orders/orders/:orderId/confirm
@@ -250,33 +245,25 @@ async function getOrderHistory(req, res, next) {
         p.device_name,
         p.device_model,
         p.device_type,
-        ARRAY_AGG(DISTINCT ii.imei ORDER BY ii.id)
+        ARRAY_AGG(ii.imei ORDER BY ii.id)
           FILTER (WHERE ii.imei IS NOT NULL) AS imeis
       FROM orders o
-      JOIN users m
-        ON m.id = o.marketer_id
-      JOIN products p
-        ON p.id = o.product_id
-      LEFT JOIN order_items oi
-        ON oi.order_id = o.id
-      LEFT JOIN inventory_items ii
-        ON ii.id = oi.inventory_item_id
-      LEFT JOIN users a
-        ON m.admin_id = a.id
-      LEFT JOIN users s
-        ON a.super_admin_id = s.id
-      ${where}
+      JOIN users m          ON m.id = o.marketer_id
+      JOIN products p       ON p.id = o.product_id
+      LEFT JOIN order_items oi  ON oi.order_id = o.id
+      LEFT JOIN inventory_items ii ON ii.id = oi.inventory_item_id
+      -- … optional joins for admin/superAdmin …
       GROUP BY
         o.id, m.first_name, m.last_name,
         p.device_name, p.device_model, p.device_type
       ORDER BY o.sale_date DESC
-    `, params);
-
+    `, /* your params array */);
     res.json({ orders: rows });
   } catch (err) {
     next(err);
   }
 }
+
 /**
  * PUT /api/manage-orders/orders/:orderId
  * Update basic order fields (MasterAdmin only)
