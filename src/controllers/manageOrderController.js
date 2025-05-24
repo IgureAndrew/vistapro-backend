@@ -246,18 +246,13 @@ async function getOrderHistory(req, res, next) {
           ARRAY[]::text[]
         ) AS imeis
 
-      FROM orders o
-
+     FROM orders o
       JOIN users    m  ON o.marketer_id = m.id
       JOIN products p  ON o.product_id  = p.id
-
-      -- TURN THESE INTO LEFT JOINs so that free‐mode or just‐placed orders still appear
-      LEFT JOIN order_items    oi ON oi.order_id          = o.id
-      LEFT JOIN inventory_items ii ON ii.id               = oi.inventory_item_id
-
-      -- join through the hierarchy for Admin / SuperAdmin filtering
-      JOIN users a  ON m.admin_id       = a.id
-      JOIN users s  ON a.super_admin_id = s.id
+      LEFT JOIN order_items    oi ON oi.order_id           = o.id
+      LEFT JOIN inventory_items ii ON ii.id                = oi.inventory_item_id
+      LEFT JOIN users    a  ON m.admin_id      = a.id
+      LEFT JOIN users    s  ON a.super_admin_id = s.id
 
       ${where}
 
