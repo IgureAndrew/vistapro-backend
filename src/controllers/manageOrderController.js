@@ -79,7 +79,8 @@ async function confirmOrder(req, res, next) {
     if (!o) {
       throw { status: 404, message: 'Order not found or already confirmed.' };
     }
-    const { marketer_id, product_id, stock_update_id, qty, commission_paid } = o;
+    const { marketer_id } = o;
+    let   { product_id, stock_update_id, qty, commission_paid } = o;
 
     // 2) Persist product_id if missing
     if (!product_id && stock_update_id) {
@@ -88,10 +89,14 @@ async function confirmOrder(req, res, next) {
         [stock_update_id]
       );
       if (!su) throw { status: 404, message: 'Associated stock update missing.' };
+
+      // update DB
       await client.query(
         `UPDATE orders SET product_id = $1 WHERE id = $2`,
         [su.product_id, orderId]
       );
+      // **reassign local variable** so next SELECT works
+      product_id = su.product_id;
     }
 
     // 3) Collect reserved IMEI rows to sell
@@ -130,6 +135,8 @@ async function confirmOrder(req, res, next) {
         [marketer_id]
       );
       const marketerUid = mu.unique_id;
+
+      // Now product_id is guaranteed set
       const { rows: [prd] } = await client.query(
         `SELECT device_type FROM products WHERE id = $1`,
         [product_id]
@@ -188,6 +195,7 @@ async function confirmOrder(req, res, next) {
     client.release();
   }
 }
+
 
 /**
  * PATCH /api/manage-orders/orders/:orderId/confirm-to-dealer
