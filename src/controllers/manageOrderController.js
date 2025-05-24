@@ -151,17 +151,21 @@ async function confirmOrder(req, res, next) {
       // record the sale
       await client.query(
         `INSERT INTO sales_record (
-           order_id, product_id, sale_date, quantity_sold, initial_profit
-         ) VALUES (
-           $1, $2, NOW(), $3,
-           (
-             SELECT (selling_price - cost_price) * $3
-               FROM products
-              WHERE id = $2
-           )
-         )`,
-        [orderId, product_id, qty]
-      );
+     order_id,
+     product_id,
+     sale_date,
+     quantity_sold,
+     initial_profit
+   ) VALUES (
+     $1, $2, NOW(), $3,
+     (
+       SELECT (selling_price - cost_price) * $3::integer
+         FROM products
+        WHERE id = $2
+     )
+   )`,
+  [orderId, product_id, qty]
+);
 
       // mark commissions paid
       await client.query(
