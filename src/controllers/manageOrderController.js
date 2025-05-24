@@ -59,125 +59,144 @@ async function getPendingOrders(req, res, next) {
  */
 
 
-// src/controllers/manageOrderController.js
+
+/**
+ * PATCH /api/manage-orders/orders/:orderId/confirm
+ * Confirm a pending order: persist product_id if needed,
+ * record IMEIs sold, update stock, pay commissions, and mark as released_confirmed.
+ */
 async function confirmOrder(req, res, next) {
-  const { orderId } = req.params;
-  const client      = await pool.connect();
+  const orderId = parseInt(req.params.orderId, 10);
+  const client  = await pool.connect();
 
   try {
-    await client.query("BEGIN");
+    await client.query('BEGIN');
 
-    // 1) Fetch & lock the order (including marketer_id)
-    const { rows: [o] } = await client.query(`
-      SELECT
-        marketer_id,
-        product_id,
-        stock_update_id,
-        number_of_devices AS qty,
-        commission_paid
-      FROM orders
-      WHERE id = $1
-      FOR UPDATE
-    `, [orderId]);
-    if (!o) throw new Error("Order not found");
-
+    // 1) Fetch & lock the order
+    const { rows: [o] } = await client.query(
+      `SELECT marketer_id, product_id, stock_update_id, number_of_devices AS qty, commission_paid
+         FROM orders
+        WHERE id = $1
+          AND status = 'pending'
+        FOR UPDATE`,
+      [orderId]
+    );
+    if (!o) {
+      throw { status: 404, message: 'Order not found or already confirmed.' };
+    }
     let { marketer_id, product_id, stock_update_id, qty, commission_paid } = o;
 
-    // 2) Resolve product_id if this was a stock pickup
+    // 2) If stock pickup mode and no product_id, persist it
     if (!product_id && stock_update_id) {
-      const { rows: [su] } = await client.query(`
-        SELECT product_id
-          FROM stock_updates
-         WHERE id = $1
-      `, [stock_update_id]);
-      if (!su) throw new Error("Stock update record not found");
+      const { rows: [su] } = await client.query(
+        `SELECT product_id FROM stock_updates WHERE id = $1`,
+        [stock_update_id]
+      );
+      if (!su) throw { status: 404, message: 'Associated stock update missing.' };
       product_id = su.product_id;
-
-      // ★ Persist the resolved product_id back onto the order ★
-      await client.query(`
-        UPDATE orders
-           SET product_id = $1
-         WHERE id = $2
-      `, [product_id, orderId]);
+      await client.query(
+        `UPDATE orders SET product_id = $1 WHERE id = $2`,
+        [product_id, orderId]
+      );
     }
 
-    // 3) Look up device_type for commission rates
-    const { rows: [prd] } = await client.query(`
-      SELECT device_type
-        FROM products
-       WHERE id = $1
-    `, [product_id]);
-    const deviceType = prd.device_type;
+    // 3) Collect IMEI rows to sell
+    const { rows: items } = await client.query(
+      `SELECT id
+         FROM inventory_items
+        WHERE stock_update_id = $1
+          AND status          = 'reserved'
+        LIMIT $2
+        FOR UPDATE SKIP LOCKED`,
+      [stock_update_id, qty]
+    );
+    const itemIds = items.map(r => r.id);
+    if (itemIds.length < qty) {
+      throw { status: 400, message: 'Not enough reserved items to confirm order.' };
+    }
 
-    // 4) Look up marketer's unique_id
-    const { rows: [mu] } = await client.query(`
-      SELECT unique_id
-        FROM users
-       WHERE id = $1
-    `, [marketer_id]);
-    const marketerUid = mu.unique_id;
+    // 4) Insert into order_items
+    for (let iid of itemIds) {
+      await client.query(
+        `INSERT INTO order_items (order_id, inventory_item_id) VALUES ($1, $2)`,
+        [orderId, iid]
+      );
+    }
 
-    // 5) Pay commissions and record sale exactly once
+    // 5) Mark those inventory_items as sold
+    await client.query(
+      `UPDATE inventory_items SET status = 'sold' WHERE id = ANY($1::int[])`,
+      [itemIds]
+    );
+
+    // 6) Pay commissions & record sale only once
     if (!commission_paid) {
+      const { rows: [mu] } = await client.query(
+        `SELECT unique_id FROM users WHERE id = $1`,
+        [marketer_id]
+      );
+      const marketerUid = mu.unique_id;
+      const { rows: [prd] } = await client.query(
+        `SELECT device_type FROM products WHERE id = $1`,
+        [product_id]
+      );
+      const deviceType = prd.device_type;
+
+      // credit commissions
       await creditMarketerCommission(marketerUid, orderId, deviceType, qty);
-      await creditAdminCommission(     marketerUid, orderId,          qty);
-      await creditSuperAdminCommission(marketerUid, orderId,          qty);
+      await creditAdminCommission(marketerUid, orderId, qty);
+      await creditSuperAdminCommission(marketerUid, orderId, qty);
 
-      await client.query(`
-        INSERT INTO sales_record (
-          order_id,
-          product_id,
-          sale_date,
-          quantity_sold,
-          initial_profit
-        ) VALUES (
-          $1, $2, NOW(), $3::integer,
-          (
-            SELECT (selling_price - cost_price) * $3::integer
-              FROM products
-             WHERE id = $2
-          )::NUMERIC(14,2)
-        )
-      `, [orderId, product_id, qty]);
+      // record the sale
+      await client.query(
+        `INSERT INTO sales_record (
+           order_id, product_id, sale_date, quantity_sold, initial_profit
+         ) VALUES (
+           $1, $2, NOW(), $3,
+           (
+             SELECT (selling_price - cost_price) * $3
+               FROM products
+              WHERE id = $2
+           )
+         )`,
+        [orderId, product_id, qty]
+      );
 
-      await client.query(`
-        UPDATE orders
-           SET commission_paid = TRUE
-         WHERE id = $1
-      `, [orderId]);
+      // mark commissions paid
+      await client.query(
+        `UPDATE orders SET commission_paid = TRUE WHERE id = $1`,
+        [orderId]
+      );
     }
 
-    // 6) Mark the order confirmed
-    await client.query(`
-      UPDATE orders
-         SET status       = 'released_confirmed',
-             confirmed_at = NOW(),
-             updated_at   = NOW()
-       WHERE id = $1
-    `, [orderId]);
+    // 7) Mark order released_confirmed
+    await client.query(
+      `UPDATE orders
+         SET status = 'released_confirmed', confirmed_at = NOW(), updated_at = NOW()
+       WHERE id = $1`,
+      [orderId]
+    );
 
-    // 7) If it was a stock pickup, mark that stock sold
+    // 8) If it was stock_update, mark stock sold
     if (stock_update_id) {
-      await client.query(`
-        UPDATE stock_updates
-           SET status     = 'sold',
-               updated_at = NOW()
-         WHERE id = $1
-      `, [stock_update_id]);
+      await client.query(
+        `UPDATE stock_updates SET status = 'sold', updated_at = NOW() WHERE id = $1`,
+        [stock_update_id]
+      );
     }
 
-    await client.query("COMMIT");
-    res.json({
-      message:
-        "Order released_confirmed, product_id persisted, commissions & sale recorded once, stock marked sold."
-    });
+    await client.query('COMMIT');
+    res.json({ message: 'Order confirmed, IMEIs recorded, commissions paid & stock marked sold.' });
+
   } catch (err) {
-    await client.query("ROLLBACK");
+    await client.query('ROLLBACK');
+    if (err.status) return res.status(err.status).json({ message: err.message });
     next(err);
   } finally {
     client.release();
   }
 }
+
 
 
 /**
