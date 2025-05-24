@@ -235,19 +235,35 @@ const createStockUpdate = async (req, res, next) => {
     client.release();
   }
 };
-
 /**
  * POST /api/marketer/stock-pickup/order
- * Place an order, preferring a pending pickup over free mode.
+ * Place an order, preferring a pending pickup over free mode,
+ * then record the exact IMEIs sold.
  */
 async function placeOrder(req, res, next) {
   const marketerUID = req.user.unique_id;
-  const { stock_update_id, product_id, number_of_devices, sold_amount,
-          customer_name, customer_phone, customer_address, bnpl_platform } = req.body;
+  let {
+    stock_update_id,
+    product_id,
+    number_of_devices,
+    sold_amount,
+    customer_name,
+    customer_phone,
+    customer_address,
+    bnpl_platform
+  } = req.body;
 
+  // Normalize inputs
+  stock_update_id   = stock_update_id ? parseInt(stock_update_id, 10) : null;
+  product_id        = product_id        ? parseInt(product_id, 10)        : null;
+  number_of_devices = parseInt(number_of_devices, 10);
+
+  const client = await pool.connect();
   try {
-    // 3.1 Look for any “live” pickup you still hold
-    const { rows: live } = await pool.query(
+    await client.query('BEGIN');
+
+    // 1) find any live pickup
+    const { rows: live } = await client.query(
       `SELECT id, product_id
          FROM stock_updates
         WHERE marketer_id = (SELECT id FROM users WHERE unique_id = $1)
@@ -256,33 +272,28 @@ async function placeOrder(req, res, next) {
       [marketerUID]
     );
 
-    let useStockId = null, useProductId;
+    let useStockId   = null;
+    let useProductId = null;
 
     if (live.length) {
-      // you have a live pickup → must use it
       if (!stock_update_id) {
-        return res.status(400).json({
-          message: "You have reserved stock—please supply stock_update_id to sell it."
-        });
+        throw { status: 400, message: "You have reserved stock—please supply stock_update_id." };
       }
       const pick = live.find(p => p.id === +stock_update_id);
       if (!pick) {
-        return res.status(403).json({ message: "Invalid or expired pickup selected." });
+        throw { status: 403, message: "Invalid or expired pickup selected." };
       }
       useStockId   = pick.id;
       useProductId = pick.product_id;
     } else {
-      // no pickup → free mode
       if (!product_id) {
-        return res.status(400).json({
-          message: "No held stock—please supply product_id to place a free order."
-        });
+        throw { status: 400, message: "No held stock—please supply product_id to place a free order." };
       }
       useProductId = product_id;
     }
 
-    // 3.2 Insert a “pending” order record
-    const { rows: [order] } = await pool.query(`
+    // 2) insert order row
+    const { rows: [order] } = await client.query(`
       INSERT INTO orders (
         marketer_id,
         product_id,
@@ -299,29 +310,74 @@ async function placeOrder(req, res, next) {
         created_at
       ) VALUES (
         (SELECT id FROM users WHERE unique_id = $1),
-        $2, $3, $4, $5, $6, $7, $8, $9, 0,  -- earnings_per_device=0 until admin confirm
+        $2, $3, $4, $5, $6, $7, $8, $9, 0,
         'pending', NOW(), NOW()
       )
-      RETURNING *`,
-      [
-        marketerUID,
-        useProductId,
-        useStockId,
-        number_of_devices,
-        sold_amount,
-        customer_name,
-        customer_phone,
-        customer_address,
-        bnpl_platform || null
-      ]
-    );
+      RETURNING id
+    `, [
+      marketerUID,
+      useProductId,
+      useStockId,
+      number_of_devices,
+      sold_amount,
+      customer_name,
+      customer_phone,
+      customer_address,
+      bnpl_platform || null
+    ]);
 
+    // ─── NEW: figure out exactly which inventory_items we sold ─────────────────
+    let { rows: itemRows } = useStockId
+      ? await client.query(`
+          SELECT id
+            FROM inventory_items
+           WHERE stock_update_id = $1
+             AND status          = 'reserved'
+           LIMIT $2
+           FOR UPDATE SKIP LOCKED
+        `, [ useStockId, number_of_devices ])
+      : await client.query(`
+          SELECT id
+            FROM inventory_items
+           WHERE product_id = $1
+             AND status     = 'available'
+           LIMIT $2
+           FOR UPDATE SKIP LOCKED
+        `, [ useProductId, number_of_devices ]);
+
+    const soldItemIds = itemRows.map(r => r.id);
+
+    // 3) mark those items as sold
+    if (soldItemIds.length) {
+      await client.query(`
+        UPDATE inventory_items
+           SET status = 'sold'
+         WHERE id = ANY($1::int[])
+      `, [ soldItemIds ]);
+    }
+
+    // 4) record in order_items
+    for (let iid of soldItemIds) {
+      await client.query(`
+        INSERT INTO order_items (order_id, inventory_item_id)
+        VALUES ($1, $2)
+      `, [ order.id, iid ]);
+    }
+    // ────────────────────────────────────────────────────────────────────
+
+    await client.query('COMMIT');
     res.status(201).json({
       message: "Order placed and awaiting confirmation.",
       order
     });
   } catch (err) {
+    await client.query('ROLLBACK');
+    if (err.status) {
+      return res.status(err.status).json({ message: err.message });
+    }
     next(err);
+  } finally {
+    client.release();
   }
 }
 
