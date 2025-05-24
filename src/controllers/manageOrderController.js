@@ -52,27 +52,35 @@ async function getPendingOrders(req, res, next) {
  * Confirm a pending pickup order: record IMEIs sold, update stock,
  * pay commissions, and mark as released_confirmed.
  */
+// src/controllers/manageOrderController.js
+
 async function confirmOrder(req, res, next) {
   const orderId = parseInt(req.params.orderId, 10);
   const client  = await pool.connect();
 
   try {
-    await client.query('BEGIN');
+    await client.query("BEGIN");
 
-    // 1) Fetch & lock the order
-    const { rows: [o] } = await client.query(
-      `SELECT marketer_id, product_id, stock_update_id, number_of_devices AS qty, commission_paid
-         FROM orders
-        WHERE id = $1
-          AND status = 'pending'
-        FOR UPDATE`,
-      [orderId]
-    );
+    // 1) Lock & fetch
+    const { rows: [o] } = await client.query(`
+      SELECT
+        marketer_id,
+        product_id,
+        stock_update_id,
+        number_of_devices AS qty,
+        commission_paid
+      FROM orders
+      WHERE id = $1
+        AND status = 'pending'
+      FOR UPDATE
+    `, [orderId]);
+
     if (!o) {
-      throw { status: 404, message: 'Order not found or already confirmed.' };
+      throw { status: 404, message: "Order not found or already confirmed." };
     }
-    const { marketer_id } = o;
-    let   { product_id, stock_update_id, qty, commission_paid } = o;
+
+    const { marketer_id, stock_update_id, qty, commission_paid } = o;
+    let   { product_id } = o;   // note: we’ll reassign if missing
 
     // 2) Persist product_id if missing
     if (!product_id && stock_update_id) {
@@ -80,55 +88,25 @@ async function confirmOrder(req, res, next) {
         `SELECT product_id FROM stock_updates WHERE id = $1`,
         [stock_update_id]
       );
-      if (!su) throw { status: 404, message: 'Associated stock update missing.' };
+      if (!su) throw { status: 404, message: "Associated stock update not found." };
 
-      // update DB
       await client.query(
         `UPDATE orders SET product_id = $1 WHERE id = $2`,
         [su.product_id, orderId]
       );
-      // **reassign local variable** so next SELECT works
       product_id = su.product_id;
     }
 
-    // 3) Collect reserved IMEI rows to sell
-    const { rows: items } = await client.query(
-      `SELECT id
-         FROM inventory_items
-        WHERE stock_update_id = $1
-          AND status          = 'reserved'
-        LIMIT $2
-        FOR UPDATE SKIP LOCKED`,
-      [stock_update_id, qty]
-    );
-    const itemIds = items.map(r => r.id);
-    if (itemIds.length < qty) {
-      throw { status: 400, message: 'Not enough reserved items to confirm order.' };
-    }
-
-    // 4) Insert into order_items
-    for (let iid of itemIds) {
-      await client.query(
-        `INSERT INTO order_items (order_id, inventory_item_id) VALUES ($1, $2)`,
-        [orderId, iid]
-      );
-    }
-
-    // 5) Mark those inventory_items as sold
-    await client.query(
-      `UPDATE inventory_items SET status = 'sold' WHERE id = ANY($1::int[])`,
-      [itemIds]
-    );
-
-    // 6) Pay commissions & record sale only once
+    // 3) Pay commissions & record sale (once only)
     if (!commission_paid) {
+      // fetch marketer UID
       const { rows: [mu] } = await client.query(
         `SELECT unique_id FROM users WHERE id = $1`,
         [marketer_id]
       );
       const marketerUid = mu.unique_id;
 
-      // Now product_id is guaranteed set
+      // fetch device_type
       const { rows: [prd] } = await client.query(
         `SELECT device_type FROM products WHERE id = $1`,
         [product_id]
@@ -137,27 +115,26 @@ async function confirmOrder(req, res, next) {
 
       // credit commissions
       await creditMarketerCommission(marketerUid, orderId, deviceType, qty);
-      await creditAdminCommission(marketerUid, orderId, qty);
+      await creditAdminCommission    (marketerUid, orderId, qty);
       await creditSuperAdminCommission(marketerUid, orderId, qty);
 
-      // record the sale
-      await client.query(
-        `INSERT INTO sales_record (
-     order_id,
-     product_id,
-     sale_date,
-     quantity_sold,
-     initial_profit
-   ) VALUES (
-     $1, $2, NOW(), $3,
-     (
-       SELECT (selling_price - cost_price) * $3::integer
-         FROM products
-        WHERE id = $2
-     )
-   )`,
-  [orderId, product_id, qty]
-);
+      // record in sales_record
+      await client.query(`
+        INSERT INTO sales_record (
+          order_id,
+          product_id,
+          sale_date,
+          quantity_sold,
+          initial_profit
+        ) VALUES (
+          $1, $2, NOW(), $3,
+          (
+            SELECT (selling_price - cost_price) * $3
+              FROM products
+             WHERE id = $2
+          )
+        )
+      `, [orderId, product_id, qty]);
 
       // mark commissions paid
       await client.query(
@@ -166,32 +143,37 @@ async function confirmOrder(req, res, next) {
       );
     }
 
-    // 7) Mark order released_confirmed
-    await client.query(
-      `UPDATE orders
-         SET status = 'released_confirmed', confirmed_at = NOW(), updated_at = NOW()
-       WHERE id = $1`,
-      [orderId]
-    );
+    // 4) Mark order released_confirmed
+    await client.query(`
+      UPDATE orders
+         SET status = 'released_confirmed',
+             confirmed_at = NOW(),
+             updated_at   = NOW()
+       WHERE id = $1
+    `, [orderId]);
 
-    // 8) Update stock_update status to sold
-    await client.query(
-      `UPDATE stock_updates SET status = 'sold', updated_at = NOW() WHERE id = $1`,
-      [stock_update_id]
-    );
+    // 5) Optionally mark the stock_update fully sold
+    if (stock_update_id) {
+      await client.query(`
+        UPDATE stock_updates
+           SET status     = 'sold',
+               updated_at = NOW()
+         WHERE id = $1
+      `, [stock_update_id]);
+    }
 
-    await client.query('COMMIT');
-    res.json({ message: 'Order confirmed, IMEIs recorded, commissions paid & stock marked sold.' });
-
+    await client.query("COMMIT");
+    res.json({
+      message: "Order confirmed, commissions paid & status updated."
+    });
   } catch (err) {
-    await client.query('ROLLBACK');
+    await client.query("ROLLBACK");
     if (err.status) return res.status(err.status).json({ message: err.message });
     next(err);
   } finally {
     client.release();
   }
 }
-
 
 /**
  * PATCH /api/manage-orders/orders/:orderId/confirm-to-dealer
