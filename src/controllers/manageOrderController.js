@@ -226,6 +226,8 @@ async function confirmOrderToDealer(req, res, next) {
  * List all (pending+confirmed) orders with device info and IMEIs,
  * filtered by adminId or superAdminId if provided in query.
  */
+// src/controllers/manageOrderController.js
+
 async function getOrderHistory(req, res, next) {
   try {
     // build dynamic WHERE clauses for Admin/SuperAdmin filters
@@ -251,33 +253,30 @@ async function getOrderHistory(req, res, next) {
         o.sale_date,
         o.status,
 
-        -- Marketer name
         m.first_name || ' ' || m.last_name AS marketer_name,
 
-        -- Device info
         p.device_name,
         p.device_model,
         p.device_type,
 
-        -- Aggregate IMEIs from both order_items *and* stock_update reservations
-        COALESCE(
-          ARRAY_AGG(distinct inv.imei ORDER BY inv.id)
-            FILTER (WHERE inv.imei IS NOT NULL),
-          ARRAY[]::text[]
-        ) AS imeis
+        -- simple aggregation of all IMEIs; FILTER removes nulls
+        ARRAY_AGG(inv.imei) 
+          FILTER (WHERE inv.imei IS NOT NULL) AS imeis
 
       FROM orders o
       JOIN users    m  ON o.marketer_id = m.id
-      JOIN products p  ON p.id          =
-        COALESCE(o.product_id,
-                 (SELECT product_id FROM stock_updates su WHERE su.id = o.stock_update_id))
-      LEFT JOIN order_items    oi ON oi.order_id           = o.id
-      LEFT JOIN inventory_items inv 
+      JOIN products p  ON p.id          = COALESCE(
+                                     o.product_id,
+                                     (SELECT product_id FROM stock_updates su WHERE su.id = o.stock_update_id)
+                                   )
+      LEFT JOIN order_items    oi
+        ON oi.order_id = o.id
+      LEFT JOIN inventory_items inv
         ON inv.id = oi.inventory_item_id
         OR inv.stock_update_id = o.stock_update_id
 
-      LEFT JOIN users a ON m.admin_id      = a.id
-      LEFT JOIN users s ON a.super_admin_id = s.id
+      LEFT JOIN users a ON m.admin_id        = a.id
+      LEFT JOIN users s ON a.super_admin_id  = s.id
 
       ${where}
 
@@ -295,6 +294,7 @@ async function getOrderHistory(req, res, next) {
     next(err);
   }
 }
+
 
 /**
  * PUT /api/manage-orders/orders/:orderId
