@@ -11,46 +11,48 @@ const {
 
 /**
  * GET /api/manage-orders/orders
- * (MasterAdmin only) list all pending orders with device info + IMEIs
+ * (MasterAdmin only) List pending orders with device info and IMEIs
  */
 async function getPendingOrders(req, res, next) {
   try {
     const { rows } = await pool.query(`
       SELECT
-  o.id,
-  o.bnpl_platform,
-  o.number_of_devices,
-  o.sold_amount,
-  o.sale_date,
-  o.status,
-  m.first_name || ' ' || m.last_name AS marketer_name,
+        o.id,
+        o.bnpl_platform,
+        o.number_of_devices,
+        o.sold_amount,
+        o.sale_date,
+        o.status,
 
-  -- product/device
-  p.device_name,
-  p.device_model,
-  p.device_type,
+        -- marketer name
+        m.first_name || ' ' || m.last_name AS marketer_name,
 
-  -- grab IMEIs that are reserved on this stock_update
-  COALESCE(
-    ARRAY_AGG(res.imei ORDER BY res.id)
-      FILTER (WHERE res.imei IS NOT NULL),
-    ARRAY[]::text[]
-  ) AS imeis
+        -- device info from products
+        p.device_name,
+        p.device_model,
+        p.device_type,
 
-FROM orders o
-JOIN users    m   ON o.marketer_id = m.id
-JOIN products p   ON o.product_id  = p.id
+        -- aggregate all IMEIs (from order_items → inventory_items)
+        COALESCE(
+          ARRAY_AGG(ii.imei ORDER BY ii.id)
+            FILTER (WHERE ii.imei IS NOT NULL),
+          ARRAY[]::text[]
+        ) AS imeis
 
--- instead of joining order_items, just pull whatever’s reserved
-LEFT JOIN inventory_items res
-  ON res.stock_update_id = o.stock_update_id
+      FROM orders o
+      JOIN users    m  ON o.marketer_id = m.id
+      JOIN products p  ON o.product_id  = p.id
+      LEFT JOIN order_items    oi ON oi.order_id          = o.id
+      LEFT JOIN inventory_items ii ON ii.id               = oi.inventory_item_id
 
-WHERE o.status = 'pending'
-GROUP BY
-  o.id,
-  m.first_name, m.last_name,
-  p.device_name, p.device_model, p.device_type
-ORDER BY o.sale_date DESC;
+      WHERE o.status = 'pending'
+
+      GROUP BY
+        o.id,
+        m.first_name, m.last_name,
+        p.device_name, p.device_model, p.device_type
+
+      ORDER BY o.sale_date DESC
     `);
 
     res.json({ orders: rows });
@@ -210,11 +212,25 @@ async function confirmOrderToDealer(req, res, next) {
 
 /**
  * GET /api/manage-orders/orders/history
- * Lists historical orders with device details + IMEIs.
+ * List all (pending+confirmed) orders with device info and IMEIs,
+ * filtered by adminId or superAdminId if provided in query.
  */
 async function getOrderHistory(req, res, next) {
   try {
-    // if you need to filter by adminId / superAdminId, pull them from req.query and add WHERE clauses + params below
+    // build role-based WHERE clauses
+    const clauses = [];
+    const params = [];
+    if (req.query.adminId) {
+      params.push(req.query.adminId);
+      clauses.push(`m.admin_id = $${params.length}`);
+    }
+    if (req.query.superAdminId) {
+      params.push(req.query.superAdminId);
+      clauses.push(`s.unique_id = $${params.length}`);
+    }
+    const where =
+      clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+
     const { rows } = await pool.query(`
       SELECT
         o.id,
@@ -224,40 +240,35 @@ async function getOrderHistory(req, res, next) {
         o.sale_date,
         o.status,
 
-        -- product columns
+        m.first_name || ' ' || m.last_name AS marketer_name,
+
         p.device_name,
         p.device_model,
         p.device_type,
 
-        -- who placed it
-        m.first_name || ' ' || m.last_name AS marketer_name,
-
-        -- aggregate any IMEIs from the underlying inventory_items
         COALESCE(
-          ARRAY_AGG(iv.imei ORDER BY iv.id)
-            FILTER (WHERE iv.imei IS NOT NULL),
+          ARRAY_AGG(ii.imei ORDER BY ii.id)
+            FILTER (WHERE ii.imei IS NOT NULL),
           ARRAY[]::text[]
         ) AS imeis
 
       FROM orders o
-      JOIN users    m ON o.marketer_id  = m.id
-      JOIN products p ON o.product_id   = p.id
-      LEFT JOIN order_items    oi ON oi.order_id              = o.id
-      LEFT JOIN inventory_items iv ON iv.id                   = oi.inventory_item_id
+      JOIN users    m  ON o.marketer_id = m.id
+      JOIN products p  ON o.product_id  = p.id
+      LEFT JOIN order_items    oi ON oi.order_id          = o.id
+      LEFT JOIN inventory_items ii ON ii.id               = oi.inventory_item_id
+      JOIN users    a  ON m.admin_id      = a.id
+      JOIN users    s  ON a.super_admin_id = s.id
 
-      /* Add your WHERE here, for example:
-         WHERE o.status IN ('confirmed','released_confirmed')
-           AND ( $1::text IS NULL OR m.admin_id = $1 )
-           AND ( $2::text IS NULL OR m.super_admin_id = $2 )
-      */
+      ${where}
 
       GROUP BY
         o.id,
-        p.device_name, p.device_model, p.device_type,
-        m.first_name, m.last_name
+        m.first_name, m.last_name,
+        p.device_name, p.device_model, p.device_type
 
       ORDER BY o.sale_date DESC
-    `  );
+    `, params);
 
     res.json({ orders: rows });
   } catch (err) {
