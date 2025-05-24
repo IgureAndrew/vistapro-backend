@@ -17,42 +17,40 @@ async function getPendingOrders(req, res, next) {
   try {
     const { rows } = await pool.query(`
       SELECT
-        o.id,
-        o.bnpl_platform,
-        o.number_of_devices,
-        o.sold_amount,
-        o.sale_date,
-        o.status,
+  o.id,
+  o.bnpl_platform,
+  o.number_of_devices,
+  o.sold_amount,
+  o.sale_date,
+  o.status,
+  m.first_name || ' ' || m.last_name AS marketer_name,
 
-        -- who placed it
-        m.first_name || ' ' || m.last_name AS marketer_name,
+  -- product/device
+  p.device_name,
+  p.device_model,
+  p.device_type,
 
-        -- device details
-        p.device_name,
-        p.device_model,
-        p.device_type,
+  -- grab IMEIs that are reserved on this stock_update
+  COALESCE(
+    ARRAY_AGG(res.imei ORDER BY res.id)
+      FILTER (WHERE res.imei IS NOT NULL),
+    ARRAY[]::text[]
+  ) AS imeis
 
-        -- collect any IMEIs attached via order_items → inventory_items
-        COALESCE(
-          ARRAY_AGG(iv.imei ORDER BY iv.id)
-            FILTER (WHERE iv.imei IS NOT NULL),
-          ARRAY[]::text[]
-        ) AS imeis
+FROM orders o
+JOIN users    m   ON o.marketer_id = m.id
+JOIN products p   ON o.product_id  = p.id
 
-      FROM orders o
-      JOIN users    m  ON o.marketer_id = m.id
-      JOIN products p  ON o.product_id  = p.id
-      LEFT JOIN order_items    oi ON oi.order_id              = o.id
-      LEFT JOIN inventory_items iv ON iv.id                   = oi.inventory_item_id
+-- instead of joining order_items, just pull whatever’s reserved
+LEFT JOIN inventory_items res
+  ON res.stock_update_id = o.stock_update_id
 
-      WHERE o.status = 'pending'
-
-      GROUP BY
-        o.id,
-        m.first_name, m.last_name,
-        p.device_name, p.device_model, p.device_type
-
-      ORDER BY o.sale_date DESC
+WHERE o.status = 'pending'
+GROUP BY
+  o.id,
+  m.first_name, m.last_name,
+  p.device_name, p.device_model, p.device_type
+ORDER BY o.sale_date DESC;
     `);
 
     res.json({ orders: rows });
