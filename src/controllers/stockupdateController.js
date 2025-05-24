@@ -254,7 +254,7 @@ async function placeOrder(req, res, next) {
   } = req.body;
 
   // Normalize inputs
-  stock_update_id   = stock_update_id ? parseInt(stock_update_id, 10) : null;
+  stock_update_id   = stock_update_id   ? parseInt(stock_update_id, 10)   : null;
   product_id        = product_id        ? parseInt(product_id, 10)        : null;
   number_of_devices = parseInt(number_of_devices, 10);
 
@@ -262,7 +262,7 @@ async function placeOrder(req, res, next) {
   try {
     await client.query('BEGIN');
 
-    // 1) find any live pickup
+    // 1) Find any live pickup for this marketer
     const { rows: live } = await client.query(
       `SELECT id, product_id
          FROM stock_updates
@@ -276,23 +276,29 @@ async function placeOrder(req, res, next) {
     let useProductId = null;
 
     if (live.length) {
+      // must supply stock_update_id
       if (!stock_update_id) {
-        throw { status: 400, message: "You have reserved stock—please supply stock_update_id." };
+        return res.status(400).json({
+          message: "You have reserved stock—please supply stock_update_id."
+        });
       }
-      const pick = live.find(p => p.id === +stock_update_id);
+      const pick = live.find(p => p.id === stock_update_id);
       if (!pick) {
-        throw { status: 403, message: "Invalid or expired pickup selected." };
+        return res.status(403).json({ message: "Invalid or expired pickup selected." });
       }
       useStockId   = pick.id;
       useProductId = pick.product_id;
     } else {
+      // free-mode: must supply product_id
       if (!product_id) {
-        throw { status: 400, message: "No held stock—please supply product_id to place a free order." };
+        return res.status(400).json({
+          message: "No held stock—please supply product_id to place a free order."
+        });
       }
       useProductId = product_id;
     }
 
-    // 2) insert order row
+    // 2) Insert the order (pending until MasterAdmin confirms)
     const { rows: [order] } = await client.query(`
       INSERT INTO orders (
         marketer_id,
@@ -326,8 +332,8 @@ async function placeOrder(req, res, next) {
       bnpl_platform || null
     ]);
 
-    // ─── NEW: figure out exactly which inventory_items we sold ─────────────────
-    let { rows: itemRows } = useStockId
+    // ── 3) Grab exactly the inventory_items we’re selling ────────
+    const { rows: itemRows } = useStockId
       ? await client.query(`
           SELECT id
             FROM inventory_items
@@ -347,7 +353,7 @@ async function placeOrder(req, res, next) {
 
     const soldItemIds = itemRows.map(r => r.id);
 
-    // 3) mark those items as sold
+    // 4) Mark them sold
     if (soldItemIds.length) {
       await client.query(`
         UPDATE inventory_items
@@ -356,14 +362,14 @@ async function placeOrder(req, res, next) {
       `, [ soldItemIds ]);
     }
 
-    // 4) record in order_items
+    // 5) Record each one in order_items
     for (let iid of soldItemIds) {
       await client.query(`
         INSERT INTO order_items (order_id, inventory_item_id)
         VALUES ($1, $2)
       `, [ order.id, iid ]);
     }
-    // ────────────────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────
 
     await client.query('COMMIT');
     res.status(201).json({
@@ -372,9 +378,6 @@ async function placeOrder(req, res, next) {
     });
   } catch (err) {
     await client.query('ROLLBACK');
-    if (err.status) {
-      return res.status(err.status).json({ message: err.message });
-    }
     next(err);
   } finally {
     client.release();
