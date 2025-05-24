@@ -235,70 +235,65 @@ const createStockUpdate = async (req, res, next) => {
     client.release();
   }
 };
+
 /**
  * POST /api/marketer/stock-pickup/order
- * Place an order, preferring a pending pickup over free mode,
- * then record the exact IMEIs sold.
+ * Place an order only from a pending pickup, record exact IMEIs sold.
  */
 async function placeOrder(req, res, next) {
   const marketerUID = req.user.unique_id;
-  let {
-    stock_update_id,
-    product_id,
-    number_of_devices,
-    sold_amount,
+  const stock_update_id   = parseInt(req.body.stock_update_id,   10);
+  const number_of_devices = parseInt(req.body.number_of_devices, 10);
+  const sold_amount       = parseFloat(req.body.sold_amount);
+  const {
     customer_name,
     customer_phone,
     customer_address,
     bnpl_platform
   } = req.body;
 
-  // Normalize inputs
-  stock_update_id   = stock_update_id   ? parseInt(stock_update_id, 10)   : null;
-  product_id        = product_id        ? parseInt(product_id, 10)        : null;
-  number_of_devices = parseInt(number_of_devices, 10);
+  // 0) Require a pickup
+  if (!stock_update_id) {
+    return res.status(400).json({
+      message: "This endpoint only supports orders from an existing stock pickup. Please supply stock_update_id."
+    });
+  }
+  if (!number_of_devices || number_of_devices < 1) {
+    return res.status(400).json({ message: "Must supply a valid number_of_devices." });
+  }
 
   const client = await pool.connect();
   try {
-    await client.query('BEGIN');
+    await client.query("BEGIN");
 
-    // 1) Find any live pickup for this marketer
-    const { rows: live } = await client.query(
-      `SELECT id, product_id
-         FROM stock_updates
-        WHERE marketer_id = (SELECT id FROM users WHERE unique_id = $1)
-          AND status IN ('pending','transfer_pending','transfer_approved')
-          AND deadline > NOW()`,
-      [marketerUID]
-    );
+    // 1) Lock & fetch the pending pickup
+    const { rows: [pickup] } = await client.query(`
+      SELECT id, product_id, quantity
+        FROM stock_updates
+       WHERE id           = $1
+         AND marketer_id  = (SELECT id FROM users WHERE unique_id = $2)
+         AND status       = 'pending'
+         AND deadline > NOW()
+       FOR UPDATE
+    `, [ stock_update_id, marketerUID ]);
 
-    let useStockId   = null;
-    let useProductId = null;
-
-    if (live.length) {
-      // must supply stock_update_id
-      if (!stock_update_id) {
-        return res.status(400).json({
-          message: "You have reserved stock—please supply stock_update_id."
-        });
-      }
-      const pick = live.find(p => p.id === stock_update_id);
-      if (!pick) {
-        return res.status(403).json({ message: "Invalid or expired pickup selected." });
-      }
-      useStockId   = pick.id;
-      useProductId = pick.product_id;
-    } else {
-      // free-mode: must supply product_id
-      if (!product_id) {
-        return res.status(400).json({
-          message: "No held stock—please supply product_id to place a free order."
-        });
-      }
-      useProductId = product_id;
+    if (!pickup) {
+      return res.status(404).json({ message: "No active pending pickup found with that ID." });
+    }
+    if (pickup.quantity < number_of_devices) {
+      return res.status(400).json({ message: "Not enough quantity remaining on that pickup." });
     }
 
-    // 2) Insert the order (pending until MasterAdmin confirms)
+    // 2) Decrement the pickup quantity (and close it if zero)
+    await client.query(`
+      UPDATE stock_updates
+         SET quantity = quantity - $1,
+             status   = CASE WHEN quantity - $1 <= 0 THEN 'sold' ELSE status END,
+             updated_at = NOW()
+       WHERE id = $2
+    `, [ number_of_devices, stock_update_id ]);
+
+    // 3) Create the order (pending until MasterAdmin confirms)
     const { rows: [order] } = await client.query(`
       INSERT INTO orders (
         marketer_id,
@@ -316,14 +311,15 @@ async function placeOrder(req, res, next) {
         created_at
       ) VALUES (
         (SELECT id FROM users WHERE unique_id = $1),
-        $2, $3, $4, $5, $6, $7, $8, $9, 0,
+        $2, $3, $4, $5,
+        $6, $7, $8, $9, 0,
         'pending', NOW(), NOW()
       )
       RETURNING id
     `, [
       marketerUID,
-      useProductId,
-      useStockId,
+      pickup.product_id,
+      stock_update_id,
       number_of_devices,
       sold_amount,
       customer_name,
@@ -332,28 +328,17 @@ async function placeOrder(req, res, next) {
       bnpl_platform || null
     ]);
 
-    // ── 3) Grab exactly the inventory_items we’re selling ────────
-    const { rows: itemRows } = useStockId
-      ? await client.query(`
-          SELECT id
-            FROM inventory_items
-           WHERE stock_update_id = $1
-             AND status          = 'reserved'
-           LIMIT $2
-           FOR UPDATE SKIP LOCKED
-        `, [ useStockId, number_of_devices ])
-      : await client.query(`
-          SELECT id
-            FROM inventory_items
-           WHERE product_id = $1
-             AND status     = 'available'
-           LIMIT $2
-           FOR UPDATE SKIP LOCKED
-        `, [ useProductId, number_of_devices ]);
+    // 4) Pull exactly the reserved IMEIs and mark them sold
+    const { rows: items } = await client.query(`
+      SELECT id
+        FROM inventory_items
+       WHERE stock_update_id = $1
+         AND status          = 'reserved'
+       LIMIT $2
+       FOR UPDATE SKIP LOCKED
+    `, [ stock_update_id, number_of_devices ]);
 
-    const soldItemIds = itemRows.map(r => r.id);
-
-    // 4) Mark them sold
+    const soldItemIds = items.map(r => r.id);
     if (soldItemIds.length) {
       await client.query(`
         UPDATE inventory_items
@@ -362,22 +347,21 @@ async function placeOrder(req, res, next) {
       `, [ soldItemIds ]);
     }
 
-    // 5) Record each one in order_items
+    // 5) Record them in order_items
     for (let iid of soldItemIds) {
       await client.query(`
         INSERT INTO order_items (order_id, inventory_item_id)
         VALUES ($1, $2)
       `, [ order.id, iid ]);
     }
-    // ─────────────────────────────────────────────────────
 
-    await client.query('COMMIT');
-    res.status(201).json({
-      message: "Order placed and awaiting confirmation.",
+    await client.query("COMMIT");
+    return res.status(201).json({
+      message: "Order placed and awaiting MasterAdmin confirmation.",
       order
     });
   } catch (err) {
-    await client.query('ROLLBACK');
+    await client.query("ROLLBACK");
     next(err);
   } finally {
     client.release();

@@ -1,12 +1,9 @@
 // src/controllers/productController.js
 const { pool } = require('../config/database');
 
-
 /**
  * addProduct
- * - Inserts the product.
- * - Bulk-inserts inventory_items via unnest and handles duplicates gracefully.
- * Expects `imeis: string[]` in the body.
+ * - Inserts the product record only; IMEIs are not handled here.
  */
 async function addProduct(req, res, next) {
   const {
@@ -16,27 +13,20 @@ async function addProduct(req, res, next) {
     device_model,
     cost_price,
     selling_price,
-    imeis,
   } = req.body;
 
   // 1) Validate required fields
   if (!dealer_id || !device_type || !device_name || !device_model ||
-      cost_price == null || selling_price == null ||
-      !Array.isArray(imeis) || imeis.length === 0) {
-    return res.status(400).json({ message: "Missing required fields or imeis array." });
-  }
-
-  // 2) Validate IMEI format
-  if (!imeis.every(i => /^\d{15}$/.test(i))) {
-    return res.status(400).json({ message: "All IMEIs must be 15-digit strings." });
+      cost_price == null || selling_price == null) {
+    return res.status(400).json({ message: "Missing required product fields." });
   }
 
   const client = await pool.connect();
   try {
-    // 3) Start transaction
+    // 2) Start transaction
     await client.query('BEGIN');
 
-    // 4) Optionally verify dealer exists
+    // 3) Verify dealer exists
     const dealerCheck = await client.query(
       'SELECT 1 FROM users WHERE id = $1',
       [dealer_id]
@@ -46,7 +36,7 @@ async function addProduct(req, res, next) {
       return res.status(404).json({ message: "Dealer not found." });
     }
 
-    // 5) Insert product
+    // 4) Insert product
     const insertProductSql = `
       INSERT INTO products (
         dealer_id, device_type, device_name, device_model,
@@ -59,41 +49,21 @@ async function addProduct(req, res, next) {
       [dealer_id, device_type, device_name, device_model, cost_price, selling_price]
     );
 
-    // 6) Bulk-insert IMEIs via unnest, skip duplicates
-    const insertImeisSql = `
-      INSERT INTO inventory_items (product_id, imei, status, created_at)
-      SELECT $1, unnest($2::text[]), 'available', NOW()
-      ON CONFLICT (imei) DO NOTHING
-    `;
-    await client.query(insertImeisSql, [product.id, imeis]);
-
-    // 7) Commit transaction
+    // 5) Commit transaction
     await client.query('COMMIT');
-    res.status(201).json({ message: "Product and IMEIs added successfully.", product });
+    res.status(201).json({ message: "Product added successfully.", product });
   } catch (err) {
-    // Rollback on error
     await client.query('ROLLBACK');
-
-    // Friendly error for duplicate IMEIs
-    if (err.code === '23505') {
-      return res.status(409).json({ message: "One or more IMEIs already exist." });
-    }
-    // Foreign key violation (e.g. dealer not found)
-    if (err.code === '23503') {
-      return res.status(400).json({ message: "Invalid foreign key reference." });
-    }
-
     next(err);
   } finally {
     client.release();
   }
 }
 
-
 /**
  * getProducts
  * Any authenticated user may list all products.
- * Includes dealer info, qty_available, is_low_stock & available_imeis.
+ * Includes dealer info, qty_available, is_low_stock, is_available.
  */
 async function getProducts(req, res, next) {
   try {
@@ -109,17 +79,15 @@ async function getProducts(req, res, next) {
         p.cost_price,
         p.selling_price,
         COALESCE(i.qty_available, 0) AS quantity_available,
-        (COALESCE(i.qty_available, 0) <= 2)            AS is_low_stock,
-        (COALESCE(i.qty_available, 0) > 0)             AS is_available,
-        COALESCE(i.available_imeis, ARRAY[]::text[])   AS available_imeis
+        (COALESCE(i.qty_available, 0) <= 2) AS is_low_stock,
+        (COALESCE(i.qty_available, 0) > 0) AS is_available
       FROM products p
       JOIN users u
         ON p.dealer_id = u.id
       LEFT JOIN (
         SELECT
           product_id,
-          COUNT(*) FILTER (WHERE status = 'available') AS qty_available,
-          ARRAY_AGG(imei) FILTER (WHERE status = 'available') AS available_imeis
+          COUNT(*) FILTER (WHERE status = 'available') AS qty_available
         FROM inventory_items
         GROUP BY product_id
       ) i
@@ -134,7 +102,7 @@ async function getProducts(req, res, next) {
 
 /**
  * listProducts
- * A simpler list for, e.g., dropdowns: no inventory details.
+ * A simpler list for dropdowns: no inventory details.
  */
 async function listProducts(req, res, next) {
   try {
@@ -146,11 +114,10 @@ async function listProducts(req, res, next) {
         p.device_type,
         p.cost_price,
         p.selling_price,
-        u.business_name   AS dealer_name,
-        u.location        AS dealer_location
+        u.business_name AS dealer_name,
+        u.location      AS dealer_location
       FROM products p
-      JOIN users u
-        ON u.id = p.dealer_id
+      JOIN users u ON u.id = p.dealer_id
       ORDER BY p.device_name
     `);
     res.json({ products: rows });
@@ -162,7 +129,7 @@ async function listProducts(req, res, next) {
 /**
  * updateProduct
  * Only MasterAdmin may update.
- * Adjusts fields and optionally adds new IMEIs.
+ * Adjusts product fields only; no IMEIs.
  */
 async function updateProduct(req, res, next) {
   const client = await pool.connect();
@@ -174,16 +141,10 @@ async function updateProduct(req, res, next) {
       device_model,
       cost_price,
       selling_price,
-      newImeis, // array of 15-digit strings
     } = req.body;
-
-    if (newImeis && (!Array.isArray(newImeis) || !newImeis.every(i => /^\d{15}$/.test(i)))) {
-      return res.status(400).json({ message: "newImeis must be an array of 15-digit strings." });
-    }
 
     await client.query('BEGIN');
 
-    // 1) update product row
     const { rows } = await client.query(`
       UPDATE products
          SET device_type   = COALESCE($1, device_type),
@@ -193,26 +154,15 @@ async function updateProduct(req, res, next) {
              selling_price = COALESCE($5, selling_price),
              updated_at    = NOW()
        WHERE id = $6
-     RETURNING *`,
-      [device_type, device_name, device_model, cost_price, selling_price, productId]
-    );
+     RETURNING *
+    `, [device_type, device_name, device_model, cost_price, selling_price, productId]);
+
     if (!rows.length) {
       await client.query('ROLLBACK');
       return res.status(404).json({ message: "Product not found." });
     }
-    const updatedProduct = rows[0];
-
-    // 2) insert any new IMEIs
-    if (newImeis?.length) {
-      const ph = newImeis.map((_, i) => `($1, $${i+2}, 'available', NOW())`).join(',');
-      await client.query(
-        `INSERT INTO inventory_items (product_id, imei, status, created_at) VALUES ${ph}`,
-        [productId, ...newImeis]
-      );
-    }
-
     await client.query('COMMIT');
-    res.json({ message: "Product updated successfully.", product: updatedProduct });
+    res.json({ message: "Product updated successfully.", product: rows[0] });
   } catch (err) {
     await client.query('ROLLBACK');
     next(err);
@@ -221,30 +171,25 @@ async function updateProduct(req, res, next) {
   }
 }
 
+/**
+ * deleteProduct
+ * Deletes a product and any related inventory (foreign key cascade assumed).
+ */
 async function deleteProduct(req, res, next) {
   const productId = req.params.id;
   const client    = await pool.connect();
 
   try {
     await client.query('BEGIN');
-
-    // (optional) explicitly clean up child rows if you didn't set ON DELETE CASCADE:
-    // await client.query(`DELETE FROM stock_updates WHERE product_id = $1`, [productId]);
-    // await client.query(`DELETE FROM inventory_items WHERE product_id = $1`, [productId]);
-
     const { rows } = await client.query(
-      `DELETE FROM products
-         WHERE id = $1
-       RETURNING *`,
+      `DELETE FROM products WHERE id = $1 RETURNING *`,
       [productId]
     );
-
     await client.query('COMMIT');
 
     if (!rows.length) {
       return res.status(404).json({ message: 'Product not found.' });
     }
-
     res.json({ message: 'Product deleted successfully.', product: rows[0] });
   } catch (err) {
     await client.query('ROLLBACK');
@@ -253,7 +198,6 @@ async function deleteProduct(req, res, next) {
     client.release();
   }
 }
-
 
 /**
  * getAllProducts
@@ -272,16 +216,13 @@ async function getAllProducts(req, res, next) {
         p.cost_price,
         p.selling_price,
         (p.selling_price - p.cost_price) AS profit,
-        COALESCE(i.qty_available, 0)      AS qty_available,
-        COALESCE(i.available_imeis, ARRAY[]::text[]) AS available_imeis
+        COALESCE(i.qty_available, 0)      AS qty_available
       FROM products p
-      JOIN users u
-        ON p.dealer_id = u.id
+      JOIN users u ON p.dealer_id = u.id
       LEFT JOIN (
         SELECT
           product_id,
-          COUNT(*) FILTER (WHERE status = 'available')      AS qty_available,
-          ARRAY_AGG(imei) FILTER (WHERE status = 'available') AS available_imeis
+          COUNT(*) FILTER (WHERE status = 'available') AS qty_available
         FROM inventory_items
         GROUP BY product_id
       ) i
