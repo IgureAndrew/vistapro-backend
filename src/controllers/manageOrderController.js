@@ -254,24 +254,30 @@ async function getOrderHistory(req, res, next) {
         -- Marketer name
         m.first_name || ' ' || m.last_name AS marketer_name,
 
-        -- Device info from the original product
+        -- Device info
         p.device_name,
         p.device_model,
         p.device_type,
 
-        -- Aggregate any IMEIs (if the order has been assigned inventory_items)
+        -- Aggregate IMEIs from both order_items *and* stock_update reservations
         COALESCE(
-          ARRAY_AGG(ii.imei ORDER BY ii.id) FILTER (WHERE ii.imei IS NOT NULL),
+          ARRAY_AGG(distinct inv.imei ORDER BY inv.id)
+            FILTER (WHERE inv.imei IS NOT NULL),
           ARRAY[]::text[]
         ) AS imeis
 
-     FROM orders o
+      FROM orders o
       JOIN users    m  ON o.marketer_id = m.id
-      JOIN products p  ON o.product_id  = p.id
+      JOIN products p  ON p.id          =
+        COALESCE(o.product_id,
+                 (SELECT product_id FROM stock_updates su WHERE su.id = o.stock_update_id))
       LEFT JOIN order_items    oi ON oi.order_id           = o.id
-      LEFT JOIN inventory_items ii ON ii.id                = oi.inventory_item_id
-      LEFT JOIN users    a  ON m.admin_id      = a.id
-      LEFT JOIN users    s  ON a.super_admin_id = s.id
+      LEFT JOIN inventory_items inv 
+        ON inv.id = oi.inventory_item_id
+        OR inv.stock_update_id = o.stock_update_id
+
+      LEFT JOIN users a ON m.admin_id      = a.id
+      LEFT JOIN users s ON a.super_admin_id = s.id
 
       ${where}
 
