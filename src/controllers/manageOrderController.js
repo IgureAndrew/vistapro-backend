@@ -8,11 +8,7 @@ const {
 
 /**
  * GET /api/manage-orders/orders
- * (MasterAdmin only) List pending pickup-based orders with device info and IMEIs
- */
-/**
- * GET /api/manage-orders/orders
- * (MasterAdmin only) List pending orders, using only the IMEIs saved at order‐time.
+ * List only the IMEIs typed in at order time (no reserved‐stock fallout).
  */
 async function getPendingOrders(req, res, next) {
   try {
@@ -28,8 +24,9 @@ async function getPendingOrders(req, res, next) {
         p.device_name,
         p.device_model,
         p.device_type,
+        -- use DISTINCT to guard against accidental duplicates
         COALESCE(
-          ARRAY_AGG(ii.imei ORDER BY ii.id)
+          ARRAY_AGG(DISTINCT ii.imei ORDER BY ii.id) 
             FILTER (WHERE ii.imei IS NOT NULL),
           ARRAY[]::text[]
         ) AS imeis
@@ -225,12 +222,22 @@ async function confirmOrderToDealer(req, res, next) {
 
 /**
  * GET /api/manage-orders/orders/history
- * (MasterAdmin only) List all orders (pending+confirmed),
- * using only the IMEIs saved at order‐time.
+ * Same logic for history: only pull IMEIs from the user‐entered list.
  */
 async function getOrderHistory(req, res, next) {
   try {
-    // optional filtering by admin/superAdmin omitted for brevity...
+    const clauses = [];
+    const params  = [];
+    if (req.query.adminId) {
+      params.push(req.query.adminId);
+      clauses.push(`m.admin_id = $${params.length}`);
+    }
+    if (req.query.superAdminId) {
+      params.push(req.query.superAdminId);
+      clauses.push(`s.unique_id = $${params.length}`);
+    }
+    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+
     const { rows } = await pool.query(`
       SELECT
         o.id,
@@ -243,11 +250,8 @@ async function getOrderHistory(req, res, next) {
         p.device_name,
         p.device_model,
         p.device_type,
-        COALESCE(
-          ARRAY_AGG(ii.imei ORDER BY ii.id)
-            FILTER (WHERE ii.imei IS NOT NULL),
-          ARRAY[]::text[]
-        ) AS imeis
+        ARRAY_AGG(DISTINCT ii.imei ORDER BY ii.id)
+          FILTER (WHERE ii.imei IS NOT NULL) AS imeis
       FROM orders o
       JOIN users m
         ON m.id = o.marketer_id
@@ -257,11 +261,17 @@ async function getOrderHistory(req, res, next) {
         ON oi.order_id = o.id
       LEFT JOIN inventory_items ii
         ON ii.id = oi.inventory_item_id
+      LEFT JOIN users a
+        ON m.admin_id = a.id
+      LEFT JOIN users s
+        ON a.super_admin_id = s.id
+      ${where}
       GROUP BY
         o.id, m.first_name, m.last_name,
         p.device_name, p.device_model, p.device_type
       ORDER BY o.sale_date DESC
-    `);
+    `, params);
+
     res.json({ orders: rows });
   } catch (err) {
     next(err);
