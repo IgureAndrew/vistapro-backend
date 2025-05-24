@@ -11,11 +11,7 @@ const {
 
 /**
  * GET /api/manage-orders/orders
- * List all pending orders for MasterAdmin to review.
- */
-/**
- * GET /api/manage-orders/orders
- * (MasterAdmin only) list all pending orders with their IMEIs
+ * (MasterAdmin only) list all pending orders with device info + IMEIs
  */
 async function getPendingOrders(req, res, next) {
   try {
@@ -27,21 +23,38 @@ async function getPendingOrders(req, res, next) {
         o.sold_amount,
         o.sale_date,
         o.status,
+
+        -- who placed it
         m.first_name || ' ' || m.last_name AS marketer_name,
-        -- aggregate IMEIs via the inventory_items table
-       COALESCE(
+
+        -- device details
+        p.device_name,
+        p.device_model,
+        p.device_type,
+
+        -- collect any IMEIs attached via order_items → inventory_items
+        COALESCE(
           ARRAY_AGG(iv.imei ORDER BY iv.id)
             FILTER (WHERE iv.imei IS NOT NULL),
           ARRAY[]::text[]
         ) AS imeis
+
       FROM orders o
-      JOIN users m ON o.marketer_id = m.id
-      LEFT JOIN order_items oi ON oi.order_id = o.id
-      LEFT JOIN inventory_items iv ON iv.id = oi.inventory_item_id
+      JOIN users    m  ON o.marketer_id = m.id
+      JOIN products p  ON o.product_id  = p.id
+      LEFT JOIN order_items    oi ON oi.order_id              = o.id
+      LEFT JOIN inventory_items iv ON iv.id                   = oi.inventory_item_id
+
       WHERE o.status = 'pending'
-      GROUP BY o.id, m.first_name, m.last_name
+
+      GROUP BY
+        o.id,
+        m.first_name, m.last_name,
+        p.device_name, p.device_model, p.device_type
+
       ORDER BY o.sale_date DESC
     `);
+
     res.json({ orders: rows });
   } catch (err) {
     next(err);
@@ -199,11 +212,11 @@ async function confirmOrderToDealer(req, res, next) {
 
 /**
  * GET /api/manage-orders/orders/history
- * (Master / Super / Admin) list all orders in history (any status) with their IMEIs
+ * Lists historical orders with device details + IMEIs.
  */
 async function getOrderHistory(req, res, next) {
   try {
-    // you probably already have role filters here...
+    // if you need to filter by adminId / superAdminId, pull them from req.query and add WHERE clauses + params below
     const { rows } = await pool.query(`
       SELECT
         o.id,
@@ -212,20 +225,42 @@ async function getOrderHistory(req, res, next) {
         o.sold_amount,
         o.sale_date,
         o.status,
+
+        -- product columns
+        p.device_name,
+        p.device_model,
+        p.device_type,
+
+        -- who placed it
         m.first_name || ' ' || m.last_name AS marketer_name,
-         COALESCE(
+
+        -- aggregate any IMEIs from the underlying inventory_items
+        COALESCE(
           ARRAY_AGG(iv.imei ORDER BY iv.id)
             FILTER (WHERE iv.imei IS NOT NULL),
           ARRAY[]::text[]
         ) AS imeis
+
       FROM orders o
-      JOIN users m ON o.marketer_id = m.id
-      LEFT JOIN order_items oi ON oi.order_id = o.id
-      LEFT JOIN inventory_items iv ON iv.id = oi.inventory_item_id
-      /* add your WHERE clauses for adminId / superAdminId here if needed */
-      GROUP BY o.id, m.first_name, m.last_name
+      JOIN users    m ON o.marketer_id  = m.id
+      JOIN products p ON o.product_id   = p.id
+      LEFT JOIN order_items    oi ON oi.order_id              = o.id
+      LEFT JOIN inventory_items iv ON iv.id                   = oi.inventory_item_id
+
+      /* Add your WHERE here, for example:
+         WHERE o.status IN ('confirmed','released_confirmed')
+           AND ( $1::text IS NULL OR m.admin_id = $1 )
+           AND ( $2::text IS NULL OR m.super_admin_id = $2 )
+      */
+
+      GROUP BY
+        o.id,
+        p.device_name, p.device_model, p.device_type,
+        m.first_name, m.last_name
+
       ORDER BY o.sale_date DESC
-    `);
+    `  );
+
     res.json({ orders: rows });
   } catch (err) {
     next(err);
