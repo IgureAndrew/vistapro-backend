@@ -23,38 +23,30 @@ async function getPendingOrders(req, res, next) {
         o.sold_amount,
         o.sale_date,
         o.status,
-
-        -- marketer name
         m.first_name || ' ' || m.last_name AS marketer_name,
 
-        -- device info from products
+        -- include the product details for pending orders
         p.device_name,
         p.device_model,
         p.device_type,
 
-        -- aggregate all IMEIs (from order_items → inventory_items)
+        -- aggregate any IMEIs, if present
         COALESCE(
-          ARRAY_AGG(ii.imei ORDER BY ii.id)
-            FILTER (WHERE ii.imei IS NOT NULL),
+          ARRAY_AGG(iv.imei ORDER BY iv.id) FILTER (WHERE iv.imei IS NOT NULL),
           ARRAY[]::text[]
         ) AS imeis
-
       FROM orders o
-      JOIN users    m  ON o.marketer_id = m.id
-      JOIN products p  ON o.product_id  = p.id
-      LEFT JOIN order_items    oi ON oi.order_id          = o.id
-      LEFT JOIN inventory_items ii ON ii.id               = oi.inventory_item_id
-
+      JOIN users m     ON m.id = o.marketer_id
+      LEFT JOIN products p     ON p.id = o.product_id
+      LEFT JOIN order_items oi ON oi.order_id = o.id
+      LEFT JOIN inventory_items iv
+            ON iv.id = oi.inventory_item_id
       WHERE o.status = 'pending'
-
       GROUP BY
-        o.id,
-        m.first_name, m.last_name,
+        o.id, m.first_name, m.last_name,
         p.device_name, p.device_model, p.device_type
-
       ORDER BY o.sale_date DESC
     `);
-
     res.json({ orders: rows });
   } catch (err) {
     next(err);
@@ -217,9 +209,10 @@ async function confirmOrderToDealer(req, res, next) {
  */
 async function getOrderHistory(req, res, next) {
   try {
-    // build role-based WHERE clauses
+    // build dynamic WHERE clauses for Admin/SuperAdmin filters
     const clauses = [];
-    const params = [];
+    const params  = [];
+
     if (req.query.adminId) {
       params.push(req.query.adminId);
       clauses.push(`m.admin_id = $${params.length}`);
@@ -228,10 +221,9 @@ async function getOrderHistory(req, res, next) {
       params.push(req.query.superAdminId);
       clauses.push(`s.unique_id = $${params.length}`);
     }
-    const where =
-      clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
 
-    const { rows } = await pool.query(`
+    const sql = `
       SELECT
         o.id,
         o.bnpl_platform,
@@ -240,25 +232,32 @@ async function getOrderHistory(req, res, next) {
         o.sale_date,
         o.status,
 
+        -- Marketer name
         m.first_name || ' ' || m.last_name AS marketer_name,
 
+        -- Device info from the original product
         p.device_name,
         p.device_model,
         p.device_type,
 
+        -- Aggregate any IMEIs (if the order has been assigned inventory_items)
         COALESCE(
-          ARRAY_AGG(ii.imei ORDER BY ii.id)
-            FILTER (WHERE ii.imei IS NOT NULL),
+          ARRAY_AGG(ii.imei ORDER BY ii.id) FILTER (WHERE ii.imei IS NOT NULL),
           ARRAY[]::text[]
         ) AS imeis
 
       FROM orders o
+
       JOIN users    m  ON o.marketer_id = m.id
       JOIN products p  ON o.product_id  = p.id
+
+      -- TURN THESE INTO LEFT JOINs so that free‐mode or just‐placed orders still appear
       LEFT JOIN order_items    oi ON oi.order_id          = o.id
       LEFT JOIN inventory_items ii ON ii.id               = oi.inventory_item_id
-      JOIN users    a  ON m.admin_id      = a.id
-      JOIN users    s  ON a.super_admin_id = s.id
+
+      -- join through the hierarchy for Admin / SuperAdmin filtering
+      JOIN users a  ON m.admin_id       = a.id
+      JOIN users s  ON a.super_admin_id = s.id
 
       ${where}
 
@@ -268,8 +267,9 @@ async function getOrderHistory(req, res, next) {
         p.device_name, p.device_model, p.device_type
 
       ORDER BY o.sale_date DESC
-    `, params);
+    `;
 
+    const { rows } = await pool.query(sql, params);
     res.json({ orders: rows });
   } catch (err) {
     next(err);
