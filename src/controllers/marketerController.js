@@ -198,93 +198,71 @@ async function getPlaceOrderData(req, res, next) {
   }
 }
 
+// src/controllers/marketerController.js
+
 async function createOrder(req, res, next) {
-  const marketerId  = req.user.id;
+  const marketerId = req.user.id;
   const marketerUid = req.user.unique_id;
 
   let {
     stock_update_id,
     number_of_devices,
-    imeis,
+    imeis,                // [ "15-digit-string", … ]
     customer_name,
     customer_phone,
     customer_address,
-    bnpl_platform,
+    bnpl_platform
   } = req.body;
 
-  // Must have a stock_update_id now
-  stock_update_id   = stock_update_id ? parseInt(stock_update_id, 10) : null;
+  stock_update_id   = parseInt(stock_update_id, 10);
   number_of_devices = parseInt(number_of_devices, 10);
   imeis             = Array.isArray(imeis) ? imeis : [];
 
-  if (!stock_update_id || !number_of_devices || !customer_name) {
-    return res.status(400).json({ message: "stock_update_id, number_of_devices and customer_name are required." });
+  // 1) Basic validations
+  if (!stock_update_id || number_of_devices < 1 || !customer_name) {
+    return res.status(400).json({
+      message: "stock_update_id, number_of_devices and customer_name are required."
+    });
   }
   if (imeis.length !== number_of_devices) {
-    return res.status(400).json({ message: "Provide exactly one 15-digit IMEI per device." });
+    return res.status(400).json({
+      message: "Provide exactly one IMEI per device."
+    });
   }
   if (!imeis.every(i => /^\d{15}$/.test(i))) {
-    return res.status(400).json({ message: "All IMEIs must be exactly 15 digits." });
+    return res.status(400).json({
+      message: "All IMEIs must be exactly 15 digits."
+    });
   }
 
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
 
-    // Rate-limit rapid submits
-    const { rowCount: recent } = await client.query(`
-      SELECT 1 FROM orders
-       WHERE marketer_id = $1
-         AND sale_date > NOW() - INTERVAL '5 seconds'
-    `, [marketerId]);
-    if (recent) {
-      return res.status(429).json({ message: "You're ordering too quickly. Please wait a moment." });
-    }
-
-    // 1) Pull and lock reserved items matching those IMEIs
-    const { rows: reserved } = await client.query(`
-      SELECT id
-        FROM inventory_items
-       WHERE stock_update_id = $1
-         AND status          = 'reserved'
-         AND imei            = ANY($2::text[])
-       FOR UPDATE
-    `, [stock_update_id, imeis]);
-
-    if (reserved.length !== number_of_devices) {
-      throw new Error("One or more IMEIs are invalid or not reserved.");
-    }
-    const soldItemIds = reserved.map(r => r.id);
-
-    // 2) Mark them sold
-    await client.query(`
-      UPDATE inventory_items
-         SET status = 'sold'
-       WHERE id = ANY($1::int[])
-    `, [soldItemIds]);
-
-    // 3) Decrement the pickup
+    // 2) Decrement pickup quantity
     await client.query(`
       UPDATE stock_updates
          SET quantity = GREATEST(quantity - $1, 0),
-             status   = CASE WHEN quantity - $1 <= 0 THEN 'sold' ELSE status END
+             status   = CASE 
+                          WHEN quantity - $1 <= 0 THEN 'sold'
+                          ELSE status
+                        END
        WHERE id = $2
     `, [number_of_devices, stock_update_id]);
 
-    // 4) Fetch price & device_type
-    const { rows: [{ cost_price, selling_price, device_type }] } =
-      await client.query(`
-        SELECT p.cost_price, p.selling_price, p.device_type
-          FROM stock_updates su
-          JOIN products p ON su.product_id = p.id
-         WHERE su.id = $1
-      `, [stock_update_id]);
-
-    const unitPrice   = Number(selling_price);
+    // 3) Fetch price & type
+    const { rows: [p] } = await client.query(`
+      SELECT p.cost_price, p.selling_price, p.device_type
+        FROM stock_updates su
+        JOIN products p ON p.id = su.product_id
+       WHERE su.id = $1
+    `, [stock_update_id]);
+    if (!p) throw new Error("Invalid stock_update_id");
+    const unitPrice   = Number(p.selling_price);
     const sold_amount = unitPrice * number_of_devices;
-    const unitProfit  = unitPrice - Number(cost_price);
+    const unitProfit  = unitPrice - Number(p.cost_price);
 
-    // 5) Insert into orders
+    // 4) Insert order
     const { rows: [order] } = await client.query(`
       INSERT INTO orders (
         marketer_id,
@@ -314,23 +292,37 @@ async function createOrder(req, res, next) {
       unitProfit
     ]);
 
-    // 6) Link each IMEI to the order
-    for (let iid of soldItemIds) {
+    // 5) Upsert each marketer-entered IMEI into inventory_items => sold
+    //    and link it via order_items
+    for (let imei of imeis) {
+      // either insert new, or if it existed, update to sold
+      const { rows: [inv] } = await client.query(`
+        INSERT INTO inventory_items (product_id, imei, status, created_at)
+        VALUES (
+          (SELECT product_id FROM stock_updates WHERE id = $1),
+          $2,
+          'sold',
+          NOW()
+        )
+        ON CONFLICT (imei) DO UPDATE
+          SET status = 'sold'
+        RETURNING id
+      `, [stock_update_id, imei]);
+
       await client.query(`
         INSERT INTO order_items (order_id, inventory_item_id)
         VALUES ($1, $2)
-      `, [order.id, iid]);
+      `, [order.id, inv.id]);
     }
 
-    // 7) Credit commissions
-    const rate = COMMISSION_RATES[device_type] || 0;
-    await creditMarketerCommission(marketerUid, order.id, device_type, number_of_devices);
-    await creditAdminCommission    (marketerUid, order.id,                  number_of_devices);
-    await creditSuperAdminCommission(marketerUid, order.id,                  number_of_devices);
+    // 6) Credit commissions
+    await creditMarketerCommission(marketerUid, order.id, p.device_type, number_of_devices);
+    await creditAdminCommission    (marketerUid, order.id,                    number_of_devices);
+    await creditSuperAdminCommission(marketerUid, order.id,                    number_of_devices);
 
     await client.query("COMMIT");
     return res.status(201).json({
-      message: "Order placed successfully and awaiting master-admin confirmation.",
+      message: "Order placed successfully.",
       order: { id: order.id }
     });
   } catch (err) {
@@ -340,6 +332,7 @@ async function createOrder(req, res, next) {
     client.release();
   }
 }
+
 /**
  * getOrderHistory
  * GET /api/marketer/orders/history
