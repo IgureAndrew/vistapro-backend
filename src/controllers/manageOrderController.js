@@ -8,11 +8,12 @@ const {
 
 /**
  * GET /api/manage-orders/orders
- * List only the IMEIs typed in at order time (no reserved‐stock fallout).
+ * List only the IMEIs typed in at order time (no reserved-stock fallback),
+ * and always show device name/model/type even before confirmation.
  */
 async function getPendingOrders(req, res, next) {
   try {
-     const { rows } = await pool.query(`
+    const { rows } = await pool.query(`
       SELECT
         o.id,
         o.bnpl_platform,
@@ -21,26 +22,47 @@ async function getPendingOrders(req, res, next) {
         o.sale_date,
         o.status,
         m.first_name || ' ' || m.last_name AS marketer_name,
-        p.device_name,
-        p.device_model,
-        p.device_type,
-        -- no DISTINCT, keep ORDER BY
+
+        -- pick product info from either the confirmed product_id or the original stock_update
+        COALESCE(p1.device_name, p2.device_name)   AS device_name,
+        COALESCE(p1.device_model, p2.device_model) AS device_model,
+        COALESCE(p1.device_type,  p2.device_type)  AS device_type,
+
         COALESCE(
           ARRAY_AGG(ii.imei ORDER BY ii.id)
             FILTER (WHERE ii.imei IS NOT NULL),
           ARRAY[]::text[]
         ) AS imeis
+
       FROM orders o
-      JOIN users m ON m.id = o.marketer_id
-      LEFT JOIN products p        ON p.id = o.product_id
-      LEFT JOIN order_items oi    ON oi.order_id = o.id
-      LEFT JOIN inventory_items ii ON ii.id = oi.inventory_item_id
+      JOIN users m
+        ON m.id = o.marketer_id
+
+      -- product if already confirmed
+      LEFT JOIN products p1
+        ON p1.id = o.product_id
+      -- otherwise via the original stock pickup
+      LEFT JOIN stock_updates su
+        ON su.id = o.stock_update_id
+      LEFT JOIN products p2
+        ON p2.id = su.product_id
+
+      LEFT JOIN order_items oi
+        ON oi.order_id = o.id
+      LEFT JOIN inventory_items ii
+        ON ii.id = oi.inventory_item_id
+
       WHERE o.status = 'pending'
       GROUP BY
         o.id, m.first_name, m.last_name,
-        p.device_name, p.device_model, p.device_type
+        COALESCE(p1.device_name, p2.device_name),
+        COALESCE(p1.device_model, p2.device_model),
+        COALESCE(p1.device_type,  p2.device_type),
+        o.bnpl_platform, o.number_of_devices, o.sold_amount, o.sale_date, o.status
+
       ORDER BY o.sale_date DESC
     `);
+
     res.json({ orders: rows });
   } catch (err) {
     next(err);
