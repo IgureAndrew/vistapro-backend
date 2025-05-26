@@ -129,23 +129,31 @@ async function listProducts(req, res, next) {
 /**
  * updateProduct
  * Only MasterAdmin may update.
- * Adjusts product fields only; no IMEIs.
+ * Adjusts product fields; if `quantity_to_add` is passed and > 0,
+ * inserts that many new inventory_items (no IMEI).
  */
 async function updateProduct(req, res, next) {
   const client = await pool.connect();
   try {
-    const productId = req.params.id;
+    const productId = parseInt(req.params.id, 10);
+    if (!Number.isInteger(productId)) {
+      return res.status(400).json({ message: "Invalid product ID." });
+    }
+
+    // pull fields from body
     const {
       device_type,
       device_name,
       device_model,
       cost_price,
       selling_price,
+      quantity_to_add    // <— new optional
     } = req.body;
 
     await client.query('BEGIN');
 
-    const { rows } = await client.query(`
+    // 1) update product metadata
+    const { rows: prodRows } = await client.query(`
       UPDATE products
          SET device_type   = COALESCE($1, device_type),
              device_name   = COALESCE($2, device_name),
@@ -155,14 +163,51 @@ async function updateProduct(req, res, next) {
              updated_at    = NOW()
        WHERE id = $6
      RETURNING *
-    `, [device_type, device_name, device_model, cost_price, selling_price, productId]);
+    `, [
+      device_type,
+      device_name,
+      device_model,
+      cost_price,
+      selling_price,
+      productId
+    ]);
 
-    if (!rows.length) {
+    if (!prodRows.length) {
       await client.query('ROLLBACK');
       return res.status(404).json({ message: "Product not found." });
     }
+
+    // 2) if front-end asked to add more stock, insert that many
+    const toAdd = parseInt(quantity_to_add, 10) || 0;
+    if (toAdd > 0) {
+      // bulk-insert `toAdd` rows with NULL imei and 'available' status
+      await client.query(`
+        INSERT INTO inventory_items (product_id, status, imei, created_at)
+        SELECT $1, 'available', NULL, NOW()
+          FROM generate_series(1, $2)
+      `, [ productId, toAdd ]);
+    }
+
     await client.query('COMMIT');
-    res.json({ message: "Product updated successfully.", product: rows[0] });
+
+    // recompute available count
+    const { rows: countRows } = await client.query(`
+      SELECT COUNT(*)::int AS quantity_available
+        FROM inventory_items
+       WHERE product_id = $1
+         AND status     = 'available'
+    `, [productId]);
+
+    const updatedProduct = {
+      ...prodRows[0],
+      quantity_available: countRows[0].quantity_available
+    };
+
+    res.json({
+      message: "Product updated successfully.",
+      product: updatedProduct
+    });
+
   } catch (err) {
     await client.query('ROLLBACK');
     next(err);
@@ -170,7 +215,6 @@ async function updateProduct(req, res, next) {
     client.release();
   }
 }
-
 /**
  * deleteProduct
  * Deletes a product and any related inventory (foreign key cascade assumed).
