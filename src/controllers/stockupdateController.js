@@ -908,6 +908,128 @@ async function requestReturn(req, res, next) {
   }
 }
 
+// … all your existing methods (listStockPickupDealers, createStockUpdate, placeOrder, etc.) …
+
+/**
+ * POST /api/marketer/stock-pickup/request-additional
+ * Marketer asks for up to 3 additional pickups.
+ */
+async function requestAdditionalPickup(req, res, next) {
+  const marketerUID = req.user.unique_id;
+  const { requests } = req.body; 
+  // requests = [{ product_id: 123, qty: 2 }, … ]  up to 3 total units
+
+  // 1) refuse if any active pickup still pending or return_pending
+  const { rows: active } = await pool.query(`
+    SELECT 1 FROM stock_updates
+     WHERE marketer_id = (SELECT id FROM users WHERE unique_id=$1)
+       AND status IN ('pending','return_pending','transfer_pending')
+  `, [marketerUID]);
+  if (active.length) {
+    return res.status(400).json({
+      message: "You already have an active pickup. Complete or return it before asking for more."
+    });
+  }
+
+  // 2) validate `requests` length and total qty ≤ 3, all product_ids valid, same-location…
+  //    (you’ll basically repeat your location checks above, plus ensure sum(qty)<=3)
+
+  // 3) insert into a new table pickup_requests
+  const { rows: [reqRow] } = await pool.query(`
+    INSERT INTO pickup_requests
+      (user_unique_id, payload, status, created_at)
+    VALUES
+      ($1, $2::JSONB, 'pending', NOW())
+    RETURNING id, payload, status
+  `, [ marketerUID, JSON.stringify(requests) ]);
+
+  // 4) notify your MasterAdmin
+  const { rows: [admin] } = await pool.query(`
+    SELECT u2.unique_id
+      FROM users u
+      JOIN users u2 ON u.admin_id=u2.id
+     WHERE u.unique_id=$1
+  `, [ marketerUID ]);
+  if (admin) {
+    await pool.query(`
+      INSERT INTO notifications (user_unique_id, message)
+      VALUES ($1, $2)
+    `, [
+      admin.unique_id,
+      `New additional-pickup request #${reqRow.id} from ${marketerUID}`
+    ]);
+  }
+
+  res.status(201).json({ request: reqRow });
+}
+
+
+/**
+ * PATCH /api/marketer/stock-pickup/requests/:id/decision
+ * MasterAdmin approves/rejects an “additional pickup” request.
+ */
+async function decideAdditionalPickup(req, res, next) {
+  if (req.user.role!=='MasterAdmin') {
+    return res.status(403).json({ message: "Only MasterAdmin can decide." });
+  }
+  const id     = Number(req.params.id);
+  const { approve } = req.body; // true or false
+
+  // 1) update the pickup_requests row
+  const status = approve ? 'approved' : 'rejected';
+  const { rows } = await pool.query(`
+    UPDATE pickup_requests
+       SET status=$1, decided_at=NOW()
+     WHERE id=$2
+    RETURNING user_unique_id
+  `, [ status, id ]);
+  if (!rows.length) return res.status(404).json({ message: "Request not found." });
+
+  // 2) notify the marketer
+  const msg = approve
+    ? `Your additional-pickup request #${id} was approved. You may now pick up up to 3 units.`
+    : `Your additional-pickup request #${id} was rejected.`;
+  await pool.query(`
+    INSERT INTO notifications (user_unique_id, message)
+    VALUES ($1, $2)
+  `, [ rows[0].user_unique_id, msg ]);
+
+  res.json({ message: `Request ${status}.` });
+}
+
+/**
+ * GET /api/marketer/notifications
+ * List unread notifications for the logged-in marketer.
+ */
+async function getNotifications(req, res, next) {
+  try {
+    const { rows } = await pool.query(`
+      SELECT id, message, created_at
+        FROM notifications
+       WHERE user_unique_id = $1
+         AND is_read = FALSE
+       ORDER BY created_at DESC
+    `, [ req.user.unique_id ]);
+    res.json({ notifications: rows });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * PATCH /api/marketer/notifications/:id/read
+ * Mark one notification as read.
+ */
+async function markNotificationRead(req, res, next) {
+  await pool.query(`
+    UPDATE notifications
+       SET is_read = TRUE
+     WHERE id = $1
+       AND user_unique_id = $2
+  `, [ Number(req.params.id), req.user.unique_id ]);
+  res.sendStatus(204);
+}
+
 
 module.exports = {
   listStockPickupDealers,
@@ -923,4 +1045,8 @@ module.exports = {
   listSuperAdminStockUpdates,
   getStockUpdatesForAdmin,
   requestReturn,
+  requestAdditionalPickup,
+  decideAdditionalPickup,
+  getNotifications,
+  markNotificationRead
 };
