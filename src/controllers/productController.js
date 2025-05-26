@@ -178,13 +178,35 @@ async function updateProduct(req, res, next) {
     }
 
     // 2) If requested, bulk-insert new available units
+    // 2) if front-end asked to add more stock…
     const toAdd = parseInt(quantity_to_add, 10) || 0;
     if (toAdd > 0) {
+      // bulk-insert `toAdd` new available items (imei = '')
       await client.query(`
         INSERT INTO inventory_items (product_id, status, imei, created_at)
-        SELECT $1, 'available', NULL, NOW()
+        SELECT $1, 'available', ''::text, NOW()
           FROM generate_series(1, $2)
-      `, [productId, toAdd]);
+      `, [ productId, toAdd ]);
+    } else if (toAdd < 0) {
+      // remove `|toAdd|` oldest available items
+      const removeCount = -toAdd;
+      // lock & select
+      const { rows: toRemove } = await client.query(`
+        SELECT id
+          FROM inventory_items
+         WHERE product_id = $1
+           AND status     = 'available'
+         ORDER BY created_at ASC
+         LIMIT $2
+         FOR UPDATE SKIP LOCKED
+      `, [ productId, removeCount ]);
+      if (toRemove.length) {
+        const ids = toRemove.map(r => r.id);
+        await client.query(`
+          DELETE FROM inventory_items
+           WHERE id = ANY($1)
+        `, [ids]);
+      }
     }
 
     await client.query("COMMIT");
