@@ -333,10 +333,11 @@ async function createOrder(req, res, next) {
   }
 }
 
+
+
 /**
- * getOrderHistory
  * GET /api/marketer/orders/history
- * • Returns both legacy and new orders, including IMEIs
+ * Returns both legacy and new orders, including IMEIs
  */
 async function getOrderHistory(req, res, next) {
   const marketerId = req.user.id;
@@ -344,7 +345,10 @@ async function getOrderHistory(req, res, next) {
     const { rows } = await pool.query(`
       SELECT
         o.id,
-        COALESCE(json_agg(oi.imei) FILTER (WHERE oi.imei IS NOT NULL), '[]') AS imeis,
+        COALESCE(
+          json_agg(ii.imei) FILTER (WHERE ii.imei IS NOT NULL),
+          '[]'
+        ) AS imeis,
         p.device_name,
         p.device_model,
         p.device_type,
@@ -353,11 +357,29 @@ async function getOrderHistory(req, res, next) {
         o.sale_date,
         o.status
       FROM orders o
-      LEFT JOIN order_items oi ON oi.order_id = o.id
-      LEFT JOIN products p ON p.id = COALESCE(o.product_id, oi.product_id)
+      /* pull any IMEIs sold on this order */
+      LEFT JOIN order_items oi
+        ON oi.order_id = o.id
+      LEFT JOIN inventory_items ii
+        ON ii.id = oi.inventory_item_id
+
+      /* find the underlying product via the stock_update_id */
+      JOIN stock_updates su
+        ON su.id = o.stock_update_id
+      JOIN products p
+        ON p.id = su.product_id
+
       WHERE o.marketer_id = $1
-      GROUP BY o.id, p.device_name, p.device_model, p.device_type, o.number_of_devices, o.sold_amount, o.sale_date, o.status
-      ORDER BY o.sale_date DESC;
+      GROUP BY
+        o.id,
+        p.device_name,
+        p.device_model,
+        p.device_type,
+        o.number_of_devices,
+        o.sold_amount,
+        o.sale_date,
+        o.status
+      ORDER BY o.sale_date DESC
     `, [marketerId]);
 
     res.json({ orders: rows });
@@ -365,6 +387,7 @@ async function getOrderHistory(req, res, next) {
     next(err);
   }
 }
+
 
 /**
  * submitBioData - Submits the marketer's bio data form.
