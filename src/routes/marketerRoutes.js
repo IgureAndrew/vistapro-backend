@@ -11,15 +11,14 @@ const { verifyRole  } = require('../middlewares/roleMiddleware');
 const {
   getAccountSettings,
   updateAccountSettings,
-  getPlaceOrderData,   // GET form data
-  createOrder,         // POST to create
-  getOrderHistory,     // GET history
+  getPlaceOrderData,
+  createOrder,
+  getOrderHistory,
   submitBioData,
   submitGuarantorForm,
   submitCommitmentForm,
-  listDealersByState, 
+  listDealersByState,
   listDealerProducts,
-  getMarketerOrders
 } = require('../controllers/marketerController');
 
 // ensure upload dirs exist
@@ -101,8 +100,16 @@ router.post(
   submitCommitmentForm
 );
 
-router.get('/dealers', verifyToken, listDealersByState);
-router.get('/dealers/:dealerUniqueId/products', verifyToken, listDealerProducts);
-router.get("/marketer/orders", verifyToken, getMarketerOrders);
+// ─ Dealer lookups ───────────────────────────────────────────────────────────
+router.get(
+  '/dealers',
+  verifyToken, verifyRole(['Marketer']),
+  listDealersByState
+);
+router.get(
+  '/dealers/:dealerUniqueId/products',
+  verifyToken, verifyRole(['Marketer']),
+  listDealerProducts
+);
 
 module.exports = router;
