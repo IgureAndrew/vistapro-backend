@@ -147,12 +147,12 @@ async function updateProduct(req, res, next) {
       device_model,
       cost_price,
       selling_price,
-      quantity_to_add    // <— new optional
+      quantity_to_add    // ← new optional field
     } = req.body;
 
-    await client.query('BEGIN');
+    await client.query("BEGIN");
 
-    // 1) update product metadata
+    // 1) Update product metadata
     const { rows: prodRows } = await client.query(`
       UPDATE products
          SET device_type   = COALESCE($1, device_type),
@@ -173,24 +173,23 @@ async function updateProduct(req, res, next) {
     ]);
 
     if (!prodRows.length) {
-      await client.query('ROLLBACK');
+      await client.query("ROLLBACK");
       return res.status(404).json({ message: "Product not found." });
     }
 
-    // 2) if front-end asked to add more stock, insert that many
+    // 2) If requested, bulk-insert new available units
     const toAdd = parseInt(quantity_to_add, 10) || 0;
     if (toAdd > 0) {
-      // bulk-insert `toAdd` rows with NULL imei and 'available' status
       await client.query(`
         INSERT INTO inventory_items (product_id, status, imei, created_at)
         SELECT $1, 'available', NULL, NOW()
           FROM generate_series(1, $2)
-      `, [ productId, toAdd ]);
+      `, [productId, toAdd]);
     }
 
-    await client.query('COMMIT');
+    await client.query("COMMIT");
 
-    // recompute available count
+    // 3) Recompute how many are now available
     const { rows: countRows } = await client.query(`
       SELECT COUNT(*)::int AS quantity_available
         FROM inventory_items
@@ -203,13 +202,13 @@ async function updateProduct(req, res, next) {
       quantity_available: countRows[0].quantity_available
     };
 
+    // 4) Return success message + updated product
     res.json({
-      message: "Product updated successfully.",
+      message: `Product updated successfully.${toAdd ? ` Added ${toAdd} unit${toAdd !== 1 ? 's' : ''} to stock.` : ''}`,
       product: updatedProduct
     });
-
   } catch (err) {
-    await client.query('ROLLBACK');
+    await client.query("ROLLBACK");
     next(err);
   } finally {
     client.release();
