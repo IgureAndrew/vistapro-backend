@@ -1,15 +1,12 @@
 // src/routes/stockupdateRoutes.js
+const express     = require('express');
+const router      = express.Router();
+const { verifyToken } = require('../middlewares/authMiddleware');
+const { verifyRole }  = require('../middlewares/roleMiddleware');
+const ctrl        = require('../controllers/stockupdateController');
 
-const express       = require('express');
-const router        = express.Router();
-const { verifyToken }   = require('../middlewares/authMiddleware');
-const { verifyRole }    = require('../middlewares/roleMiddleware');
-const ctrl             = require('../controllers/stockupdateController');
-
-/**
- * MARKETER-ONLY
- */
-// 1) List dealers in marketer’s state for stock pickup
+/** MARKETER‐ONLY **/
+// 1) List dealers in your state
 router.get(
   '/pickup/dealers',
   verifyToken,
@@ -17,7 +14,7 @@ router.get(
   ctrl.listStockPickupDealers
 );
 
-// 2) List available products for a dealer (same state only)
+// 2) List available products for a dealer
 router.get(
   '/pickup/dealers/:dealerUniqueId/products',
   verifyToken,
@@ -25,7 +22,7 @@ router.get(
   ctrl.listStockProductsByDealer
 );
 
-// 3) Marketer picks up stock (always qty=1, up to max_pickups)
+// 3) Pick up 1 unit (default)
 router.post(
   '/',
   verifyToken,
@@ -33,7 +30,7 @@ router.post(
   ctrl.createStockUpdate
 );
 
-// 4) Marketer places order from a pending pickup (records the IMEIs)
+// 4) Place an order from a pending pickup
 router.post(
   '/order',
   verifyToken,
@@ -41,7 +38,7 @@ router.post(
   ctrl.placeOrder
 );
 
-// 5) Marketer requests a transfer of a pending pickup
+// 5) Transfer a pending pickup to another marketer
 router.post(
   '/:id/transfer',
   verifyToken,
@@ -49,7 +46,7 @@ router.post(
   ctrl.requestStockTransfer
 );
 
-// 6) Marketer requests a return on a pending pickup
+// 6) Request return on a pending pickup
 router.patch(
   '/:id/return-request',
   verifyToken,
@@ -57,7 +54,7 @@ router.patch(
   ctrl.requestReturn
 );
 
-// 7) Request up to 3 additional pickups (once no active pickup exists)
+// 7) Ask for extra‐pickup allowance (up to 3)
 router.post(
   '/pickup/request-additional',
   verifyToken,
@@ -65,23 +62,15 @@ router.post(
   ctrl.requestAdditionalPickup
 );
 
-// 8) Fetch unread notifications (e.g. approval/rejection of requests)
+// 8) Check your current pickup allowance (1 or 3)
 router.get(
-  '/notifications',
+  '/pickup/allowance',
   verifyToken,
   verifyRole(['Marketer']),
-  ctrl.getNotifications
+  ctrl.getAllowance
 );
 
-// 9) Mark a notification as read
-router.patch(
-  '/notifications/:id/read',
-  verifyToken,
-  verifyRole(['Marketer']),
-  ctrl.markNotificationRead
-);
-
-// 10) List this marketer’s own pickups
+// 9) List your own pickups
 router.get(
   '/marketer',
   verifyToken,
@@ -89,10 +78,9 @@ router.get(
   ctrl.getMarketerStockUpdates
 );
 
-/**
- * MASTER-ADMIN-ONLY
- */
-// 11) MasterAdmin confirms a return on a pickup
+
+/** MASTER‐ADMIN‐ONLY **/
+// 10) Confirm a return
 router.patch(
   '/:id/return',
   verifyToken,
@@ -100,18 +88,25 @@ router.patch(
   ctrl.confirmReturn
 );
 
-// 12) MasterAdmin approves or rejects an “additional pickup” request
-router.patch(
-  '/pickup/request-additional/:id/decision',
+// 11) List all pending extra‐pickup requests
+router.get(
+  '/pickup/requests',
   verifyToken,
   verifyRole(['MasterAdmin']),
-  ctrl.decideAdditionalPickup
+  ctrl.listExtraPickupRequests
 );
 
-/**
- * ADMIN-ONLY
- */
-// 13) Admin sees pickups for their own marketers
+// 12) Approve or reject an extra‐pickup request
+router.patch(
+  '/pickup/requests/:id',
+  verifyToken,
+  verifyRole(['MasterAdmin']),
+  ctrl.reviewExtraPickupRequest
+);
+
+
+/** ADMIN‐ONLY **/
+// 13) Admin sees pickups under their marketers
 router.get(
   '/admin/stock-pickup',
   verifyToken,
@@ -119,10 +114,9 @@ router.get(
   ctrl.getStockUpdatesForAdmin
 );
 
-/**
- * SUPER-ADMIN-ONLY
- */
-// 14) SuperAdmin sees all pickups under their hierarchy
+
+/** SUPER‐ADMIN‐ONLY **/
+// 14) SuperAdmin sees all pickups in their hierarchy
 router.get(
   '/superadmin/stock-updates',
   verifyToken,
@@ -130,10 +124,9 @@ router.get(
   ctrl.listSuperAdminStockUpdates
 );
 
-/**
- * ALL STAFF (MasterAdmin | Admin | SuperAdmin)
- */
-// 15) List all pickups (global view, human-friendly statuses)
+
+/** ALL STAFF (MasterAdmin, Admin, SuperAdmin) **/
+// 15) Global list of all pickups
 router.get(
   '/',
   verifyToken,

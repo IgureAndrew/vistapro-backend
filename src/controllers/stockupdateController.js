@@ -911,106 +911,155 @@ async function requestReturn(req, res, next) {
 // … all your existing methods (listStockPickupDealers, createStockUpdate, placeOrder, etc.) …
 
 /**
- * POST /api/marketer/stock-pickup/request-additional
- * Marketer asks for up to 3 additional pickups.
+ * POST /api/marketer/stock-pickup/request
+ * Marketer asks for permission to pick up up to 3 units instead of the default 1.
  */
 async function requestAdditionalPickup(req, res, next) {
-  const marketerUID = req.user.unique_id;
-  const { requests } = req.body; 
-  // requests = [{ product_id: 123, qty: 2 }, … ]  up to 3 total units
+  const marketerId = req.user.id;
 
-  // 1) refuse if any active pickup still pending or return_pending
-  const { rows: active } = await pool.query(`
-    SELECT 1 FROM stock_updates
-     WHERE marketer_id = (SELECT id FROM users WHERE unique_id=$1)
-       AND status IN ('pending','return_pending','transfer_pending')
-  `, [marketerUID]);
-  if (active.length) {
-    return res.status(400).json({
-      message: "You already have an active pickup. Complete or return it before asking for more."
-    });
+  try {
+    // unique constraint on marketer_id means only one pending/approved can exist
+    const { rows } = await pool.query(`
+      INSERT INTO additional_pickup_requests
+        (marketer_id, status)
+      VALUES ($1, 'pending')
+      RETURNING id, status
+    `, [marketerId]);
+
+    // notify their MasterAdmin
+    const { rows: admin } = await pool.query(`
+      SELECT u2.unique_id
+        FROM users u
+        JOIN users u2 ON u.admin_id = u2.id
+       WHERE u.id = $1
+    `, [marketerId]);
+
+    if (admin[0]?.unique_id) {
+      await pool.query(`
+        INSERT INTO notifications(user_unique_id, message)
+        VALUES ($1, $2)
+      `, [
+        admin[0].unique_id,
+        `Marketer ${req.user.unique_id} has requested extra pickup slots.`
+      ]);
+    }
+
+    res.status(201).json({ message: "Additional pickup request submitted." });
+  } catch (err) {
+    // unique violation → they already have a request
+    if (err.code === '23505') {
+      return res.status(400).json({
+        message: "You already have an active additional-pickup request."
+      });
+    }
+    next(err);
   }
-
-  // 2) validate `requests` length and total qty ≤ 3, all product_ids valid, same-location…
-  //    (you’ll basically repeat your location checks above, plus ensure sum(qty)<=3)
-
-  // 3) insert into a new table pickup_requests
-  const { rows: [reqRow] } = await pool.query(`
-    INSERT INTO pickup_requests
-      (user_unique_id, payload, status, created_at)
-    VALUES
-      ($1, $2::JSONB, 'pending', NOW())
-    RETURNING id, payload, status
-  `, [ marketerUID, JSON.stringify(requests) ]);
-
-  // 4) notify your MasterAdmin
-  const { rows: [admin] } = await pool.query(`
-    SELECT u2.unique_id
-      FROM users u
-      JOIN users u2 ON u.admin_id=u2.id
-     WHERE u.unique_id=$1
-  `, [ marketerUID ]);
-  if (admin) {
-    await pool.query(`
-      INSERT INTO notifications (user_unique_id, message)
-      VALUES ($1, $2)
-    `, [
-      admin.unique_id,
-      `New additional-pickup request #${reqRow.id} from ${marketerUID}`
-    ]);
-  }
-
-  res.status(201).json({ request: reqRow });
-}
-
-
-/**
- * PATCH /api/marketer/stock-pickup/requests/:id/decision
- * MasterAdmin approves/rejects an “additional pickup” request.
- */
-async function decideAdditionalPickup(req, res, next) {
-  if (req.user.role!=='MasterAdmin') {
-    return res.status(403).json({ message: "Only MasterAdmin can decide." });
-  }
-  const id     = Number(req.params.id);
-  const { approve } = req.body; // true or false
-
-  // 1) update the pickup_requests row
-  const status = approve ? 'approved' : 'rejected';
-  const { rows } = await pool.query(`
-    UPDATE pickup_requests
-       SET status=$1, decided_at=NOW()
-     WHERE id=$2
-    RETURNING user_unique_id
-  `, [ status, id ]);
-  if (!rows.length) return res.status(404).json({ message: "Request not found." });
-
-  // 2) notify the marketer
-  const msg = approve
-    ? `Your additional-pickup request #${id} was approved. You may now pick up up to 3 units.`
-    : `Your additional-pickup request #${id} was rejected.`;
-  await pool.query(`
-    INSERT INTO notifications (user_unique_id, message)
-    VALUES ($1, $2)
-  `, [ rows[0].user_unique_id, msg ]);
-
-  res.json({ message: `Request ${status}.` });
 }
 
 /**
- * GET /api/marketer/notifications
- * List unread notifications for the logged-in marketer.
+ * GET /api/marketer/stock-pickup/allowance
+ * Returns { allowance: 1 } by default, or 3 if they have an approved request.
  */
-async function getNotifications(req, res, next) {
+async function getAllowance(req, res, next) {
+  try {
+    const marketerId = req.user.id;
+    const { rows } = await pool.query(`
+      SELECT status
+        FROM additional_pickup_requests
+       WHERE marketer_id = $1
+         AND status = 'approved'
+       ORDER BY created_at DESC
+       LIMIT 1
+    `, [marketerId]);
+
+    const allowance = rows.length ? 3 : 1;
+    res.json({ allowance });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * GET /api/stock-pickup/requests
+ * MasterAdmin: list all pending additional-pickup requests.
+ */
+async function listExtraPickupRequests(req, res, next) {
+  if (req.user.role !== 'MasterAdmin') {
+    return res.status(403).json({ message: "Only MasterAdmin may review." });
+  }
+
   try {
     const { rows } = await pool.query(`
-      SELECT id, message, created_at
-        FROM notifications
-       WHERE user_unique_id = $1
-         AND is_read = FALSE
-       ORDER BY created_at DESC
-    `, [ req.user.unique_id ]);
-    res.json({ notifications: rows });
+      SELECT
+        r.id,
+        u.unique_id        AS marketer_uid,
+        r.status,
+        r.created_at
+      FROM additional_pickup_requests r
+      JOIN users u ON r.marketer_id = u.id
+      WHERE r.status = 'pending'
+      ORDER BY r.created_at
+    `);
+    res.json({ requests: rows });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * PATCH /api/stock-pickup/requests/:id
+ * MasterAdmin approves or rejects a pending request.
+ */
+async function reviewExtraPickupRequest(req, res, next) {
+  if (req.user.role !== 'MasterAdmin') {
+    return res.status(403).json({ message: "Only MasterAdmin may review." });
+  }
+
+  const id     = parseInt(req.params.id, 10);
+  const action = req.body.action; // 'approve' or 'reject'
+
+  if (!['approve','reject'].includes(action)) {
+    return res.status(400).json({ message: "Invalid action." });
+  }
+
+  try {
+    const { rows } = await pool.query(`
+      UPDATE additional_pickup_requests
+         SET status       = $2,
+             reviewed_at  = NOW(),
+             reviewer_id  = (SELECT id FROM users WHERE unique_id = $3)
+       WHERE id = $1
+       RETURNING *
+    `, [
+      id,
+      action === 'approve' ? 'approved' : 'rejected',
+      req.user.unique_id
+    ]);
+
+    if (!rows.length) {
+      return res.status(404).json({ message: "Request not found." });
+    }
+
+    // notify marketer
+    const { rows: m } = await pool.query(`
+      SELECT unique_id
+        FROM users
+       WHERE id = (SELECT marketer_id FROM additional_pickup_requests WHERE id = $1)
+    `, [id]);
+
+    if (m[0]?.unique_id) {
+      await pool.query(`
+        INSERT INTO notifications (user_unique_id, message)
+        VALUES ($1, $2)
+      `, [
+        m[0].unique_id,
+        action === 'approve'
+          ? `Your extra-pickup request has been approved. You may now reserve up to 3 units.`
+          : `Your extra-pickup request has been rejected.`
+      ]);
+    }
+
+    res.json({ message: `Request ${action}d.`, request: rows[0] });
   } catch (err) {
     next(err);
   }
@@ -1046,7 +1095,8 @@ module.exports = {
   getStockUpdatesForAdmin,
   requestReturn,
   requestAdditionalPickup,
-  decideAdditionalPickup,
-  getNotifications,
+  getAllowance,
+  listExtraPickupRequests,
+  reviewExtraPickupRequest,
   markNotificationRead
 };
