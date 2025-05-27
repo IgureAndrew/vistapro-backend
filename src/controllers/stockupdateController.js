@@ -992,14 +992,21 @@ async function listExtraPickupRequests(req, res, next) {
     const { rows } = await pool.query(`
       SELECT
         r.id,
-        u.unique_id        AS marketer_uid,
-        r.status,
-        r.created_at
+        u.first_name || ' ' || u.last_name AS marketer_name,
+        u.unique_id                           AS marketer_uid,
+        p.device_name,
+        p.device_model,
+        r.quantity        AS requested_qty,
+        r.created_at      AS requested_at,
+        r.status
       FROM additional_pickup_requests r
-      JOIN users u ON r.marketer_id = u.id
+      JOIN users    u ON r.marketer_id = u.id
+      JOIN products p ON p.id          = r.product_id
       WHERE r.status = 'pending'
-      ORDER BY r.created_at
+      ORDER BY r.created_at DESC
     `);
+
+    // return under the same key your front-end expects
     res.json({ requests: rows });
   } catch (err) {
     next(err);
