@@ -1078,8 +1078,80 @@ async function markNotificationRead(req, res, next) {
   `, [ Number(req.params.id), req.user.unique_id ]);
   res.sendStatus(204);
 }
+async function createBulkPickup(req, res, next) {
+  const marketerId = req.user.id;
+  const { lines, total } = req.bulk;
 
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
 
+    // 1) fetch allowance (1 or 3)
+    const { rows: arows } = await client.query(`
+      SELECT CASE WHEN EXISTS (
+         SELECT 1 FROM additional_pickup_requests
+         WHERE marketer_id=$1 AND status='approved'
+       ) THEN 3 ELSE 1 END AS allowance
+    `, [marketerId]);
+    const allowance = arows[0].allowance;
+    if (total > allowance) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ message: `Your allowance is ${allowance}` });
+    }
+
+    // 2) verify each product has enough stock
+    for (let { product_id, quantity } of lines) {
+      const { rows: crow } = await client.query(`
+        SELECT COUNT(*)::int AS cnt
+        FROM inventory_items
+        WHERE product_id=$1 AND status='available'
+      `, [product_id]);
+      if (crow[0].cnt < quantity) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          message: `Not enough stock for product ${product_id}`
+        });
+      }
+    }
+
+    // 3) insert stock_update
+    const deadline = `NOW() + INTERVAL '48 hours'`;
+    const { rows: su } = await client.query(`
+      INSERT INTO stock_updates (marketer_id, pickup_date, deadline, status)
+      VALUES ($1, NOW(), ${deadline}, 'pending') RETURNING id
+    `, [marketerId]);
+    const stockId = su[0].id;
+
+    // 4) insert pickup_items and reserve inventory
+    for (let { product_id, quantity } of lines) {
+      await client.query(`
+        INSERT INTO pickup_items (stock_update_id, product_id, quantity)
+        VALUES ($1,$2,$3)
+      `, [stockId, product_id, quantity]);
+
+      // reserve each unit
+      const { rows: items } = await client.query(`
+        SELECT id FROM inventory_items
+         WHERE product_id=$1 AND status='available'
+         LIMIT $2 FOR UPDATE SKIP LOCKED
+      `, [product_id, quantity]);
+      const ids = items.map(r => r.id);
+      await client.query(`
+        UPDATE inventory_items
+           SET status='reserved', stock_update_id=$1
+         WHERE id = ANY($2::int[])
+      `, [stockId, ids]);
+    }
+
+    await client.query('COMMIT');
+    res.status(201).json({ message: "Bulk pickup recorded", stock_update_id: stockId });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    next(err);
+  } finally {
+    client.release();
+  }
+}
 module.exports = {
   listStockPickupDealers,
   listStockProductsByDealer,
@@ -1098,5 +1170,6 @@ module.exports = {
   getAllowance,
   listExtraPickupRequests,
   reviewExtraPickupRequest,
-  markNotificationRead
+  markNotificationRead,
+  createBulkPickup
 };

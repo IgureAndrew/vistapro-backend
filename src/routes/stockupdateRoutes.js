@@ -1,9 +1,9 @@
 // src/routes/stockupdateRoutes.js
-const express     = require('express');
-const router      = express.Router();
-const { verifyToken } = require('../middlewares/authMiddleware');
-const { verifyRole }  = require('../middlewares/roleMiddleware');
-const ctrl        = require('../controllers/stockupdateController');
+const express          = require('express');
+const router           = express.Router();
+const { verifyToken }  = require('../middlewares/authMiddleware');
+const { verifyRole }   = require('../middlewares/roleMiddleware');
+const ctrl             = require('../controllers/stockupdateController');
 
 /** MARKETER‐ONLY **/
 // 1) List dealers in your state
@@ -22,7 +22,7 @@ router.get(
   ctrl.listStockProductsByDealer
 );
 
-// 3) Pick up 1 unit (default)
+// 3) Pick up stock (qty always 1 or up to allowance)
 router.post(
   '/',
   verifyToken,
