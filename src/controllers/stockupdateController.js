@@ -927,23 +927,20 @@ async function requestAdditionalPickup(req, res, next) {
     `, [marketerId]);
 
     // notify their MasterAdmin
-    const { rows: admin } = await pool.query(`
-      SELECT u2.unique_id
-        FROM users u
-        JOIN users u2 ON u.admin_id = u2.id
-       WHERE u.id = $1
-    `, [marketerId]);
+    const { rows: prev } = await pool.query(`
+  SELECT next_request_allowed_at
+    FROM additional_pickup_requests
+   WHERE marketer_id = $1
+     AND status = 'rejected'
+   ORDER BY reviewed_at DESC
+   LIMIT 1
+`, [ marketerId ]);
 
-    if (admin[0]?.unique_id) {
-      await pool.query(`
-        INSERT INTO notifications(user_unique_id, message)
-        VALUES ($1, $2)
-      `, [
-        admin[0].unique_id,
-        `Marketer ${req.user.unique_id} has requested extra pickup slots.`
-      ]);
-    }
-
+if (prev.length && prev[0].next_request_allowed_at > NOW()) {
+  return res.status(400).json({
+    message: `You can next request on ${prev[0].next_request_allowed_at.toLocaleString()}.`
+  });
+}
     res.status(201).json({ message: "Additional pickup request submitted." });
   } catch (err) {
     // unique violation → they already have a request
@@ -960,25 +957,55 @@ async function requestAdditionalPickup(req, res, next) {
  * GET /api/marketer/stock-pickup/allowance
  * Returns { allowance: 1 } by default, or 3 if they have an approved request.
  */
+// GET /marketer/allowance
 async function getAllowance(req, res, next) {
   try {
-    const marketerId = req.user.id;
-    const { rows } = await pool.query(`
-      SELECT status
-        FROM additional_pickup_requests
-       WHERE marketer_id = $1
-         AND status = 'approved'
-       ORDER BY created_at DESC
-       LIMIT 1
-    `, [marketerId]);
+    // 1) look up your internal user ID
+    const marketerUnique = req.user.unique_id;
+    const { rows: [u] } = await pool.query(
+      `SELECT id FROM users WHERE unique_id = $1`, 
+      [marketerUnique]
+    );
+    if (!u) return res.status(404).json({ message: 'User not found' });
+    const marketerId = u.id;
 
-    const allowance = rows.length ? 3 : 1;
-    res.json({ allowance });
+    // 2) fetch any extra-pickup request
+    const { rows } = await pool.query(
+      `SELECT status, next_request_allowed_at
+         FROM additional_pickup_requests
+        WHERE marketer_id = $1`,
+      [marketerId]
+    );
+    
+    // 3) default values
+    let allowance             = 1;
+    let request_status        = null;
+    let next_request_allowed_at = null;
+
+    if (rows.length) {
+      const rec = rows[0];
+      request_status           = rec.status;
+      next_request_allowed_at  = rec.next_request_allowed_at;
+
+      // if approved *and* not locked out by next_request_allowed_at
+      if (
+        rec.status === 'approved' &&
+        (!rec.next_request_allowed_at || rec.next_request_allowed_at < new Date())
+      ) {
+        allowance = 3;   // <-- bump this to however many lines you want
+        next_request_allowed_at = null;
+      }
+    }
+
+    return res.json({
+      allowance,
+      request_status,
+      next_request_allowed_at
+    });
   } catch (err) {
     next(err);
   }
 }
-
 /**
  * GET /api/stock-pickup/requests
  * MasterAdmin: list all pending additional-pickup requests.
@@ -1025,18 +1052,16 @@ async function reviewExtraPickupRequest(req, res, next) {
   }
 
   try {
-    const { rows } = await pool.query(`
-      UPDATE additional_pickup_requests
-         SET status       = $2,
-             reviewed_at  = NOW(),
-             reviewer_id  = (SELECT id FROM users WHERE unique_id = $3)
-       WHERE id = $1
-       RETURNING *
-    `, [
-      id,
-      action === 'approve' ? 'approved' : 'rejected',
-      req.user.unique_id
-    ]);
+    // inside your reject branch:
+const { rows } = await pool.query(`
+  UPDATE additional_pickup_requests
+     SET status                  = 'rejected',
+         reviewed_at             = NOW(),
+         reviewer_id             = (SELECT id FROM users WHERE unique_id = $3),
+         next_request_allowed_at = NOW() + INTERVAL '7 days'
+   WHERE id = $1
+   RETURNING *
+`, [ id, , req.user.unique_id ]);
 
     if (!rows.length) {
       return res.status(404).json({ message: "Request not found." });
