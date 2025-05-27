@@ -103,39 +103,58 @@ const createStockUpdate = async (req, res, next) => {
   try {
     const marketerUID = req.user.unique_id;
 
-    // Enforce exactly one active pickup per marketer
-    const { rows: active } = await client.query(
-      `SELECT COUNT(*)::int AS cnt
-         FROM stock_updates
-        WHERE marketer_id = (SELECT id FROM users WHERE unique_id = $1)
-          AND status IN ('pending','transfer_pending','transfer_approved')`,
+    await client.query('BEGIN');
+
+    // 1) Fetch internal user ID & location
+    const { rows: userRows } = await client.query(
+      `SELECT id, location FROM users WHERE unique_id = $1`,
       [marketerUID]
     );
-    if (active[0].cnt > 0) {
+    if (!userRows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'Marketer not found.' });
+    }
+    const marketerId = userRows[0].id;
+    const marketerState = userRows[0].location;
+
+    // 2) Determine allowance (1 by default, 3 if approved and not locked out)
+    const { rows: reqRows } = await client.query(
+      `SELECT status, next_request_allowed_at
+         FROM additional_pickup_requests
+        WHERE marketer_id = $1`,
+      [marketerId]
+    );
+    let allowance = 1;
+    if (reqRows.length) {
+      const rec = reqRows[0];
+      if (
+        rec.status === 'approved' &&
+        (!rec.next_request_allowed_at || rec.next_request_allowed_at < new Date())
+      ) {
+        allowance = 3;
+      }
+    }
+
+    // 3) Count existing pending lines
+    const { rows: activeRows } = await client.query(
+      `SELECT COUNT(*)::int AS cnt
+         FROM stock_updates
+        WHERE marketer_id = $1
+          AND status = 'pending'`,
+      [marketerId]
+    );
+    if (activeRows[0].cnt >= allowance) {
+      await client.query('ROLLBACK');
       return res.status(400).json({
-        message: "You already have an active pickup—complete, return or transfer it before requesting another."
+        message: `You have reached your pickup allowance of ${allowance}.`
       });
     }
 
-    // Parse inputs
+    // 4) Parse inputs
     const product_id = parseInt(req.body.product_id, 10);
-    const qty        = 1;  // always one unit per pickup
+    const qty = 1;  // always one unit
 
-    await client.query('BEGIN');
-
-    // --- Verify same-location constraint ---
-    // a) marketer's state
-    const { rows: meRows } = await client.query(
-      `SELECT location FROM users WHERE unique_id = $1`,
-      [marketerUID]
-    );
-    if (!meRows.length) {
-      await client.query('ROLLBACK');
-      return res.status(404).json({ message: "Marketer not found." });
-    }
-    const marketerState = meRows[0].location;
-
-    // b) product's dealer & its state
+    // 5) Verify dealer is in same location
     const { rows: pdRows } = await client.query(
       `SELECT u.location
          FROM products p
@@ -146,12 +165,11 @@ const createStockUpdate = async (req, res, next) => {
     if (!pdRows.length || pdRows[0].location !== marketerState) {
       await client.query('ROLLBACK');
       return res.status(403).json({
-        message: "Cannot pick up from a dealer outside your location."
+        message: 'Cannot pick up from a dealer outside your location.'
       });
     }
-    // -----------------------------------------
 
-    // 1) count available items
+    // 6) Check available stock
     const { rows: cntRows } = await client.query(
       `SELECT COUNT(*)::int AS cnt
          FROM inventory_items
@@ -161,30 +179,38 @@ const createStockUpdate = async (req, res, next) => {
     );
     if (cntRows[0].cnt < qty) {
       await client.query('ROLLBACK');
-      return res.status(400).json({ message: "Not enough stock available." });
+      return res.status(400).json({ message: 'Not enough stock available.' });
     }
 
-    // 2) insert pickup record
+    // 7) Determine or reuse deadline
+    const { rows: pendRows } = await client.query(
+      `SELECT deadline
+         FROM stock_updates
+        WHERE marketer_id = $1
+          AND status = 'pending'
+        LIMIT 1`,
+      [marketerId]
+    );
+    const deadline = pendRows.length
+      ? pendRows[0].deadline
+      : new Date(Date.now() + 48 * 60 * 60 * 1000); // +48h
+
+    // 8) Insert pickup line
     const insertQ = `
       INSERT INTO stock_updates
-        ( marketer_id, product_id, quantity, pickup_date, deadline, status )
-      VALUES (
-        (SELECT id FROM users WHERE unique_id = $1),
-         $2, $3,
-         NOW(),
-         NOW() + INTERVAL '48 hours',
-         'pending'
-      )
+        (marketer_id, product_id, quantity, pickup_date, deadline, status)
+      VALUES ($1, $2, $3, NOW(), $4, 'pending')
       RETURNING id, product_id, quantity, pickup_date, deadline, status
     `;
     const { rows: suRows } = await client.query(insertQ, [
-      marketerUID,
+      marketerId,
       product_id,
-      qty
+      qty,
+      deadline
     ]);
     const stock = suRows[0];
 
-    // 3) reserve exactly `qty` units
+    // 9) Reserve an inventory item
     const { rows: itemsToReserve } = await client.query(
       `SELECT id
          FROM inventory_items
@@ -197,13 +223,12 @@ const createStockUpdate = async (req, res, next) => {
     const itemIds = itemsToReserve.map(r => r.id);
     await client.query(
       `UPDATE inventory_items
-         SET status = 'reserved',
-             stock_update_id = $1
+         SET status = 'reserved', stock_update_id = $1
        WHERE id = ANY($2::int[])`,
       [stock.id, itemIds]
     );
 
-    // 4) notify admin (unchanged)
+    // 10) Notify admin
     const { rows: adminQ } = await client.query(
       `SELECT u2.unique_id
          FROM users u
@@ -225,7 +250,7 @@ const createStockUpdate = async (req, res, next) => {
 
     await client.query('COMMIT');
     res.status(201).json({
-      message: "Stock pickup recorded successfully.",
+      message: 'Stock pickup recorded successfully.',
       stock
     });
   } catch (err) {
