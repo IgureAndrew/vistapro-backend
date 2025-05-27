@@ -562,15 +562,14 @@ async function getMarketerStockUpdates(req, res, next) {
         su.quantity,
         su.pickup_date,
         su.deadline,
-       -- return the real status, including 'return_pending' and 'returned'
-        su.status AS status,
+        su.status,
         p.device_name,
         p.device_model
       FROM stock_updates su
-       JOIN users u
-         ON su.marketer_id = u.id
-       JOIN products p
-         ON su.product_id = p.id
+      JOIN users u
+        ON su.marketer_id = u.id
+      JOIN products p
+        ON su.product_id = p.id
       WHERE u.unique_id = $1
       ORDER BY su.pickup_date DESC
     `;
@@ -581,6 +580,7 @@ async function getMarketerStockUpdates(req, res, next) {
     next(err);
   }
 }
+
 /**
  * GET /api/marketer/stock-pickup
  * (Master/Admin) list all pickups with human-friendly status
