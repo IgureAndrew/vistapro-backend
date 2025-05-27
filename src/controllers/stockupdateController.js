@@ -993,26 +993,21 @@ async function listExtraPickupRequests(req, res, next) {
       SELECT
         r.id,
         u.first_name || ' ' || u.last_name AS marketer_name,
-        u.unique_id                           AS marketer_uid,
-        p.device_name,
-        p.device_model,
-        r.quantity        AS requested_qty,
-        r.created_at      AS requested_at,
+        u.unique_id                       AS marketer_uid,
+        r.created_at                      AS requested_at,
         r.status
       FROM additional_pickup_requests r
-      JOIN users    u ON r.marketer_id = u.id
-      JOIN products p ON p.id          = r.product_id
+      JOIN users u ON r.marketer_id = u.id
       WHERE r.status = 'pending'
       ORDER BY r.created_at DESC
     `);
 
-    // return under the same key your front-end expects
+    // match what your front-end expects:
     res.json({ requests: rows });
   } catch (err) {
     next(err);
   }
 }
-
 /**
  * PATCH /api/stock-pickup/requests/:id
  * MasterAdmin approves or rejects a pending request.
