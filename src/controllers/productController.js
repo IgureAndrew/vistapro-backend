@@ -13,11 +13,18 @@ async function addProduct(req, res, next) {
     device_model,
     cost_price,
     selling_price,
+    quantity_to_add    // ← optional initial stock count
   } = req.body;
 
   // 1) Validate required fields
-  if (!dealer_id || !device_type || !device_name || !device_model ||
-      cost_price == null || selling_price == null) {
+  if (
+    !dealer_id ||
+    !device_type ||
+    !device_name ||
+    !device_model ||
+    cost_price == null ||
+    selling_price == null
+  ) {
     return res.status(400).json({ message: "Missing required product fields." });
   }
 
@@ -27,11 +34,11 @@ async function addProduct(req, res, next) {
     await client.query('BEGIN');
 
     // 3) Verify dealer exists
-    const dealerCheck = await client.query(
+    const { rows: dealerCheck } = await client.query(
       'SELECT 1 FROM users WHERE id = $1',
       [dealer_id]
     );
-    if (!dealerCheck.rows.length) {
+    if (!dealerCheck.length) {
       await client.query('ROLLBACK');
       return res.status(404).json({ message: "Dealer not found." });
     }
@@ -46,12 +53,45 @@ async function addProduct(req, res, next) {
     `;
     const { rows: [product] } = await client.query(
       insertProductSql,
-      [dealer_id, device_type, device_name, device_model, cost_price, selling_price]
+      [
+        dealer_id,
+        device_type,
+        device_name,
+        device_model,
+        cost_price,
+        selling_price
+      ]
     );
 
-    // 5) Commit transaction
+    // 5) Bulk-insert initial stock items (no IMEI)
+    const toAdd = parseInt(quantity_to_add, 10) || 0;
+    if (toAdd > 0) {
+      await client.query(`
+        INSERT INTO inventory_items (product_id, status, created_at)
+        SELECT $1, 'available', NOW()
+          FROM generate_series(1, $2)
+      `, [product.id, toAdd]);
+    }
+
+    // 6) Commit transaction
     await client.query('COMMIT');
-    res.status(201).json({ message: "Product added successfully.", product });
+
+    // 7) Compute quantity_available
+    const { rows: countRows } = await client.query(`
+      SELECT COUNT(*)::int AS quantity_available
+        FROM inventory_items
+       WHERE product_id = $1
+         AND status     = 'available'
+    `, [product.id]);
+
+    // 8) Return success
+    res.status(201).json({
+      message: `Product added successfully.${toAdd > 0 ? ` Added ${toAdd} unit${toAdd !== 1 ? 's' : ''} to stock.` : ''}`,
+      product: {
+        ...product,
+        quantity_available: countRows[0].quantity_available
+      }
+    });
   } catch (err) {
     await client.query('ROLLBACK');
     next(err);
@@ -147,7 +187,7 @@ async function updateProduct(req, res, next) {
       device_model,
       cost_price,
       selling_price,
-      quantity_to_add    // ← new optional field
+      quantity_to_add    // ← optional: positive to add, negative to remove
     } = req.body;
 
     await client.query("BEGIN");
@@ -177,20 +217,18 @@ async function updateProduct(req, res, next) {
       return res.status(404).json({ message: "Product not found." });
     }
 
-    // 2) If requested, bulk-insert new available units
-    // 2) if front-end asked to add more stock…
+    // 2) Bulk-insert or remove stock without IMEI
     const toAdd = parseInt(quantity_to_add, 10) || 0;
     if (toAdd > 0) {
-      // bulk-insert `toAdd` new available items (imei = '')
+      // insert `toAdd` new available items
       await client.query(`
-        INSERT INTO inventory_items (product_id, status, imei, created_at)
-        SELECT $1, 'available', ''::text, NOW()
+        INSERT INTO inventory_items (product_id, status, created_at)
+        SELECT $1, 'available', NOW()
           FROM generate_series(1, $2)
       `, [ productId, toAdd ]);
     } else if (toAdd < 0) {
-      // remove `|toAdd|` oldest available items
+      // remove |toAdd| oldest available items
       const removeCount = -toAdd;
-      // lock & select
       const { rows: toRemove } = await client.query(`
         SELECT id
           FROM inventory_items
@@ -200,6 +238,7 @@ async function updateProduct(req, res, next) {
          LIMIT $2
          FOR UPDATE SKIP LOCKED
       `, [ productId, removeCount ]);
+
       if (toRemove.length) {
         const ids = toRemove.map(r => r.id);
         await client.query(`
@@ -211,7 +250,7 @@ async function updateProduct(req, res, next) {
 
     await client.query("COMMIT");
 
-    // 3) Recompute how many are now available
+    // 3) Recompute available quantity
     const { rows: countRows } = await client.query(`
       SELECT COUNT(*)::int AS quantity_available
         FROM inventory_items
@@ -224,9 +263,9 @@ async function updateProduct(req, res, next) {
       quantity_available: countRows[0].quantity_available
     };
 
-    // 4) Return success message + updated product
+    // 4) Return success
     res.json({
-      message: `Product updated successfully.${toAdd ? ` Added ${toAdd} unit${toAdd !== 1 ? 's' : ''} to stock.` : ''}`,
+      message: `Product updated successfully.${toAdd > 0 ? ` Added ${toAdd} unit${toAdd !== 1 ? 's' : ''} to stock.` : toAdd < 0 ? ` Removed ${-toAdd} unit${toAdd !== -1 ? 's' : ''} from stock.` : ''}`,
       product: updatedProduct
     });
   } catch (err) {
@@ -236,6 +275,7 @@ async function updateProduct(req, res, next) {
     client.release();
   }
 }
+
 /**
  * deleteProduct
  * Deletes a product and any related inventory (foreign key cascade assumed).
