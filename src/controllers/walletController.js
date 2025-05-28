@@ -1,6 +1,7 @@
 // src/controllers/walletController.js
 
-const walletService = require('../services/walletService');
+const { pool } = require('../config/database')       // ← make sure pool is defined
+const walletService = require('../services/walletService')
 
 /**
  * GET /api/wallets
@@ -8,12 +9,12 @@ const walletService = require('../services/walletService');
  */
 async function getMyWallet(req, res, next) {
   try {
-    const userId = req.user.unique_id;
+    const userId = req.user.unique_id
     const { wallet, transactions, withdrawals } =
-      await walletService.getMyWallet(userId);
-    res.json({ wallet, transactions, withdrawals });
+      await walletService.getMyWallet(userId)
+    res.json({ wallet, transactions, withdrawals })
   } catch (err) {
-    next(err);
+    next(err)
   }
 }
 
@@ -23,12 +24,12 @@ async function getMyWallet(req, res, next) {
  */
 async function getWalletStats(req, res, next) {
   try {
-    const userId = req.user.unique_id;
-    const { from, to } = req.query;
-    const stats = await walletService.getStats(userId, from, to);
-    res.json(stats);
+    const userId = req.user.unique_id
+    const { from, to } = req.query
+    const stats = await walletService.getStats(userId, from, to)
+    res.json(stats)
   } catch (err) {
-    next(err);
+    next(err)
   }
 }
 
@@ -38,11 +39,11 @@ async function getWalletStats(req, res, next) {
  */
 async function getMyWithdrawals(req, res, next) {
   try {
-    const userId = req.user.unique_id;
-    const requests = await walletService.getMyWithdrawals(userId);
-    res.json({ requests });
+    const userId = req.user.unique_id
+    const requests = await walletService.getMyWithdrawals(userId)
+    res.json({ requests })
   } catch (err) {
-    next(err);
+    next(err)
   }
 }
 
@@ -52,19 +53,19 @@ async function getMyWithdrawals(req, res, next) {
  */
 async function requestWithdrawal(req, res, next) {
   try {
-    const userId = req.user.unique_id;
-    const { amount, account_name, account_number, bank_name } = req.body;
+    const userId = req.user.unique_id
+    const { amount, account_name, account_number, bank_name } = req.body
     const request = await walletService.createWithdrawalRequest(
       userId,
       Number(amount),
       { account_name, account_number, bank_name }
-    );
+    )
     res.status(201).json({
       message: "Withdrawal request submitted (₦100 fee charged).",
       request
-    });
+    })
   } catch (err) {
-    next(err);
+    next(err)
   }
 }
 
@@ -74,10 +75,10 @@ async function requestWithdrawal(req, res, next) {
  */
 async function getWithdrawalFeeStats(req, res, next) {
   try {
-    const stats = await walletService.getWithdrawalFeeStats();
-    res.json({ stats });
+    const stats = await walletService.getWithdrawalFeeStats()
+    res.json({ stats })
   } catch (err) {
-    next(err);
+    next(err)
   }
 }
 
@@ -87,10 +88,10 @@ async function getWithdrawalFeeStats(req, res, next) {
  */
 async function listPendingRequests(req, res, next) {
   try {
-    const requests = await walletService.listPendingRequests();
-    res.json({ requests });
+    const requests = await walletService.listPendingRequests()
+    res.json({ requests })
   } catch (err) {
-    next(err);
+    next(err)
   }
 }
 
@@ -100,27 +101,24 @@ async function listPendingRequests(req, res, next) {
  */
 async function reviewRequest(req, res, next) {
   try {
-    const { reqId }  = req.params;
-    const { action } = req.body;
-
+    const { reqId } = req.params
+    const { action } = req.body
     if (!['approve','reject'].includes(action)) {
-      return res.status(400).json({ message: "Invalid action." });
+      return res.status(400).json({ message: "Invalid action." })
     }
-
     const result = await walletService.reviewWithdrawalRequest(
       Number(reqId),
       action,
       req.user.unique_id
-    );
-
+    )
     res.json({
       message: result.status === 'approved'
         ? "Withdrawal approved and funds disbursed."
         : "Withdrawal request rejected.",
       result
-    });
+    })
   } catch (err) {
-    next(err);
+    next(err)
   }
 }
 
@@ -130,23 +128,62 @@ async function reviewRequest(req, res, next) {
  */
 async function resetWallets(req, res, next) {
   try {
-    await walletService.resetWallets();
-    res.json({ message: "All wallets and transactions reset." });
+    await walletService.resetWallets()
+    res.json({ message: "All wallets and transactions reset." })
   } catch (err) {
-    next(err);
+    next(err)
   }
 }
 
 /**
- * POST /api/wallets/master-admin/release-withheld
- * Release withheld balances (MasterAdmin)
+ * GET /api/wallets/master-admin/releases/pending
+ * List pending withheld‐balance release requests
  */
-async function releaseWithheld(req, res, next) {
+async function listWithheldReleases(req, res, next) {
   try {
-    await walletService.releaseWithheld();
-    res.json({ message: "All withheld balances released." });
+    const { rows } = await pool.query(`
+      SELECT
+        id,
+        user_unique_id,
+        amount::int    AS amount,
+        requested_at
+      FROM withheld_release_requests
+      WHERE status = 'pending'
+      ORDER BY requested_at ASC
+    `)
+    res.json({ requests: rows })
   } catch (err) {
-    next(err);
+    next(err)
+  }
+}
+
+/**
+ * PATCH /api/wallets/master-admin/releases/:id
+ * Approve or reject a withheld‐balance release (MasterAdmin)
+ */
+async function reviewRelease(req, res, next) {
+  try {
+    const releaseId  = Number(req.params.id)
+    const action     = req.body.action           // 'approve' or 'reject'
+    const reviewerUid = req.user.unique_id
+
+    if (!['approve','reject'].includes(action)) {
+      return res.status(400).json({ message: "Invalid action." })
+    }
+
+    // delegate to your service (implement reviewWithheldRelease there)
+    const result = await walletService.reviewWithheldRelease(
+      releaseId,
+      action,
+      reviewerUid
+    )
+
+    res.json({
+      message: `Release ${action}d successfully.`,
+      result
+    })
+  } catch (err) {
+    next(err)
   }
 }
 
@@ -156,12 +193,12 @@ async function releaseWithheld(req, res, next) {
  */
 async function getSuperAdminActivities(req, res, next) {
   try {
-    const superAdminUid = req.user.unique_id;
+    const superAdminUid = req.user.unique_id
     const { wallets, transactions } =
-      await walletService.getSubordinateWallets(superAdminUid);
-    res.json({ wallets, transactions });
+      await walletService.getSubordinateWallets(superAdminUid)
+    res.json({ wallets, transactions })
   } catch (err) {
-    next(err);
+    next(err)
   }
 }
 
@@ -171,11 +208,44 @@ async function getSuperAdminActivities(req, res, next) {
  */
 async function getAdminWallets(req, res, next) {
   try {
-    const adminUid = req.user.unique_id;
-    const wallets = await walletService.getWalletsForAdmin(adminUid);
-    res.json({ wallets });
+    const adminUid = req.user.unique_id
+    const wallets  = await walletService.getWalletsForAdmin(adminUid)
+    res.json({ wallets })
   } catch (err) {
-    next(err);
+    next(err)
+  }
+}
+
+/**
+ * GET /api/wallets/master-admin/marketers
+ * GET /api/wallets/master-admin/admins
+ * GET /api/wallets/master-admin/superadmins
+ * (MasterAdmin tabs)
+ */
+async function listMarketerWallets(req, res, next) {
+  try {
+    const wallets = await walletService.getWalletsByRole('Marketer')
+    res.json({ wallets })
+  } catch (err) {
+    next(err)
+  }
+}
+
+async function listAdminWallets(req, res, next) {
+  try {
+    const wallets = await walletService.getWalletsByRole('Admin')
+    res.json({ wallets })
+  } catch (err) {
+    next(err)
+  }
+}
+
+async function listSuperAdminWallets(req, res, next) {
+  try {
+    const wallets = await walletService.getWalletsByRole('SuperAdmin')
+    res.json({ wallets })
+  } catch (err) {
+    next(err)
   }
 }
 
@@ -190,69 +260,13 @@ async function getWithdrawalHistory(req, res, next) {
       endDate:   req.query.endDate,
       name:      req.query.name,
       role:      req.query.role
-    };
-    const data = await walletService.getWithdrawalHistory(filters);
-    res.json({ data });
+    }
+    const data = await walletService.getWithdrawalHistory(filters)
+    res.json({ data })
   } catch (err) {
-    next(err);
+    next(err)
   }
 }
-
-// ─── MasterAdmin → marketers ───────────────────────────────────
-async function listMarketerWallets(req, res, next) {
-  try {
-    const wallets = await walletService.getWalletsByRole('Marketer');
-    res.json({ wallets });
-  } catch (err) {
-    next(err);
-  }
-}
-
-// ─── MasterAdmin → admins ──────────────────────────────────────
-async function listAdminWallets(req, res, next) {
-  try {
-    const wallets = await walletService.getWalletsByRole('Admin');
-    res.json({ wallets });
-  } catch (err) {
-    next(err);
-  }
-}
-
-// ─── MasterAdmin → superadmins ─────────────────────────────────
-async function listSuperAdminWallets(req, res, next) {
-  try {
-    const wallets = await walletService.getWalletsByRole('SuperAdmin');
-    res.json({ wallets });
-  } catch (err) {
-    next(err);
-  }
-}
-
-// 1) Master-Admin: list pending release requests
-async function listWithheldReleases(req, res, next) {
-  try {
-    const { rows } = await pool.query(`
-      SELECT *
-        FROM withheld_release_requests
-       WHERE status = 'pending'
-       ORDER BY requested_at
-    `);
-    res.json({ requests: rows });
-  } catch (err) { next(err); }
-}
-
-// 2) Master-Admin: review one
-async function reviewRelease(req, res, next) {
-  try {
-    const { id } = req.params;
-    const action = req.body.action; // 'approve' or 'reject'
-    const reviewerUid = req.user.unique_id;
-
-    const result = await walletSvc.reviewWithheldRelease(id, action, reviewerUid);
-    res.json({ message: `Release ${action}d.`, result });
-  } catch (err) { next(err); }
-}
-
 
 module.exports = {
   getMyWallet,
@@ -263,15 +277,12 @@ module.exports = {
   listPendingRequests,
   reviewRequest,
   resetWallets,
-  releaseWithheld,
+  listWithheldReleases,
+  reviewRelease,
   getSuperAdminActivities,
   getAdminWallets,
-  getWithdrawalHistory,
-  listWithheldReleases, 
-  reviewRelease,
-
-  // renamed to avoid collision:
   listMarketerWallets,
   listAdminWallets,
-  listSuperAdminWallets
-};
+  listSuperAdminWallets,
+  getWithdrawalHistory
+}
