@@ -711,6 +711,82 @@ async function getWalletsByRole(role) {
   }));
 }
 
+/**
+ * Create the monthly release request for every marketer whose withheld_balance > 0.
+ * Called by a cron job on the 1st of each month.
+ */
+async function scheduleMonthlyReleases() {
+  // 1) find all wallets with withheld_balance > 0
+  const { rows } = await pool.query(`
+    SELECT user_unique_id, withheld_balance
+      FROM wallets
+     WHERE withheld_balance > 0
+  `);
+
+  for (const { user_unique_id: uid, withheld_balance: amt } of rows) {
+    // upsert a pending release for this user/month
+    await pool.query(`
+      INSERT INTO withheld_release_requests
+        (user_unique_id, amount, status)
+      VALUES ($1,$2,'pending')
+      ON CONFLICT (user_unique_id, date_trunc('month',requested_at))
+      DO NOTHING
+    `, [uid, amt]);
+  }
+}
+
+/**
+ * Master-Admin approves or rejects a release request.
+ * If approved, moves `amount` from withheld -> available.
+ */
+async function reviewWithheldRelease(requestId, action, reviewerUid) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // fetch the request
+    const { rows: [reqRow] } = await client.query(`
+      SELECT user_unique_id, amount, status
+        FROM withheld_release_requests
+       WHERE id = $1
+         AND status = 'pending'
+    `, [requestId]);
+
+    if (!reqRow) {
+      throw new Error('Release request not found or already handled');
+    }
+
+    const newStatus = action === 'approve' ? 'approved' : 'rejected';
+
+    // update the request
+    await client.query(`
+      UPDATE withheld_release_requests
+         SET status      = $2,
+             reviewed_at = NOW(),
+             reviewer_uid = $3
+       WHERE id = $1
+    `, [requestId, newStatus, reviewerUid]);
+
+    if (newStatus === 'approved') {
+      // move funds into available_balance
+      await client.query(`
+        UPDATE wallets
+           SET available_balance = available_balance + $2,
+               withheld_balance  = withheld_balance  - $2,
+               updated_at        = NOW()
+         WHERE user_unique_id = $1
+      `, [reqRow.user_unique_id, reqRow.amount]);
+    }
+
+    await client.query('COMMIT');
+    return { requestId, status: newStatus };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   ensureWallet,
   creditSplit,
@@ -729,4 +805,6 @@ module.exports = {
   reviewWithdrawalRequest,
   getWithdrawalHistory,
   getWalletsByRole,
+  scheduleMonthlyReleases,
+  reviewWithheldRelease,
 };

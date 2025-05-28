@@ -76,7 +76,7 @@ io.on('connection', socket => {
 require('./jobs/releaseWithheld');
 require('./jobs/expireStockPickups');
 require('./jobs/refreshSummary');
-
+require('./cron/releaseScheduler');
 
 app.use('/api', (req, res, next) => {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');

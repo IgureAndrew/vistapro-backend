@@ -228,6 +228,32 @@ async function listSuperAdminWallets(req, res, next) {
   }
 }
 
+// 1) Master-Admin: list pending release requests
+async function listWithheldReleases(req, res, next) {
+  try {
+    const { rows } = await pool.query(`
+      SELECT *
+        FROM withheld_release_requests
+       WHERE status = 'pending'
+       ORDER BY requested_at
+    `);
+    res.json({ requests: rows });
+  } catch (err) { next(err); }
+}
+
+// 2) Master-Admin: review one
+async function reviewRelease(req, res, next) {
+  try {
+    const { id } = req.params;
+    const action = req.body.action; // 'approve' or 'reject'
+    const reviewerUid = req.user.unique_id;
+
+    const result = await walletSvc.reviewWithheldRelease(id, action, reviewerUid);
+    res.json({ message: `Release ${action}d.`, result });
+  } catch (err) { next(err); }
+}
+
+
 module.exports = {
   getMyWallet,
   getWalletStats,
@@ -241,6 +267,8 @@ module.exports = {
   getSuperAdminActivities,
   getAdminWallets,
   getWithdrawalHistory,
+  listWithheldReleases, 
+  reviewRelease,
 
   // renamed to avoid collision:
   listMarketerWallets,

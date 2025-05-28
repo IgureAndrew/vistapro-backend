@@ -1,7 +1,7 @@
 // src/routes/walletRoutes.js
-const express = require('express')
+const express          = require('express')
 const { verifyToken, verifyRole } = require('../middlewares/authMiddleware')
-const wc = require('../controllers/walletController')
+const wc               = require('../controllers/walletController')
 
 const router = express.Router()
 
@@ -32,6 +32,7 @@ router.post(
 )
 
 // ─── MasterAdmin endpoints ────────────────────────────────────
+// commission‐withdrawal review
 router.get(
   '/master-admin/requests',      // GET  /api/wallets/master-admin/requests
   verifyToken,
@@ -44,12 +45,22 @@ router.patch(
   verifyRole(['MasterAdmin']),
   wc.reviewRequest
 )
-router.post(
-  '/master-admin/release-withheld', // POST /api/wallets/master-admin/release-withheld
+
+// withheld‐balance release workflow
+router.get(
+  '/master-admin/releases/pending',   // GET  /api/wallets/master-admin/releases/pending
   verifyToken,
   verifyRole(['MasterAdmin']),
-  wc.releaseWithheld
+  wc.listWithheldReleases
 )
+router.patch(
+  '/master-admin/releases/:id',       // PATCH /api/wallets/master-admin/releases/:id
+  verifyToken,
+  verifyRole(['MasterAdmin']),
+  wc.reviewRelease
+)
+
+// optional: reset all wallets to zero (if you really need it)
 router.post(
   '/master-admin/reset',         // POST /api/wallets/master-admin/reset
   verifyToken,
@@ -100,44 +111,36 @@ router.get(
   '/super-admin/my',             // GET /api/wallets/super-admin/my
   verifyToken,
   verifyRole(['SuperAdmin']),
-  wc.getMyWallet                  // own wallet
+  wc.getMyWallet
 )
 
 // ─── Admin endpoints ───────────────────────────────────────────
 router.get(
-  '/admin/my',                    // GET /api/wallets/admin/my
+  '/admin/my',                   // GET /api/wallets/admin/my
   verifyToken,
   verifyRole(['Admin']),
-  wc.getMyWallet                  // own wallet
+  wc.getMyWallet
 )
 router.get(
-  '/admin/marketers',             // GET /api/wallets/admin/marketers
+  '/admin/marketers',            // GET /api/wallets/admin/marketers
   verifyToken,
   verifyRole(['Admin']),
-  wc.getAdminWallets              // this admin’s marketers
+  wc.getAdminWallets
 )
 router.post(
-  '/admin/withdraw',              // POST /api/wallets/admin/withdraw
+  '/admin/withdraw',             // POST /api/wallets/admin/withdraw
   verifyToken,
   verifyRole(['Admin']),
   wc.requestWithdrawal
 )
 
 // ─── Common endpoints ──────────────────────────────────────────
-// fees stats
+// withdrawal‐fee stats
 router.get(
-  '/withdrawals/fees',            // GET /api/wallets/withdrawals/fees
+  '/withdrawals/fees',           // GET /api/wallets/withdrawals/fees
   verifyToken,
   verifyRole(['Marketer','Admin','SuperAdmin']),
   wc.getWithdrawalFeeStats
-)
-
-// general withdrawal
-router.post(
-  '/withdraw',                    // POST /api/wallets/withdraw
-  verifyToken,
-  verifyRole(['Marketer','Admin','MasterAdmin','SuperAdmin']),
-  wc.requestWithdrawal
 )
 
 module.exports = router
