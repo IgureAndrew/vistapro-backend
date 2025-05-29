@@ -315,11 +315,6 @@ async function createOrder(req, res, next) {
       `, [order.id, inv.id]);
     }
 
-    // 6) Credit commissions
-    await creditMarketerCommission(marketerUid, order.id, p.device_type, number_of_devices);
-    await creditAdminCommission    (marketerUid, order.id,                    number_of_devices);
-    await creditSuperAdminCommission(marketerUid, order.id,                    number_of_devices);
-
     await client.query("COMMIT");
     return res.status(201).json({
       message: "Order placed successfully.",
