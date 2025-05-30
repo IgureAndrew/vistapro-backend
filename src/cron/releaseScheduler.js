@@ -3,34 +3,32 @@ const cron      = require('node-cron');
 const walletSvc = require('../services/walletService');
 
 (() => {
-  // Grab today’s date/time
-  const now = new Date();
-  const sec = 0;              // at the top of the minute
-  const min = 42;             // 42nd minute
-  const hr  = 22;             // 22:00 hour
+  // 1) pick the target time: today at 22:42:00 (you could also use new Date())
+  const SEC = 0;
+  const MIN = 42;
+  const HOUR = 22;
 
-  // Build a 6-field cron pattern: second minute hour dayOfMonth month dayOfWeek
-  const pattern = `${sec} ${min} ${hr} * * *`;
+  // 6-field cron: sec min hour dom month dow
+  const pattern = `${SEC} ${MIN} ${HOUR} * * *`;
 
-  // Schedule it
-  const oneOffJob = cron.schedule(
+  const job = cron.schedule(
     pattern,
     async () => {
-      console.log('🕑 one-off release at 22:42:00 running…');
+      console.log('🕑 [one-off] running withheld-release scheduler…');
       try {
         await walletSvc.scheduleMonthlyReleases();
-        console.log('✅ one-off release requests created.');
+        console.log('✅ [one-off] release requests created.');
       } catch (err) {
-        console.error('❌ error on one-off release:', err);
+        console.error('❌ [one-off] error:', err);
       } finally {
-        oneOffJob.stop();   // unschedule after it runs once
+        job.stop();    // unschedule so it only runs once
       }
     },
     {
-      timezone: 'Africa/Lagos',
-      scheduled: true
+      scheduled: true,
+      timezone: 'Africa/Lagos'
     }
   );
 
-  console.log(`🔜 one-off withhold‐release scheduled for today at 22:42:00 (pattern: "${pattern}")`);
+  console.log(`🔜 one-off withheld-release scheduled for today at ${HOUR}:${MIN}:${SEC} (pattern="${pattern}")`);
 })();
