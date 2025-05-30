@@ -996,11 +996,13 @@ async function getAllowance(req, res, next) {
 
     // 2) fetch any extra-pickup request
     const { rows } = await pool.query(
-      `SELECT status, next_request_allowed_at
-         FROM additional_pickup_requests
-        WHERE marketer_id = $1`,
-      [marketerId]
-    );
+    `SELECT status, next_request_allowed_at
+       FROM additional_pickup_requests
+      WHERE marketer_id = $1
+      ORDER BY reviewed_at DESC, created_at DESC
+      LIMIT 1`,
+    [marketerId]
+  );
     
     // 3) default values
     let allowance             = 1;

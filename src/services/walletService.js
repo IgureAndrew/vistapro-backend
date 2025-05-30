@@ -105,10 +105,17 @@ async function creditFull(userId, orderId, amount, typeTag) {
 // ─── Commission Credits ─────────────────────────────────────────
 
 async function creditMarketerCommission(marketerUid, orderId, deviceType, qty) {
+  // Guard: only pay when the order is in released_confirmed
+  const { rows: [ord] } = await pool.query(
+    `SELECT status FROM orders WHERE id = $1`,
+    [orderId]
+  );
+  if (ord?.status !== 'released_confirmed') {
+    return { totalComm: 0, available: 0, withheld: 0 };
+  }
+
   const { rows: [cr] } = await pool.query(
-    `SELECT marketer_rate
-       FROM commission_rates
-      WHERE device_type = LOWER($1)`,
+    `SELECT marketer_rate FROM commission_rates WHERE device_type = LOWER($1)`,
     [deviceType]
   );
   const rate  = cr?.marketer_rate || 0;
@@ -117,6 +124,15 @@ async function creditMarketerCommission(marketerUid, orderId, deviceType, qty) {
 }
 
 async function creditAdminCommission(marketerUid, orderId, qty) {
+  // Guard: only pay when the order is in released_confirmed
+  const { rows: [ord] } = await pool.query(
+    `SELECT status FROM orders WHERE id = $1`,
+    [orderId]
+  );
+  if (ord?.status !== 'released_confirmed') {
+    return { totalComm: 0 };
+  }
+
   const { rows: [userRow] } = await pool.query(
     `SELECT
         u2.unique_id   AS adminUid,
@@ -145,7 +161,17 @@ async function creditAdminCommission(marketerUid, orderId, qty) {
   return creditFull(adminUid, orderId, total, 'admin_commission');
 }
 
+
 async function creditSuperAdminCommission(marketerUid, orderId, qty) {
+  // Guard: only pay when the order is in released_confirmed
+  const { rows: [ord] } = await pool.query(
+    `SELECT status FROM orders WHERE id = $1`,
+    [orderId]
+  );
+  if (ord?.status !== 'released_confirmed') {
+    return { totalComm: 0 };
+  }
+
   const { rows: [row] } = await pool.query(
     `SELECT
         su.unique_id     AS superUid,
@@ -175,6 +201,7 @@ async function creditSuperAdminCommission(marketerUid, orderId, qty) {
   const total = rate * qty;
   return creditFull(superUid, orderId, total, 'superadmin_commission');
 }
+
 
 // ─── Queries ────────────────────────────────────────────────────
 async function getSubordinateWallets(superAdminUid) {

@@ -201,7 +201,7 @@ async function getPlaceOrderData(req, res, next) {
 // src/controllers/marketerController.js
 
 async function createOrder(req, res, next) {
-  const marketerId = req.user.id;
+  const marketerId  = req.user.id;
   const marketerUid = req.user.unique_id;
 
   let {
@@ -258,6 +258,7 @@ async function createOrder(req, res, next) {
        WHERE su.id = $1
     `, [stock_update_id]);
     if (!p) throw new Error("Invalid stock_update_id");
+
     const unitPrice   = Number(p.selling_price);
     const sold_amount = unitPrice * number_of_devices;
     const unitProfit  = unitPrice - Number(p.cost_price);
@@ -292,10 +293,8 @@ async function createOrder(req, res, next) {
       unitProfit
     ]);
 
-    // 5) Upsert each marketer-entered IMEI into inventory_items => sold
-    //    and link it via order_items
+    // 5) Upsert each IMEI into inventory_items → sold, and link via order_items
     for (let imei of imeis) {
-      // either insert new, or if it existed, update to sold
       const { rows: [inv] } = await client.query(`
         INSERT INTO inventory_items (product_id, imei, status, created_at)
         VALUES (
@@ -315,6 +314,10 @@ async function createOrder(req, res, next) {
       `, [order.id, inv.id]);
     }
 
+    // 6) NO COMMISSIONS HERE 🚫
+    //    All commission payouts are now strictly handled in your
+    //    "confirmOrder" endpoint when status → 'released_confirmed'
+
     await client.query("COMMIT");
     return res.status(201).json({
       message: "Order placed successfully.",
@@ -327,7 +330,6 @@ async function createOrder(req, res, next) {
     client.release();
   }
 }
-
 
 
 /**
