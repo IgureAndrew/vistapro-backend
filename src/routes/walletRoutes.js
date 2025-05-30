@@ -46,19 +46,6 @@ router.patch(
   wc.reviewRequest
 )
 
-// withheld‐balance release workflow
-router.get(
-  '/master-admin/releases/pending',   // GET  /api/wallets/master-admin/releases/pending
-  verifyToken,
-  verifyRole(['MasterAdmin']),
-  wc.listWithheldReleases
-)
-router.patch(
-  '/master-admin/releases/:id',       // PATCH /api/wallets/master-admin/releases/:id
-  verifyToken,
-  verifyRole(['MasterAdmin']),
-  wc.reviewRelease
-)
 
 // optional: reset all wallets to zero (if you really need it)
 router.post(
@@ -142,5 +129,26 @@ router.get(
   verifyRole(['Marketer','Admin','SuperAdmin']),
   wc.getWithdrawalFeeStats
 )
+
+// GET /api/wallets/master-admin/marketers/withheld
+router.get(
+  '/master-admin/marketers/withheld',
+  requireRole('MasterAdmin'),
+  wc.listMarketersWithheld
+);
+
+// Approve (release) all withheld for a marketer
+router.patch(
+  '/master-admin/marketers/:userUid/withheld/approve',
+  requireRole('MasterAdmin'),
+  wc.approveManualRelease
+);
+
+// Reject (clear) all withheld for a marketer
+router.patch(
+  '/master-admin/marketers/:userUid/withheld/reject',
+  requireRole('MasterAdmin'),
+  wc.rejectManualRelease
+);
 
 module.exports = router

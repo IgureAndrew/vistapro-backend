@@ -135,57 +135,7 @@ async function resetWallets(req, res, next) {
   }
 }
 
-/**
- * GET /api/wallets/master-admin/releases/pending
- * List pending withheld‐balance release requests
- */
-async function listWithheldReleases(req, res, next) {
-  try {
-    const { rows } = await pool.query(`
-      SELECT
-        id,
-        user_unique_id,
-        amount::int    AS amount,
-        requested_at
-      FROM withheld_release_requests
-      WHERE status = 'pending'
-      ORDER BY requested_at ASC
-    `)
-    res.json({ requests: rows })
-  } catch (err) {
-    next(err)
-  }
-}
 
-/**
- * PATCH /api/wallets/master-admin/releases/:id
- * Approve or reject a withheld‐balance release (MasterAdmin)
- */
-async function reviewRelease(req, res, next) {
-  try {
-    const releaseId  = Number(req.params.id)
-    const action     = req.body.action           // 'approve' or 'reject'
-    const reviewerUid = req.user.unique_id
-
-    if (!['approve','reject'].includes(action)) {
-      return res.status(400).json({ message: "Invalid action." })
-    }
-
-    // delegate to your service (implement reviewWithheldRelease there)
-    const result = await walletService.reviewWithheldRelease(
-      releaseId,
-      action,
-      reviewerUid
-    )
-
-    res.json({
-      message: `Release ${action}d successfully.`,
-      result
-    })
-  } catch (err) {
-    next(err)
-  }
-}
 
 /**
  * GET /api/wallets/super-admin/activities
@@ -268,6 +218,52 @@ async function getWithdrawalHistory(req, res, next) {
   }
 }
 
+async function listMarketersWithheld(req, res, next) {
+  try {
+    const rows = await walletSvc.getMarketersWithheld();
+    // respond under a clear key
+    res.json({ withheld: rows });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * PATCH /api/wallets/master-admin/marketers/:userUid/withheld/approve
+ */
+async function approveManualRelease(req, res, next) {
+  try {
+    const userUid = req.params.userUid;
+    const reviewerUid = req.user.unique_id;
+
+    const { released } = await walletSvc.manualRelease(userUid, reviewerUid);
+    res.json({
+      message: `Successfully released ₦${released.toLocaleString()} to ${userUid}.`,
+      released
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * PATCH /api/wallets/master-admin/marketers/:userUid/withheld/reject
+ */
+async function rejectManualRelease(req, res, next) {
+  try {
+    const userUid = req.params.userUid;
+    const reviewerUid = req.user.unique_id;
+
+    const { rejected } = await walletSvc.manualReject(userUid, reviewerUid);
+    res.json({
+      message: `Withheld balance of ₦${rejected.toLocaleString()} for ${userUid} has been cleared.`,
+      rejected
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   getMyWallet,
   getWalletStats,
@@ -277,12 +273,13 @@ module.exports = {
   listPendingRequests,
   reviewRequest,
   resetWallets,
-  listWithheldReleases,
-  reviewRelease,
   getSuperAdminActivities,
   getAdminWallets,
   listMarketerWallets,
   listAdminWallets,
   listSuperAdminWallets,
-  getWithdrawalHistory
+  getWithdrawalHistory,
+   listMarketersWithheld,
+  approveManualRelease,
+  rejectManualRelease,
 }

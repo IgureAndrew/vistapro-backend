@@ -687,18 +687,6 @@ async function getWithdrawalHistory({ startDate, endDate, name, role }) {
   return rows;
 }
 
-/**
- * Get every user of a given role along with their wallet balances & pending cashouts
- */
-/**
- * Get every user of a given role along with their wallet balances & pending cashouts
- */
-/**
- * Get every user of a given role along with their wallet balances
- * *only* from orders that passed through the given superAdminUid
- */
-// BEFORE: you were summing wallet_transactions directly, causing duplicate rows.
-// AFTER: just pull from wallets.*, plus a sub-query for pending_cashout:
 
 /**
  * Get every user of a given role along with their wallet balances & pending cashouts.
@@ -738,81 +726,111 @@ async function getWalletsByRole(role) {
   }));
 }
 
-/**
- * Create the monthly release request for every marketer whose withheld_balance > 0.
- * Called by a cron job on the 1st of each month.
- */
-async function scheduleMonthlyReleases() {
-  // 1) find all wallets with withheld_balance > 0
-  const { rows } = await pool.query(`
-    SELECT user_unique_id, withheld_balance
-      FROM wallets
-     WHERE withheld_balance > 0
-  `);
 
-  for (const { user_unique_id: uid, withheld_balance: amt } of rows) {
-    // upsert a pending release for this user/month
-    await pool.query(`
-      INSERT INTO withheld_release_requests
-        (user_unique_id, amount, status)
-      VALUES ($1,$2,'pending')
-      ON CONFLICT (user_unique_id, date_trunc('month',requested_at))
-      DO NOTHING
-    `, [uid, amt]);
-  }
+/**
+ * Returns every Marketer who currently has a non‐zero withheld balance
+ */
+async function getMarketersWithheld() {
+  const { rows } = await pool.query(`
+    SELECT
+      w.user_unique_id,
+      w.withheld_balance::int AS amount
+    FROM wallets w
+    JOIN users u
+      ON u.unique_id = w.user_unique_id
+    WHERE u.role = 'Marketer'
+      AND w.withheld_balance > 0
+    ORDER BY u.first_name, u.last_name
+  `);
+  return rows;
 }
 
-/**
- * Master-Admin approves or rejects a release request.
- * If approved, moves `amount` from withheld -> available.
- */
-async function reviewWithheldRelease(requestId, action, reviewerUid) {
+// 2) Release all withheld for a single user
+async function manualRelease(userUniqueId, reviewerUid) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    // fetch the request
-    const { rows: [reqRow] } = await client.query(`
-      SELECT user_unique_id, amount, status
-        FROM withheld_release_requests
-       WHERE id = $1
-         AND status = 'pending'
-    `, [requestId]);
-
-    if (!reqRow) {
-      throw new Error('Release request not found or already handled');
+    const { rows:[w] } = await client.query(`
+      SELECT withheld_balance FROM wallets
+       WHERE user_unique_id = $1
+       FOR UPDATE
+    `, [userUniqueId]);
+    const amt = Number(w?.withheld_balance || 0);
+    if (amt <= 0) {
+      await client.query('ROLLBACK');
+      return { released: 0 };
     }
 
-    const newStatus = action === 'approve' ? 'approved' : 'rejected';
-
-    // update the request
+    // a) move it into available_balance
     await client.query(`
-      UPDATE withheld_release_requests
-         SET status      = $2,
-             reviewed_at = NOW(),
-             reviewer_uid = $3
-       WHERE id = $1
-    `, [requestId, newStatus, reviewerUid]);
+      UPDATE wallets
+         SET available_balance = available_balance + $2,
+             withheld_balance  = 0,
+             updated_at        = NOW()
+       WHERE user_unique_id = $1
+    `, [userUniqueId, amt]);
 
-    if (newStatus === 'approved') {
-      // move funds into available_balance
-      await client.query(`
-        UPDATE wallets
-           SET available_balance = available_balance + $2,
-               withheld_balance  = withheld_balance  - $2,
-               updated_at        = NOW()
-         WHERE user_unique_id = $1
-      `, [reqRow.user_unique_id, reqRow.amount]);
-    }
+    // b) record a release transaction
+    await client.query(`
+      INSERT INTO wallet_transactions
+        (user_unique_id, amount, transaction_type, meta, created_at)
+      VALUES
+        ($1, $2, 'withheld_release', jsonb_build_object('reviewer', $3), NOW())
+    `, [userUniqueId, amt, reviewerUid]);
 
     await client.query('COMMIT');
-    return { requestId, status: newStatus };
-  } catch (err) {
+    return { released: amt };
+  } catch(err) {
     await client.query('ROLLBACK');
     throw err;
   } finally {
     client.release();
   }
 }
+
+// 3) Reject (clear) all withheld for a single user
+async function manualReject(userUniqueId, reviewerUid) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows:[w] } = await client.query(`
+      SELECT withheld_balance FROM wallets
+       WHERE user_unique_id = $1
+       FOR UPDATE
+    `, [userUniqueId]);
+    const amt = Number(w?.withheld_balance || 0);
+    if (amt <= 0) {
+      await client.query('ROLLBACK');
+      return { rejected: 0 };
+    }
+
+    // a) zero out withheld_balance
+    await client.query(`
+      UPDATE wallets
+         SET withheld_balance  = 0,
+             updated_at        = NOW()
+       WHERE user_unique_id = $1
+    `, [userUniqueId]);
+
+    // b) record a reject transaction
+    await client.query(`
+      INSERT INTO wallet_transactions
+        (user_unique_id, amount, transaction_type, meta, created_at)
+      VALUES
+        ($1, $2, 'withheld_reject', jsonb_build_object('reviewer', $3), NOW())
+    `, [userUniqueId, amt, reviewerUid]);
+
+    await client.query('COMMIT');
+    return { rejected: amt };
+  } catch(err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+
 
 module.exports = {
   ensureWallet,
@@ -832,6 +850,8 @@ module.exports = {
   reviewWithdrawalRequest,
   getWithdrawalHistory,
   getWalletsByRole,
-  scheduleMonthlyReleases,
-  reviewWithheldRelease,
+  getMarketersWithheld,
+  manualRelease,
+  manualReject
+  
 };

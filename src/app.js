@@ -67,7 +67,7 @@ app.use(session({
 require('./jobs/releaseWithheld');
 require('./jobs/expireStockPickups');
 require('./jobs/refreshSummary');
-require('./cron/releaseScheduler');
+
 
 // ——— Disable client caching on all /api routes
 app.use('/api', (req, res, next) => {
