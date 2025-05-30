@@ -130,24 +130,29 @@ router.get(
   wc.getWithdrawalFeeStats
 )
 
+// ─── MasterAdmin: manual withheld balances ─────────────────────
+
 // GET /api/wallets/master-admin/marketers/withheld
 router.get(
   '/master-admin/marketers/withheld',
-  requireRole('MasterAdmin'),
+  verifyToken,
+  verifyRole(['MasterAdmin']),
   wc.listMarketersWithheld
 );
 
 // Approve (release) all withheld for a marketer
 router.patch(
   '/master-admin/marketers/:userUid/withheld/approve',
-  requireRole('MasterAdmin'),
+  verifyToken,
+  verifyRole(['MasterAdmin']),
   wc.approveManualRelease
 );
 
 // Reject (clear) all withheld for a marketer
 router.patch(
   '/master-admin/marketers/:userUid/withheld/reject',
-  requireRole('MasterAdmin'),
+  verifyToken,
+  verifyRole(['MasterAdmin']),
   wc.rejectManualRelease
 );
 
