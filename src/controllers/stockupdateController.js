@@ -1073,51 +1073,63 @@ async function reviewExtraPickupRequest(req, res, next) {
 
   const id     = parseInt(req.params.id, 10);
   const action = req.body.action; // 'approve' or 'reject'
-
   if (!['approve','reject'].includes(action)) {
     return res.status(400).json({ message: "Invalid action." });
   }
 
+  const status      = action === 'approve' ? 'approved' : 'rejected';
+  const reviewerUid = req.user.unique_id;
+
   try {
-    // inside your reject branch:
-const { rows } = await pool.query(`
-  UPDATE additional_pickup_requests
-     SET status                  = 'rejected',
-         reviewed_at             = NOW(),
-         reviewer_id             = (SELECT id FROM users WHERE unique_id = $3),
-         next_request_allowed_at = NOW() + INTERVAL '7 days'
-   WHERE id = $1
-   RETURNING *
-`, [ id, , req.user.unique_id ]);
+    // Update with properly ordered placeholders ($1=id, $2=status, $3=reviewerUid)
+    const { rows } = await pool.query(`
+      UPDATE additional_pickup_requests
+         SET status                  = $2,
+             reviewed_at             = NOW(),
+             reviewer_id             = (
+               SELECT id FROM users WHERE unique_id = $3
+             ),
+             next_request_allowed_at = CASE
+               WHEN $2 = 'rejected' THEN NOW() + INTERVAL '7 days'
+               ELSE next_request_allowed_at
+             END
+       WHERE id = $1
+       RETURNING *
+    `, [id, status, reviewerUid]);
 
     if (!rows.length) {
       return res.status(404).json({ message: "Request not found." });
     }
 
-    // notify marketer
+    // Notify the marketer
     const { rows: m } = await pool.query(`
       SELECT unique_id
         FROM users
-       WHERE id = (SELECT marketer_id FROM additional_pickup_requests WHERE id = $1)
+       WHERE id = (
+         SELECT marketer_id
+           FROM additional_pickup_requests
+          WHERE id = $1
+       )
     `, [id]);
 
     if (m[0]?.unique_id) {
       await pool.query(`
-        INSERT INTO notifications (user_unique_id, message)
-        VALUES ($1, $2)
+        INSERT INTO notifications (user_unique_id, message, created_at)
+        VALUES ($1, $2, NOW())
       `, [
         m[0].unique_id,
-        action === 'approve'
-          ? `Your extra-pickup request has been approved. You may now reserve up to 3 units.`
-          : `Your extra-pickup request has been rejected.`
+        status === 'approved'
+          ? `Your extra-pickup request has been approved. You may now pick up up to 3 items.`
+          : `Your extra-pickup request has been rejected. Please try again later.`
       ]);
     }
 
-    res.json({ message: `Request ${action}d.`, request: rows[0] });
+    res.json({ message: `Request ${status}.`, request: rows[0] });
   } catch (err) {
     next(err);
   }
 }
+
 
 /**
  * PATCH /api/marketer/notifications/:id/read
