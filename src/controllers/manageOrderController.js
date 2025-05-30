@@ -103,14 +103,13 @@ async function confirmOrder(req, res, next) {
 
     let { marketer_id, product_id, stock_update_id, qty, commission_paid } = o;
 
-    // 2) If product_id was null (shouldn’t happen for stock orders, but just in case)
+    // 2) If product_id was null, backfill it
     if (!product_id && stock_update_id) {
       const { rows: [su] } = await client.query(
         `SELECT product_id FROM stock_updates WHERE id = $1`,
         [stock_update_id]
       );
       if (!su) throw { status: 404, message: "Associated stock update not found." };
-
       product_id = su.product_id;
       await client.query(
         `UPDATE orders SET product_id = $1 WHERE id = $2`,
@@ -118,7 +117,16 @@ async function confirmOrder(req, res, next) {
       );
     }
 
-    // 3) Pay commissions & record sale only once
+    // 3) First flip the status to released_confirmed
+    await client.query(`
+      UPDATE orders
+         SET status       = 'released_confirmed',
+             confirmed_at = NOW(),
+             updated_at   = NOW()
+       WHERE id = $1
+    `, [orderId]);
+
+    // 4) Then pay commissions & record sale only once
     if (!commission_paid) {
       // a) fetch marketer UID
       const { rows: [mu] } = await client.query(
@@ -139,7 +147,7 @@ async function confirmOrder(req, res, next) {
       await creditAdminCommission    (marketerUid, orderId, qty);
       await creditSuperAdminCommission(marketerUid, orderId, qty);
 
-      // d) compute initial_profit in its own query
+      // d) compute initial_profit
       const { rows: profitRows } = await client.query(
         `SELECT (selling_price - cost_price) * $1 AS profit
            FROM products
@@ -148,7 +156,7 @@ async function confirmOrder(req, res, next) {
       );
       const initialProfit = profitRows[0]?.profit ?? 0;
 
-      // e) insert into sales_record using distinct placeholders
+      // e) insert into sales_record
       await client.query(`
         INSERT INTO sales_record (
           order_id,
@@ -165,15 +173,6 @@ async function confirmOrder(req, res, next) {
         [orderId]
       );
     }
-
-    // 4) Mark the order as released_confirmed
-    await client.query(`
-      UPDATE orders
-         SET status        = 'released_confirmed',
-             confirmed_at  = NOW(),
-             updated_at    = NOW()
-       WHERE id = $1
-    `, [orderId]);
 
     // 5) If this was a stock_update, mark it sold
     if (stock_update_id) {
@@ -198,6 +197,7 @@ async function confirmOrder(req, res, next) {
     client.release();
   }
 }
+
 
 
 /**
