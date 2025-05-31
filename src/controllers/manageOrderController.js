@@ -72,10 +72,8 @@ async function getPendingOrders(req, res, next) {
 /**
  * PATCH /api/manage-orders/orders/:orderId/confirm
  * Confirm a pending pickup order: record IMEIs sold, update stock,
- * pay commissions, and mark as released_confirmed.
+ * pay commissions, and finally mark as released_confirmed.
  */
-// src/controllers/manageOrderController.js
-
 async function confirmOrder(req, res, next) {
   const orderId = parseInt(req.params.orderId, 10);
   const client  = await pool.connect();
@@ -98,34 +96,88 @@ async function confirmOrder(req, res, next) {
     `, [orderId]);
 
     if (!order) {
+      // Either the order doesn't exist, or it's already been confirmed.
       return res.status(404).json({ message: "Order not found or already confirmed." });
     }
 
     let {
-      marketer_id:    marketerId,
-      product_id:     productId,
+      marketer_id:     marketerId,
+      product_id:      productId,
       stock_update_id: stockUpdateId,
       qty,
       commission_paid: commissionPaid
     } = order;
 
-    // 2) Backfill product_id if missing (edge case)
+    // 2) If product_id was null (edge‐case for stock orders), backfill it
     if (!productId && stockUpdateId) {
       const { rows: [su] } = await client.query(
         `SELECT product_id FROM stock_updates WHERE id = $1`,
         [stockUpdateId]
       );
       if (!su) {
+        await client.query("ROLLBACK");
         return res.status(404).json({ message: "Associated stock update not found." });
       }
       productId = su.product_id;
       await client.query(
-        `UPDATE orders SET product_id = $1 WHERE id = $2`,
+        `UPDATE orders
+            SET product_id = $1
+          WHERE id = $2`,
         [productId, orderId]
       );
     }
 
-    // 3) Flip status first
+    // ─── 3) PAY COMMISSIONS FIRST (while status is still 'pending') ───────────────────────
+    if (!commissionPaid) {
+      // a) fetch marketer UID
+      const { rows: [mu] } = await client.query(
+        `SELECT unique_id FROM users WHERE id = $1`,
+        [marketerId]
+      );
+      const marketerUid = mu.unique_id;
+
+      // b) fetch device_type
+      const { rows: [pd] } = await client.query(
+        `SELECT device_type FROM products WHERE id = $1`,
+        [productId]
+      );
+      const deviceType = pd.device_type;
+
+      // c) credit all three commissions
+      //    (these helpers only check commission_paid, not status, so they WILL run)
+      await creditMarketerCommission   (marketerUid, orderId, deviceType, qty);
+      await creditAdminCommission      (marketerUid, orderId,           qty);
+      await creditSuperAdminCommission (marketerUid, orderId,           qty);
+
+      // d) compute initial_profit for the sales_record
+      const { rows: [profitRow] } = await client.query(`
+        SELECT (selling_price - cost_price) * $1 AS profit
+          FROM products
+         WHERE id = $2
+      `, [qty, productId]);
+      const initialProfit = profitRow?.profit || 0;
+
+      // e) insert into sales_record
+      await client.query(`
+        INSERT INTO sales_record (
+          order_id,
+          product_id,
+          sale_date,
+          quantity_sold,
+          initial_profit
+        ) VALUES ($1, $2, NOW(), $3, $4)
+      `, [orderId, productId, qty, initialProfit]);
+
+      // f) mark that commissions have been paid on this order
+      await client.query(
+        `UPDATE orders
+            SET commission_paid = TRUE
+          WHERE id = $1`,
+        [orderId]
+      );
+    }
+
+    // ─── 4) NOW flip the order status to 'released_confirmed' ──────────────────────────────
     await client.query(`
       UPDATE orders
          SET status        = 'released_confirmed',
@@ -134,50 +186,7 @@ async function confirmOrder(req, res, next) {
        WHERE id = $1
     `, [orderId]);
 
-    // 4) Then run all commission logic once
-    if (!commissionPaid) {
-      // a) Get marketer UID
-      const { rows: [mu] } = await client.query(
-        `SELECT unique_id FROM users WHERE id = $1`,
-        [marketerId]
-      );
-      const marketerUid = mu.unique_id;
-
-      // b) Get device type
-      const { rows: [pd] } = await client.query(
-        `SELECT device_type FROM products WHERE id = $1`,
-        [productId]
-      );
-      const deviceType = pd.device_type;
-
-      // c) Credit commissions (all three levels)
-      await creditMarketerCommission(marketerUid, orderId, deviceType, qty);
-      await creditAdminCommission    (marketerUid, orderId, qty);
-      await creditSuperAdminCommission(marketerUid, orderId, qty);
-
-      // d) Record the sale in sales_record
-      const { rows: [pr] } = await client.query(
-        `SELECT (selling_price - cost_price) * $1 AS profit
-           FROM products
-          WHERE id = $2`,
-        [qty, productId]
-      );
-      const initialProfit = pr?.profit || 0;
-
-      await client.query(`
-        INSERT INTO sales_record
-          (order_id, product_id, sale_date, quantity_sold, initial_profit)
-        VALUES ($1, $2, NOW(), $3, $4)
-      `, [orderId, productId, qty, initialProfit]);
-
-      // e) Mark that we’ve paid commissions on this order
-      await client.query(
-        `UPDATE orders SET commission_paid = TRUE WHERE id = $1`,
-        [orderId]
-      );
-    }
-
-    // 5) Mark the stock_update as sold (if applicable)
+    // ─── 5) If this was a stock_update, mark that stock as sold ───────────────────────────
     if (stockUpdateId) {
       await client.query(`
         UPDATE stock_updates
@@ -188,7 +197,7 @@ async function confirmOrder(req, res, next) {
     }
 
     await client.query("COMMIT");
-    res.json({ message: "Order confirmed, commissions paid & status updated." });
+    return res.json({ message: "Order confirmed, commissions paid & status updated." });
 
   } catch (err) {
     await client.query("ROLLBACK");

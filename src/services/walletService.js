@@ -104,100 +104,134 @@ async function creditFull(userId, orderId, amount, typeTag) {
 
 // ─── Commission Credits ─────────────────────────────────────────
 
+// Before:
+//   SELECT status FROM orders WHERE id = $1
+//   if (ord?.status !== 'released_confirmed') return;
+
+// After:
 async function creditMarketerCommission(marketerUid, orderId, deviceType, qty) {
-  // Guard: only pay when the order is in released_confirmed
+  // Step A: guard on commission_paid — not on status
   const { rows: [ord] } = await pool.query(
-    `SELECT status FROM orders WHERE id = $1`,
+    `SELECT commission_paid
+       FROM orders
+      WHERE id = $1`,
     [orderId]
   );
-  if (ord?.status !== 'released_confirmed') {
+  if (ord?.commission_paid) {
+    // Already paid → skip
     return { totalComm: 0, available: 0, withheld: 0 };
   }
 
+  // Step B: fetch the marketer_rate for this deviceType
   const { rows: [cr] } = await pool.query(
-    `SELECT marketer_rate FROM commission_rates WHERE device_type = LOWER($1)`,
+    `SELECT marketer_rate
+       FROM commission_rates
+      WHERE LOWER(device_type) = LOWER($1)`,
     [deviceType]
   );
-  const rate  = cr?.marketer_rate || 0;
+  const rate = cr?.marketer_rate || 0;
   const total = rate * qty;
+
+  // Step C: insert three ledger rows (marketer_commission, _available, _withheld)
   return creditSplit(marketerUid, orderId, total, 'marketer_commission');
 }
 
+// Before:
+//   SELECT status FROM orders WHERE id = $1
+//   if (ord?.status !== 'released_confirmed') return;
+
+// After:
 async function creditAdminCommission(marketerUid, orderId, qty) {
-  // Guard: only pay when the order is in released_confirmed
+  // Step A: guard on commission_paid
   const { rows: [ord] } = await pool.query(
-    `SELECT status FROM orders WHERE id = $1`,
+    `SELECT commission_paid
+       FROM orders
+      WHERE id = $1`,
     [orderId]
   );
-  if (ord?.status !== 'released_confirmed') {
+  if (ord?.commission_paid) {
+    // Already paid → nothing to do
     return { totalComm: 0 };
   }
 
-  const { rows: [userRow] } = await pool.query(
-    `SELECT
-        u2.unique_id   AS adminUid,
-        cr.admin_rate
-      FROM orders o
-      JOIN users m
-        ON o.marketer_id   = m.id
-      JOIN users u2
-        ON m.admin_id      = u2.id
-      LEFT JOIN stock_updates su
-        ON o.stock_update_id = su.id
-      JOIN products p
-        ON p.id = COALESCE(o.product_id, su.product_id)
-      JOIN commission_rates cr
-        ON LOWER(cr.device_type) = LOWER(p.device_type)
-      WHERE o.id = $1
-        AND m.unique_id = $2`,
-    [orderId, marketerUid]
-  );
+  // Step B: find this marketer’s Admin UID and admin_rate
+  const { rows: [userRow] } = await pool.query(`
+    SELECT
+      u2.unique_id   AS adminUid,
+      cr.admin_rate
+    FROM orders o
+    JOIN users m
+      ON o.marketer_id = m.id
+    JOIN users u2
+      ON m.admin_id = u2.id
+    LEFT JOIN stock_updates su
+      ON o.stock_update_id = su.id
+    JOIN products p
+      ON p.id = COALESCE(o.product_id, su.product_id)
+    JOIN commission_rates cr
+      ON LOWER(cr.device_type) = LOWER(p.device_type)
+    WHERE o.id = $1
+      AND m.unique_id = $2
+  `, [orderId, marketerUid]);
 
   const adminUid = userRow?.adminuid;
   const rate     = userRow?.admin_rate || 0;
-  if (!adminUid) return { totalComm: 0 };
+  if (!adminUid) {
+    return { totalComm: 0 };
+  }
 
+  // Step C: pay the full admin commission into available_balance
   const total = rate * qty;
   return creditFull(adminUid, orderId, total, 'admin_commission');
 }
 
+// Before:
+//   SELECT status FROM orders WHERE id = $1
+//   if (ord?.status !== 'released_confirmed') return;
 
+// After:
 async function creditSuperAdminCommission(marketerUid, orderId, qty) {
-  // Guard: only pay when the order is in released_confirmed
+  // Step A: guard on commission_paid
   const { rows: [ord] } = await pool.query(
-    `SELECT status FROM orders WHERE id = $1`,
+    `SELECT commission_paid
+       FROM orders
+      WHERE id = $1`,
     [orderId]
   );
-  if (ord?.status !== 'released_confirmed') {
+  if (ord?.commission_paid) {
+    // Already paid → skip
     return { totalComm: 0 };
   }
 
-  const { rows: [row] } = await pool.query(
-    `SELECT
-        su.unique_id     AS superUid,
-        cr.superadmin_rate
-      FROM orders o
-      JOIN users m
-        ON o.marketer_id      = m.id
-      JOIN users a
-        ON m.admin_id         = a.id
-      JOIN users su
-        ON a.super_admin_id   = su.id
-      LEFT JOIN stock_updates su_up
-        ON o.stock_update_id  = su_up.id
-      JOIN products p
-        ON p.id = COALESCE(o.product_id, su_up.product_id)
-      JOIN commission_rates cr
-        ON LOWER(cr.device_type) = LOWER(p.device_type)
-      WHERE o.id = $1
-        AND m.unique_id = $2`,
-    [orderId, marketerUid]
-  );
+  // Step B: find this marketer’s SuperAdmin UID and superadmin_rate
+  const { rows: [row] } = await pool.query(`
+    SELECT
+      su.unique_id      AS superUid,
+      cr.superadmin_rate
+    FROM orders o
+    JOIN users m
+      ON o.marketer_id = m.id
+    JOIN users a
+      ON m.admin_id = a.id
+    JOIN users su
+      ON a.super_admin_id = su.id
+    LEFT JOIN stock_updates su_up
+      ON o.stock_update_id = su_up.id
+    JOIN products p
+      ON p.id = COALESCE(o.product_id, su_up.product_id)
+    JOIN commission_rates cr
+      ON LOWER(cr.device_type) = LOWER(p.device_type)
+    WHERE o.id = $1
+      AND m.unique_id = $2
+  `, [orderId, marketerUid]);
 
   const superUid = row?.superuid;
   const rate     = row?.superadmin_rate || 0;
-  if (!superUid) return { totalComm: 0 };
+  if (!superUid) {
+    return { totalComm: 0 };
+  }
 
+  // Step C: pay full superadmin commission into available_balance
   const total = rate * qty;
   return creditFull(superUid, orderId, total, 'superadmin_commission');
 }
