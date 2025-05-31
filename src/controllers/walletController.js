@@ -324,6 +324,32 @@ async function rejectManualRelease(req, res, next) {
   }
 }
 
+/**
+ * GET /api/wallets/master-admin/releases/history
+ * List all WITHHELD‐BALANCE release requests that have already been approved or rejected.
+ * We exclude “pending” so client can show only processed rows here.
+ */
+async function listAllReleases(req, res, next) {
+  try {
+    const { rows } = await pool.query(`
+      SELECT
+        id,
+        user_unique_id,
+        amount::int               AS amount,
+        status,                   -- 'approved' or 'rejected'
+        requested_at,
+        reviewed_at,
+        reviewer_uid
+      FROM withheld_release_requests
+      WHERE status IN ('approved','rejected')
+      ORDER BY requested_at DESC
+    `)
+    return res.json({ history: rows })
+  } catch (err) {
+    next(err)
+  }
+}
+
 
 module.exports = {
   getMyWallet,
@@ -343,4 +369,5 @@ module.exports = {
    listMarketersWithheld,
   approveManualRelease,
   rejectManualRelease,
+  listAllReleases,
 }

@@ -156,4 +156,11 @@ router.patch(
   wc.rejectManualRelease
 );
 
+router.get(
+  '/master-admin/releases/history',
+  verifyToken,
+  verifyRole(['MasterAdmin']),
+  wc.listAllReleases
+)
+
 module.exports = router
