@@ -245,34 +245,36 @@ async function listMarketersWithheld(req, res, next) {
 
 /**
  * PATCH /api/wallets/master-admin/marketers/:userUid/withheld/approve
- * Move the marketer’s withheld_balance → available_balance and set withheld_balance = 0.
+ * Move the marketer’s withheld_balance → available_balance and set withheld_balance = 0,
+ * AND record an “approved” row in withheld_release_requests.
  */
 async function approveManualRelease(req, res, next) {
-  const { userUid } = req.params
+  const { userUid } = req.params;
+  const reviewerUid = req.user.unique_id; // the MasterAdmin who is approving
 
-  const client = await pool.connect()
+  const client = await pool.connect();
   try {
-    await client.query('BEGIN')
+    await client.query('BEGIN');
 
     // 1) Lock that marketer’s wallet row FOR UPDATE
-    const { rows: [w] } = await client.query(`
+    const { rows: [ w ] } = await client.query(`
       SELECT
         available_balance::bigint   AS avail,
         withheld_balance::bigint    AS withheld
       FROM wallets
       WHERE user_unique_id = $1
       FOR UPDATE
-    `, [ userUid ])
+    `, [userUid]);
 
     if (!w) {
-      throw { status: 404, message: 'Wallet not found for user ' + userUid }
+      throw { status: 404, message: `Wallet not found for user ${userUid}` };
     }
 
-    const { avail, withheld } = w
+    const { avail, withheld } = w;
     if (withheld <= 0) {
       // nothing to release
-      await client.query('COMMIT')
-      return res.status(400).json({ message: 'No withheld balance to release.' })
+      await client.query('COMMIT');
+      return res.status(400).json({ message: `No withheld balance to release for ${userUid}.` });
     }
 
     // 2) Update: available_balance += withheld; withheld_balance = 0
@@ -282,48 +284,91 @@ async function approveManualRelease(req, res, next) {
              withheld_balance  = 0,
              updated_at        = NOW()
        WHERE user_unique_id = $1
-    `, [ userUid, withheld ])
+    `, [userUid, withheld]);
 
-    await client.query('COMMIT')
-    return res.json({ message: `Released ₦${withheld} for user ${userUid}` })
+    // 3) Insert a row into withheld_release_requests (history)
+    await client.query(`
+      INSERT INTO withheld_release_requests
+        (user_unique_id, amount, status, requested_at, reviewed_at, reviewer_uid)
+      VALUES
+        ($1, $2, 'approved', NOW(), NOW(), $3)
+    `, [userUid, withheld, reviewerUid]);
+
+    await client.query('COMMIT');
+    return res.json({ message: `Released ₦${withheld.toLocaleString()} for user ${userUid}.` });
 
   } catch (err) {
-    await client.query('ROLLBACK')
+    await client.query('ROLLBACK');
     if (err.status) {
-      return res.status(err.status).json({ message: err.message })
+      return res.status(err.status).json({ message: err.message });
     }
-    next(err)
+    next(err);
   } finally {
-    client.release()
+    client.release();
   }
 }
 
 /**
  * PATCH /api/wallets/master-admin/marketers/:userUid/withheld/reject
- * Simply zero out that marketer’s withheld_balance (no payout).
+ * Simply zero out that marketer’s withheld_balance (no payout),
+ * AND record a “rejected” row in withheld_release_requests.
  */
 async function rejectManualRelease(req, res, next) {
-  const { userUid } = req.params
+  const { userUid } = req.params;
+  const reviewerUid = req.user.unique_id; // the MasterAdmin who is rejecting
 
+  const client = await pool.connect();
   try {
-    const { rowCount } = await pool.query(`
+    await client.query('BEGIN');
+
+    // 1) Lock that marketer's wallet row FOR UPDATE to read current withheld_balance
+    const { rows: [ w ] } = await client.query(`
+      SELECT withheld_balance::bigint AS withheld
+        FROM wallets
+       WHERE user_unique_id = $1
+       FOR UPDATE
+    `, [userUid]);
+
+    if (!w) {
+      throw { status: 404, message: `Wallet not found for user ${userUid}` };
+    }
+
+    const { withheld } = w;
+    if (withheld <= 0) {
+      // nothing to reject
+      await client.query('COMMIT');
+      return res.status(400).json({ message: `No withheld balance to clear for ${userUid}.` });
+    }
+
+    // 2) Zero out withheld_balance
+    await client.query(`
       UPDATE wallets
          SET withheld_balance = 0,
              updated_at       = NOW()
        WHERE user_unique_id = $1
-         AND withheld_balance > 0
-    `, [ userUid ])
+    `, [userUid]);
 
-    if (rowCount === 0) {
-      return res.status(400).json({ message: 'No withheld balance to clear.' })
-    }
+    // 3) Insert a “rejected” row into withheld_release_requests (history)
+    await client.query(`
+      INSERT INTO withheld_release_requests
+        (user_unique_id, amount, status, requested_at, reviewed_at, reviewer_uid)
+      VALUES
+        ($1, $2, 'rejected', NOW(), NOW(), $3)
+    `, [userUid, withheld, reviewerUid]);
 
-    return res.json({ message: `Cleared withheld balance for user ${userUid}` })
+    await client.query('COMMIT');
+    return res.json({ message: `Cleared (rejected) withheld ₦${withheld.toLocaleString()} for user ${userUid}.` });
+
   } catch (err) {
-    next(err)
+    await client.query('ROLLBACK');
+    if (err.status) {
+      return res.status(err.status).json({ message: err.message });
+    }
+    next(err);
+  } finally {
+    client.release();
   }
 }
-
 
 /**
  * GET /api/wallets/master-admin/releases/history
@@ -343,16 +388,16 @@ async function listAllReleases(req, res, next) {
       FROM withheld_release_requests
       WHERE status IN ('approved','rejected')
       ORDER BY requested_at DESC
-    `)
+    `);
 
-    // Return JSON with a field called "history"
-    return res.json({ history: rows })
+    // We return JSON under a field called "history"
+    return res.json({ history: rows });
+
   } catch (err) {
-    console.error('ERROR in listAllReleases:', err)
-    next(err)
+    console.error('ERROR in listAllReleases:', err);
+    next(err);
   }
 }
-
 
 module.exports = {
   getMyWallet,

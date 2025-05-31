@@ -132,7 +132,10 @@ router.get(
 
 // ─── MasterAdmin: manual withheld balances ─────────────────────
 
-// GET /api/wallets/master-admin/marketers/withheld
+/**
+ * 1) List all marketers’ current withheld balances (so MasterAdmin can see who has some to approve/reject)
+ *    GET /api/wallets/master-admin/marketers/withheld
+ */
 router.get(
   '/master-admin/marketers/withheld',
   verifyToken,
@@ -140,7 +143,10 @@ router.get(
   wc.listMarketersWithheld
 );
 
-// Approve (release) all withheld for a marketer
+/**
+ * 2) Approve (release) a marketer’s withheld balance
+ *    PATCH /api/wallets/master-admin/marketers/:userUid/withheld/approve
+ */
 router.patch(
   '/master-admin/marketers/:userUid/withheld/approve',
   verifyToken,
@@ -148,7 +154,10 @@ router.patch(
   wc.approveManualRelease
 );
 
-// Reject (clear) all withheld for a marketer
+/**
+ * 3) Reject (clear) a marketer’s withheld balance
+ *    PATCH /api/wallets/master-admin/marketers/:userUid/withheld/reject
+ */
 router.patch(
   '/master-admin/marketers/:userUid/withheld/reject',
   verifyToken,
@@ -156,11 +165,15 @@ router.patch(
   wc.rejectManualRelease
 );
 
+/**
+ * 4) Fetch the “history” of every approve/reject that has already happened
+ *    GET /api/wallets/master-admin/releases/history
+ */
 router.get(
   '/master-admin/releases/history',
   verifyToken,
   verifyRole(['MasterAdmin']),
   wc.listAllReleases
-)
+);
 
 module.exports = router
