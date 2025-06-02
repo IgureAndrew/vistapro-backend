@@ -237,120 +237,159 @@ async function creditSuperAdminCommission(marketerUid, orderId, qty) {
 }
 
 
-// ─── Queries ────────────────────────────────────────────────────
 async function getSubordinateWallets(superAdminUid) {
-  // 1) find our internal SuperAdmin ID
-  const { rows: [su] } = await pool.query(
-    `SELECT id FROM users WHERE unique_id = $1`,
-    [superAdminUid]
-  );
-  if (!su) throw new Error('SuperAdmin not found');
+  try {
+    // 1) Find internal ID of this SuperAdmin
+    const { rows: [su] } = await pool.query(
+      `SELECT id
+         FROM users
+        WHERE unique_id = $1
+        LIMIT 1`,
+      [superAdminUid]
+    );
+    if (!su) {
+      throw new Error('SuperAdmin not found');
+    }
+    const superAdminId = su.id;
 
-  // 2) pull all Admins under this SuperAdmin
-  const { rows: admins } = await pool.query(
-    `SELECT id, unique_id
-       FROM users
-      WHERE super_admin_id = $1`,
-    [su.id]
-  );
-  const adminIds = admins.map(a => a.id);
+    // 2) Grab all Admins under this SuperAdmin
+    const { rows: admins } = await pool.query(
+      `SELECT id
+         FROM users
+        WHERE super_admin_id = $1`,
+      [superAdminId]
+    );
+    const adminIds = admins.map(a => a.id);
+    if (adminIds.length === 0) {
+      return { wallets: [], transactions: [] };
+    }
 
-  if (adminIds.length === 0) {
-    return { wallets: [], transactions: [] };
+    // 3) Grab all Marketers under those Admin IDs
+    const { rows: mkrs } = await pool.query(
+      `SELECT id, unique_id, first_name || ' ' || last_name AS name
+         FROM users
+        WHERE admin_id = ANY($1)`,
+      [adminIds]
+    );
+    const marketerIds = mkrs.map(m => m.id);
+    // (we also keep `mkrs.map(m => m.unique_id)` & names if needed later)
+
+    if (marketerIds.length === 0) {
+      return { wallets: [], transactions: [] };
+    }
+
+    // 4) Aggregate each Marketer’s wallet balances for this SuperAdmin.
+    //    Notice we now include `u.role AS role` and GROUP BY `u.unique_id, u.role`.
+    //    We also guard every JSON→int cast with:
+    //       AND wt.meta ? 'orderId'
+    //       AND (wt.meta->>'orderId') ~ '^[0-9]+$'
+    const walletsResult = await pool.query(
+      `
+      SELECT
+        u.unique_id                          AS user_unique_id,
+        u.role                               AS role,
+        $2::int                              AS super_admin_id,
+        $3::varchar                          AS super_admin_uid,
+
+        COALESCE(
+          SUM(wt.amount)
+          FILTER (
+            WHERE o.super_admin_id = $2
+              AND wt.user_unique_id = u.unique_id
+              AND wt.meta ? 'orderId'
+              AND (wt.meta->>'orderId') ~ '^[0-9]+$'
+              AND o.id = (wt.meta->>'orderId')::int
+          ),
+          0
+        ) AS total_balance,
+
+        COALESCE(
+          SUM(wt.amount)
+          FILTER (
+            WHERE o.super_admin_id = $2
+              AND wt.transaction_type = 'commission_available'
+              AND wt.user_unique_id = u.unique_id
+              AND wt.meta ? 'orderId'
+              AND (wt.meta->>'orderId') ~ '^[0-9]+$'
+              AND o.id = (wt.meta->>'orderId')::int
+          ),
+          0
+        ) AS available_balance,
+
+        COALESCE(
+          SUM(wt.amount)
+          FILTER (
+            WHERE o.super_admin_id = $2
+              AND wt.transaction_type = 'commission_withheld'
+              AND wt.user_unique_id = u.unique_id
+              AND wt.meta ? 'orderId'
+              AND (wt.meta->>'orderId') ~ '^[0-9]+$'
+              AND o.id = (wt.meta->>'orderId')::int
+          ),
+          0
+        ) AS withheld_balance
+
+      FROM users AS u
+      LEFT JOIN wallet_transactions AS wt
+        ON wt.user_unique_id = u.unique_id
+      LEFT JOIN orders AS o
+        ON (wt.meta->>'orderId')::int = o.id
+
+      WHERE u.id = ANY($1)   -- only the marketer IDs
+      GROUP BY u.unique_id, u.role
+      ORDER BY u.unique_id;
+      `,
+      [
+        marketerIds,       // $1 = [ array of marketer IDs ]
+        superAdminId,      // $2 = numeric super_admin_id
+        superAdminUid      // $3 = text super_admin_uid
+      ]
+    );
+    const wallets = walletsResult.rows;
+
+    // 5) Fetch the 50 most recent transactions for those same marketers under this SuperAdmin
+    const transactionsResult = await pool.query(
+      `
+      SELECT
+        wt.*,
+        (wt.meta->>'orderId')::int       AS order_id,
+        u.first_name || ' ' || u.last_name AS name
+      FROM wallet_transactions AS wt
+
+      JOIN users AS u
+        ON u.unique_id = wt.user_unique_id
+
+      JOIN orders AS o
+        ON (wt.meta->>'orderId')::int = o.id
+
+      WHERE u.id = ANY($1)
+        AND o.super_admin_id = $2
+        AND wt.meta ? 'orderId'
+        AND (wt.meta->>'orderId') ~ '^[0-9]+$'
+
+      ORDER BY wt.created_at DESC
+      LIMIT 50;
+      `,
+      [
+        marketerIds,     // $1 = [ array of marketer IDs ]
+        superAdminId     // $2 = numeric super_admin_id
+      ]
+    );
+    const transactions = transactionsResult.rows;
+
+    return { wallets, transactions };
   }
-
-  // 3) pull all Marketers under those Admins
-  const { rows: mkrs } = await pool.query(
-    `SELECT id, unique_id, first_name||' '||last_name AS name
-       FROM users
-      WHERE admin_id = ANY($1)`,
-    [adminIds]
-  );
-  const marketerIds   = mkrs.map(m => m.id);
-  const marketerUids  = mkrs.map(m => m.unique_id);
-  const marketerNames = mkrs.reduce((acc,m)=>{ acc[m.unique_id]=m.name; return acc },{})
-
-  if (marketerIds.length === 0) {
-    return { wallets: [], transactions: [] };
+  catch (err) {
+    // If we threw “SuperAdmin not found”, rethrow so the controller can send a 404
+    if (err.message === 'SuperAdmin not found') {
+      throw err;
+    }
+    // Otherwise, log the real SQL/JS error and rethrow so controller prints the message
+    console.error('❌ getSubordinateWallets SQL error:', err);
+    throw new Error(err.message);
   }
-
-  // 4) aggregate only those wallet_transactions belonging to orders
-  //    that used this SuperAdmin (via their Admin → o.super_admin_id)
-  const { rows: wallets } = await pool.query(`
-    SELECT
-      u.unique_id                         AS user_unique_id,
-      $2::int                             AS super_admin_id,
-      $3::varchar                        AS super_admin_uid,
-
-      -- total of all types of commission under this superadmin
-      COALESCE(
-        SUM(wt.amount)
-        FILTER (
-          WHERE o.super_admin_id = $2
-            AND wt.user_unique_id = u.unique_id
-        ),
-        0
-      ) AS total_balance,
-
-      -- only the "available" transactions under this superadmin
-      COALESCE(
-        SUM(wt.amount)
-        FILTER (
-          WHERE o.super_admin_id = $2
-            AND wt.transaction_type = 'commission_available'
-            AND wt.user_unique_id = u.unique_id
-        ),
-        0
-      ) AS available_balance,
-
-      -- only the "withheld" transactions under this superadmin
-      COALESCE(
-        SUM(wt.amount)
-        FILTER (
-          WHERE o.super_admin_id = $2
-            AND wt.transaction_type = 'commission_withheld'
-            AND wt.user_unique_id = u.unique_id
-        ),
-        0
-      ) AS withheld_balance
-
-    FROM users u
-    LEFT JOIN wallet_transactions wt
-      ON wt.user_unique_id = u.unique_id
-    LEFT JOIN orders o
-      ON (wt.meta->>'orderId')::int = o.id
-
-    WHERE u.id = ANY($1)  -- only the marketers we fetched
-    GROUP BY u.unique_id
-    ORDER BY u.unique_id
-  `, [
-    marketerIds,
-    su.id,
-    superAdminUid
-  ]);
-
-  // 5) fetch the most recent 50 transactions (optional)
-  const { rows: transactions } = await pool.query(`
-    SELECT 
-      wt.*,
-      (wt.meta->>'orderId')::int AS order_id,
-      u.first_name||' '||u.last_name AS name
-    FROM wallet_transactions wt
-    JOIN users u
-      ON u.unique_id = wt.user_unique_id
-    JOIN orders o
-      ON (wt.meta->>'orderId')::int = o.id
-    WHERE u.id = ANY($1)
-      AND o.super_admin_id = $2
-    ORDER BY wt.created_at DESC
-    LIMIT 50
-  `, [
-    marketerIds,
-    su.id
-  ]);
-
-  return { wallets, transactions };
 }
+
 
 /**
  * Fetch a user’s wallet, ledger transactions, and withdrawal history

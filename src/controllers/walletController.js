@@ -137,18 +137,27 @@ async function resetWallets(req, res, next) {
 
 
 
-/**
- * GET /api/wallets/super-admin/activities
- * Subordinate wallets & transactions (SuperAdmin)
- */
 async function getSuperAdminActivities(req, res, next) {
   try {
-    const superAdminUid = req.user.unique_id
+    const superAdminUid = req.user.unique_id;
     const { wallets, transactions } =
-      await walletService.getSubordinateWallets(superAdminUid)
-    res.json({ wallets, transactions })
-  } catch (err) {
-    next(err)
+      await walletService.getSubordinateWallets(superAdminUid);
+    return res.json({ wallets, transactions });
+  }
+  catch (err) {
+    // If your service explicitly threw "SuperAdmin not found", return 404
+    if (err.message === 'SuperAdmin not found') {
+      return res.status(404).json({
+        error: `No SuperAdmin found with unique_id = '${req.user.unique_id}'`
+      });
+    }
+
+    // Otherwise, log the real SQL or JS error and return it as JSON
+    console.error('ERROR in getSuperAdminActivities:', err);
+    return res.status(500).json({
+      error: 'Failed to load subordinate wallets & transactions.',
+      details: err.message
+    });
   }
 }
 
