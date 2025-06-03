@@ -943,33 +943,24 @@ async function requestAdditionalPickup(req, res, next) {
   const marketerId = req.user.id;
 
   try {
-    // unique constraint on marketer_id means only one pending/approved can exist
+    // Try to insert a new “pending” request.
+    // If one already exists with status 'pending' or 'approved',
+    // the unique constraint on (marketer_id) will throw 23505.
     const { rows } = await pool.query(`
       INSERT INTO additional_pickup_requests
         (marketer_id, status)
       VALUES ($1, 'pending')
-      RETURNING id, status
+      RETURNING id, status;
     `, [marketerId]);
 
-    // notify their MasterAdmin
-    const { rows: prev } = await pool.query(`
-  SELECT next_request_allowed_at
-    FROM additional_pickup_requests
-   WHERE marketer_id = $1
-     AND status = 'rejected'
-   ORDER BY reviewed_at DESC
-   LIMIT 1
-`, [ marketerId ]);
-
-if (prev.length && prev[0].next_request_allowed_at > NOW()) {
-  return res.status(400).json({
-    message: `You can next request on ${prev[0].next_request_allowed_at.toLocaleString()}.`
-  });
-}
-    res.status(201).json({ message: "Additional pickup request submitted." });
+    // Insert succeeded ⇒ return success JSON.
+    res.status(201).json({
+      message: "Additional pickup request submitted.",
+      request: rows[0]
+    });
   } catch (err) {
-    // unique violation → they already have a request
     if (err.code === '23505') {
+      // Already have a “pending” or “approved” request
       return res.status(400).json({
         message: "You already have an active additional-pickup request."
       });
@@ -977,7 +968,6 @@ if (prev.length && prev[0].next_request_allowed_at > NOW()) {
     next(err);
   }
 }
-
 /**
  * GET /api/marketer/stock-pickup/allowance
  * Returns { allowance: 1 } by default, or 3 if they have an approved request.
@@ -1064,7 +1054,9 @@ async function listExtraPickupRequests(req, res, next) {
 }
 /**
  * PATCH /api/stock-pickup/requests/:id
- * MasterAdmin approves or rejects a pending request.
+ * MasterAdmin approves or rejects a pending extra-pickup request.
+ * We will no longer set a 7-day next_request_allowed_at; instead, if rejected,
+ * we delete the row so the marketer can submit again immediately.
  */
 async function reviewExtraPickupRequest(req, res, next) {
   if (req.user.role !== 'MasterAdmin') {
@@ -1080,55 +1072,73 @@ async function reviewExtraPickupRequest(req, res, next) {
   const status      = action === 'approve' ? 'approved' : 'rejected';
   const reviewerUid = req.user.unique_id;
 
+  const client = await pool.connect();
   try {
-    // Update with properly ordered placeholders ($1=id, $2=status, $3=reviewerUid)
-    const { rows } = await pool.query(`
+    await client.query('BEGIN');
+
+    // 1) Update status and reviewer_id
+    const { rows: updatedRows } = await client.query(`
       UPDATE additional_pickup_requests
-         SET status                  = $2,
-             reviewed_at             = NOW(),
-             reviewer_id             = (
-               SELECT id FROM users WHERE unique_id = $3
-             ),
-             next_request_allowed_at = CASE
-               WHEN $2 = 'rejected' THEN NOW() + INTERVAL '7 days'
-               ELSE next_request_allowed_at
-             END
+         SET status      = $2,
+             reviewed_at = NOW(),
+             reviewer_id = (
+               SELECT id
+                 FROM users
+                WHERE unique_id = $3
+             )
        WHERE id = $1
        RETURNING *
     `, [id, status, reviewerUid]);
 
-    if (!rows.length) {
+    if (!updatedRows.length) {
+      await client.query('ROLLBACK');
       return res.status(404).json({ message: "Request not found." });
     }
 
-    // Notify the marketer
-    const { rows: m } = await pool.query(`
-      SELECT unique_id
-        FROM users
-       WHERE id = (
-         SELECT marketer_id
-           FROM additional_pickup_requests
-          WHERE id = $1
-       )
+    const updatedRequest = updatedRows[0];
+
+    // 2) Notify the marketer (whoever owns this request)
+    const { rows: marketerRows } = await client.query(`
+      SELECT u.unique_id
+        FROM users u
+        JOIN additional_pickup_requests r
+          ON r.marketer_id = u.id
+       WHERE r.id = $1
     `, [id]);
 
-    if (m[0]?.unique_id) {
-      await pool.query(`
+    if (marketerRows[0]?.unique_id) {
+      await client.query(`
         INSERT INTO notifications (user_unique_id, message, created_at)
         VALUES ($1, $2, NOW())
       `, [
-        m[0].unique_id,
+        marketerRows[0].unique_id,
         status === 'approved'
           ? `Your extra-pickup request has been approved. You may now pick up up to 3 items.`
-          : `Your extra-pickup request has been rejected. Please try again later.`
+          : `Your extra-pickup request has been rejected. You may request again at any time.`
       ]);
     }
 
-    res.json({ message: `Request ${status}.`, request: rows[0] });
+    // 3) If rejected, delete that row so they can insert a new one immediately
+    if (status === 'rejected') {
+      await client.query(`
+        DELETE FROM additional_pickup_requests
+         WHERE id = $1
+      `, [id]);
+    }
+
+    await client.query('COMMIT');
+    return res.json({
+      message: `Request ${status}.`,
+      request: updatedRequest
+    });
   } catch (err) {
+    await client.query('ROLLBACK');
     next(err);
+  } finally {
+    client.release();
   }
 }
+
 
 
 /**
@@ -1144,6 +1154,8 @@ async function markNotificationRead(req, res, next) {
   `, [ Number(req.params.id), req.user.unique_id ]);
   res.sendStatus(204);
 }
+
+
 async function createBulkPickup(req, res, next) {
   const marketerId = req.user.id;
   const { lines, total } = req.bulk;
@@ -1152,14 +1164,31 @@ async function createBulkPickup(req, res, next) {
   try {
     await client.query('BEGIN');
 
-    // 1) fetch allowance (1 or 3)
-    const { rows: arows } = await client.query(`
-      SELECT CASE WHEN EXISTS (
-         SELECT 1 FROM additional_pickup_requests
-         WHERE marketer_id=$1 AND status='approved'
-       ) THEN 3 ELSE 1 END AS allowance
-    `, [marketerId]);
-    const allowance = arows[0].allowance;
+    // 1) Check for a one-time “approved” extra-pickup. If found, allow 3 and delete it.
+    const { rows: arows } = await client.query(
+      `
+      SELECT id
+        FROM additional_pickup_requests
+       WHERE marketer_id = $1
+         AND status = 'approved'
+       LIMIT 1
+      `,
+      [marketerId]
+    );
+
+    let allowance = 1;
+    if (arows.length) {
+      allowance = 3;
+      // Consume that approval so it won’t be used again
+      await client.query(
+        `
+        DELETE FROM additional_pickup_requests
+         WHERE id = $1
+        `,
+        [arows[0].id]
+      );
+    }
+
     if (total > allowance) {
       await client.query('ROLLBACK');
       return res.status(400).json({ message: `Your allowance is ${allowance}` });
@@ -1167,11 +1196,15 @@ async function createBulkPickup(req, res, next) {
 
     // 2) verify each product has enough stock
     for (let { product_id, quantity } of lines) {
-      const { rows: crow } = await client.query(`
+      const { rows: crow } = await client.query(
+        `
         SELECT COUNT(*)::int AS cnt
-        FROM inventory_items
-        WHERE product_id=$1 AND status='available'
-      `, [product_id]);
+          FROM inventory_items
+         WHERE product_id = $1
+           AND status     = 'available'
+        `,
+        [product_id]
+      );
       if (crow[0].cnt < quantity) {
         await client.query('ROLLBACK');
         return res.status(400).json({
@@ -1180,37 +1213,60 @@ async function createBulkPickup(req, res, next) {
       }
     }
 
-    // 3) insert stock_update
-    const deadline = `NOW() + INTERVAL '48 hours'`;
-    const { rows: su } = await client.query(`
-      INSERT INTO stock_updates (marketer_id, pickup_date, deadline, status)
-      VALUES ($1, NOW(), ${deadline}, 'pending') RETURNING id
-    `, [marketerId]);
-    const stockId = su[0].id;
+    // 3) insert stock_update (48h deadline)
+    const { rows: suRows } = await client.query(
+      `
+      INSERT INTO stock_updates
+        (marketer_id, pickup_date, deadline, status)
+      VALUES
+        ($1, NOW(), NOW() + INTERVAL '48 hours', 'pending')
+      RETURNING id
+      `,
+      [marketerId]
+    );
+    const stockId = suRows[0].id;
 
     // 4) insert pickup_items and reserve inventory
     for (let { product_id, quantity } of lines) {
-      await client.query(`
+      // record how many of this product in pickup_items
+      await client.query(
+        `
         INSERT INTO pickup_items (stock_update_id, product_id, quantity)
-        VALUES ($1,$2,$3)
-      `, [stockId, product_id, quantity]);
+        VALUES ($1, $2, $3)
+        `,
+        [stockId, product_id, quantity]
+      );
 
-      // reserve each unit
-      const { rows: items } = await client.query(`
-        SELECT id FROM inventory_items
-         WHERE product_id=$1 AND status='available'
-         LIMIT $2 FOR UPDATE SKIP LOCKED
-      `, [product_id, quantity]);
+      // reserve exactly “quantity” available inventory_ids
+      const { rows: items } = await client.query(
+        `
+        SELECT id
+          FROM inventory_items
+         WHERE product_id = $1
+           AND status     = 'available'
+         LIMIT $2
+         FOR UPDATE SKIP LOCKED
+        `,
+        [product_id, quantity]
+      );
       const ids = items.map(r => r.id);
-      await client.query(`
+
+      await client.query(
+        `
         UPDATE inventory_items
-           SET status='reserved', stock_update_id=$1
+           SET status          = 'reserved',
+               stock_update_id = $1
          WHERE id = ANY($2::int[])
-      `, [stockId, ids]);
+        `,
+        [stockId, ids]
+      );
     }
 
     await client.query('COMMIT');
-    res.status(201).json({ message: "Bulk pickup recorded", stock_update_id: stockId });
+    res.status(201).json({
+      message: "Bulk pickup recorded",
+      stock_update_id: stockId
+    });
   } catch (err) {
     await client.query('ROLLBACK');
     next(err);
@@ -1218,6 +1274,7 @@ async function createBulkPickup(req, res, next) {
     client.release();
   }
 }
+
 module.exports = {
   listStockPickupDealers,
   listStockProductsByDealer,
