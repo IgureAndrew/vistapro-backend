@@ -13,6 +13,41 @@ const {
 const { verifyToken } = require('../middlewares/authMiddleware');
 
 const router = express.Router();
+// ─── POST /api/profit-report/unlock ─────────────────────────────────────────
+router.post('/unlock', (req, res, next) => {
+  try {
+    // 1) Read the expected access code from environment
+    const expected = process.env.PROFIT_REPORT_ACCESS_CODE;
+    if (!expected) {
+      // If it’s not set, nobody can ever unlock
+      return res
+        .status(500)
+        .json({ message: 'Access code is not configured.' });
+    }
+
+    // 2) Extract the submitted code from req.body
+    const { code } = req.body;
+    if (typeof code !== 'string') {
+      return res
+        .status(400)
+        .json({ message: 'Missing access code in request.' });
+    }
+
+    // 3) Compare
+    if (code === expected) {
+      // Matches → unlock successful
+      return res.json({ ok: true });
+    }
+
+    // Otherwise → unauthorized
+    return res
+      .status(401)
+      .json({ message: 'Invalid access code.' });
+  } catch (err) {
+    next(err);
+  }
+});
+
 
 // apply auth to *all* profit-report endpoints
 router.use(verifyToken);
@@ -116,5 +151,7 @@ router.get('/daily-summary', async (req, res, next) => {
     next(err);
   }
 });
+
+
 
 module.exports = router;
