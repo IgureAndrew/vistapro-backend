@@ -101,6 +101,14 @@ router.get(
   wc.getMyWallet
 )
 
+router.post(
+  '/super-admin/withdraw',
+  verifyToken,
+  verifyRole(['SuperAdmin']),
+  wc.requestWithdrawal
+)
+
+
 // ─── Admin endpoints ───────────────────────────────────────────
 router.get(
   '/admin/my',                   // GET /api/wallets/admin/my
