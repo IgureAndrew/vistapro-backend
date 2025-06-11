@@ -790,31 +790,29 @@ async function manualRelease(userUniqueId, reviewerUid) {
   }
 }
 
-// 3) Reject (clear) all withheld for a single user
+// 3) Reject (clear) all withheld for a single user—but do NOT touch the balance
 async function manualReject(userUniqueId, reviewerUid) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const { rows:[w] } = await client.query(`
-      SELECT withheld_balance FROM wallets
+
+    // 1) Lock and read current withheld_balance
+    const { rows: [w] } = await client.query(`
+      SELECT withheld_balance::bigint AS withheld
+        FROM wallets
        WHERE user_unique_id = $1
        FOR UPDATE
     `, [userUniqueId]);
-    const amt = Number(w?.withheld_balance || 0);
+
+    const amt = Number(w?.withheld || 0);
     if (amt <= 0) {
       await client.query('ROLLBACK');
       return { rejected: 0 };
     }
 
-    // a) zero out withheld_balance
-    await client.query(`
-      UPDATE wallets
-         SET withheld_balance  = 0,
-             updated_at        = NOW()
-       WHERE user_unique_id = $1
-    `, [userUniqueId]);
+    // 2) **No UPDATE on wallets** → leave withheld_balance intact
 
-    // b) record a reject transaction
+    // 3) Record a reject transaction in the ledger
     await client.query(`
       INSERT INTO wallet_transactions
         (user_unique_id, amount, transaction_type, meta, created_at)
@@ -831,8 +829,6 @@ async function manualReject(userUniqueId, reviewerUid) {
     client.release();
   }
 }
-
-
 
 module.exports = {
   ensureWallet,
