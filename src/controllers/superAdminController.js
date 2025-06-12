@@ -192,47 +192,35 @@ async function listHierarchy(req, res, next) {
     const superId = saRows[0].id;
 
     const sql = `
-  SELECT
-    o.id,
-    o.bnpl_platform       AS "bnplPlatform",
-    o.number_of_devices   AS "qty",
-    o.sold_amount         AS "soldAmount",
-    o.sale_date           AS "saleDate",
-    o.status,
-    m.unique_id           AS "marketerUniqueId",
-    m.first_name || ' ' || m.last_name 
-                          AS "marketerName",
-    a.unique_id           AS "adminUniqueId",
-    a.first_name || ' ' || a.last_name 
-                          AS "adminName",
-    p.device_name         AS "deviceName",
-    p.device_model        AS "deviceModel",
-    p.device_type         AS "deviceType",
-    COALESCE(
-      ARRAY_AGG(ii.imei ORDER BY ii.id)
-        FILTER (WHERE ii.imei IS NOT NULL),
-      ARRAY[]::text[]
-    )                     AS "imeis"
-  FROM orders o
-  JOIN users m
-    ON m.id = o.marketer_id
-  JOIN users a
-    ON a.id = m.admin_id
-   AND a.super_admin_id = $1
-  LEFT JOIN products p
-    ON p.id = o.product_id
-  LEFT JOIN order_items oi
-    ON oi.order_id = o.id
-  LEFT JOIN inventory_items ii
-    ON ii.id = oi.inventory_item_id
-  GROUP BY
-    o.id, m.unique_id, m.first_name, m.last_name,
-    a.unique_id, a.first_name, a.last_name,
-    p.device_name, p.device_model, p.device_type
-  ORDER BY o.sale_date DESC
-`;
-const { rows } = await pool.query(sql, [superId]);
-res.json({ orders: rows });
+      SELECT
+        a.unique_id           AS "adminUniqueId",
+        a.first_name          AS "firstName",
+        a.last_name           AS "lastName",
+        a.email,
+        COALESCE(m.marketers, '[]') AS "marketers"
+      FROM users a
+      LEFT JOIN (
+        SELECT
+          admin_id,
+          json_agg(
+            json_build_object(
+              'uniqueId', u.unique_id,
+              'firstName', u.first_name,
+              'lastName', u.last_name,
+              'email', u.email
+            )
+          ) AS marketers
+        FROM users u
+        WHERE u.role = 'Marketer'
+        GROUP BY u.admin_id
+      ) m ON m.admin_id = a.id
+      WHERE a.role = 'Admin'
+        AND a.super_admin_id = $1
+      ORDER BY a.first_name, a.last_name
+    `;
+
+    const { rows } = await pool.query(sql, [superId]);
+    res.json({ admins: rows });
 
   } catch (err) {
     next(err);
@@ -245,12 +233,10 @@ res.json({ orders: rows });
  */
 async function getOrderHistoryForSuperAdmin(req, res, next) {
   try {
-    // 1) Only SuperAdmins may use this
     if (req.user.role !== 'SuperAdmin') {
       return res.status(403).json({ message: 'Forbidden' });
     }
 
-    // 2) Find the numeric ID of this SuperAdmin
     const superUid = req.user.unique_id;
     const { rows: saRows } = await pool.query(
       `SELECT id FROM users WHERE unique_id = $1 AND role = 'SuperAdmin'`,
@@ -261,31 +247,35 @@ async function getOrderHistoryForSuperAdmin(req, res, next) {
     }
     const superId = saRows[0].id;
 
-    // 3) Grab all orders where the marketer’s admin → super_admin_id = this superId
     const { rows } = await pool.query(`
       SELECT
-        o.id,
-        o.bnpl_platform,
-        o.number_of_devices        AS qty,
-        o.sold_amount,
-        o.sale_date,
-        o.status,
+        o.id                                    AS "id",
+        o.bnpl_platform                        AS "bnplPlatform",
+        o.number_of_devices                    AS "qty",
+        o.sold_amount                          AS "soldAmount",
+        o.sale_date                            AS "saleDate",
+        o.status                               AS "status",
+
         -- Marketer info
-        m.unique_id               AS marketerUniqueId,
-        m.first_name || ' ' || m.last_name AS marketerName,
+        m.unique_id                            AS "marketerUniqueId",
+        m.first_name || ' ' || m.last_name     AS "marketerName",
+
         -- Admin info
-        a.unique_id               AS adminUniqueId,
-        a.first_name || ' ' || a.last_name AS adminName,
-        -- Product info (assuming always confirmed here)
-        p.device_name,
-        p.device_model,
-        p.device_type,
+        a.unique_id                            AS "adminUniqueId",
+        a.first_name || ' ' || a.last_name     AS "adminName",
+
+        -- Product info
+        p.device_name                          AS "deviceName",
+        p.device_model                         AS "deviceModel",
+        p.device_type                          AS "deviceType",
+
         -- IMEIs they entered
         COALESCE(
           ARRAY_AGG(ii.imei ORDER BY ii.id)
             FILTER (WHERE ii.imei IS NOT NULL),
           ARRAY[]::text[]
-        ) AS imeis
+        )                                      AS "imeis"
+
       FROM orders o
       JOIN users m
         ON m.id = o.marketer_id
@@ -298,10 +288,24 @@ async function getOrderHistoryForSuperAdmin(req, res, next) {
         ON oi.order_id = o.id
       LEFT JOIN inventory_items ii
         ON ii.id = oi.inventory_item_id
+
       GROUP BY
-        o.id, m.unique_id, m.first_name, m.last_name,
-        a.unique_id, a.first_name, a.last_name,
-        p.device_name, p.device_model, p.device_type
+        o.id,
+        o.bnpl_platform,
+        o.number_of_devices,
+        o.sold_amount,
+        o.sale_date,
+        o.status,
+        m.unique_id,
+        m.first_name,
+        m.last_name,
+        a.unique_id,
+        a.first_name,
+        a.last_name,
+        p.device_name,
+        p.device_model,
+        p.device_type
+
       ORDER BY o.sale_date DESC
     `, [superId]);
 
