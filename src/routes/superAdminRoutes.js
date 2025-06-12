@@ -10,6 +10,7 @@ const {
   getAccountSettings,
   updateAccountSettings,
    listHierarchy,
+   getOrderHistoryForSuperAdmin,
   registerAdmin
 } = require('../controllers/superAdminController');
 
@@ -65,5 +66,12 @@ router.get(
   verifyToken,
   verifyRole(['SuperAdmin']),
   listHierarchy
+);
+
+router.get(
+  '/orders/history',
+  verifyToken,
+  verifyRole(['SuperAdmin']),
+  getOrderHistoryForSuperAdmin
 );
 module.exports = router;

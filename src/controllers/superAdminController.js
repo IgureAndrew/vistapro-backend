@@ -227,9 +227,82 @@ async function listHierarchy(req, res, next) {
   }
 }
 
+/**
+ * GET /api/super-admin/orders/history
+ * Returns all orders (any status) placed by marketers who roll up under this SuperAdmin.
+ */
+async function getOrderHistoryForSuperAdmin(req, res, next) {
+  try {
+    // 1) Only SuperAdmins may use this
+    if (req.user.role !== 'SuperAdmin') {
+      return res.status(403).json({ message: 'Forbidden' });
+    }
+
+    // 2) Find the numeric ID of this SuperAdmin
+    const superUid = req.user.unique_id;
+    const { rows: saRows } = await pool.query(
+      `SELECT id FROM users WHERE unique_id = $1 AND role = 'SuperAdmin'`,
+      [superUid]
+    );
+    if (!saRows.length) {
+      return res.status(404).json({ message: 'SuperAdmin not found.' });
+    }
+    const superId = saRows[0].id;
+
+    // 3) Grab all orders where the marketer’s admin → super_admin_id = this superId
+    const { rows } = await pool.query(`
+      SELECT
+        o.id,
+        o.bnpl_platform,
+        o.number_of_devices        AS qty,
+        o.sold_amount,
+        o.sale_date,
+        o.status,
+        -- Marketer info
+        m.unique_id               AS marketerUniqueId,
+        m.first_name || ' ' || m.last_name AS marketerName,
+        -- Admin info
+        a.unique_id               AS adminUniqueId,
+        a.first_name || ' ' || a.last_name AS adminName,
+        -- Product info (assuming always confirmed here)
+        p.device_name,
+        p.device_model,
+        p.device_type,
+        -- IMEIs they entered
+        COALESCE(
+          ARRAY_AGG(ii.imei ORDER BY ii.id)
+            FILTER (WHERE ii.imei IS NOT NULL),
+          ARRAY[]::text[]
+        ) AS imeis
+      FROM orders o
+      JOIN users m
+        ON m.id = o.marketer_id
+      JOIN users a
+        ON a.id = m.admin_id
+       AND a.super_admin_id = $1
+      LEFT JOIN products p
+        ON p.id = o.product_id
+      LEFT JOIN order_items oi
+        ON oi.order_id = o.id
+      LEFT JOIN inventory_items ii
+        ON ii.id = oi.inventory_item_id
+      GROUP BY
+        o.id, m.unique_id, m.first_name, m.last_name,
+        a.unique_id, a.first_name, a.last_name,
+        p.device_name, p.device_model, p.device_type
+      ORDER BY o.sale_date DESC
+    `, [superId]);
+
+    res.json({ orders: rows });
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   getAccountSettings,
   updateAccountSettings,
   registerAdmin,
   listHierarchy,
+  getOrderHistoryForSuperAdmin,
 };
