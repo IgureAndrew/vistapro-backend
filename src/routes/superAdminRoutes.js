@@ -9,6 +9,7 @@ const { verifyRole }     = require('../middlewares/roleMiddleware');
 const {
   getAccountSettings,
   updateAccountSettings,
+   listHierarchy,
   registerAdmin
 } = require('../controllers/superAdminController');
 
@@ -58,4 +59,11 @@ router.post(
   registerAdmin
 );
 
+// **New hierarchy route**:
+router.get(
+  '/hierarchy',
+  verifyToken,
+  verifyRole(['SuperAdmin']),
+  listHierarchy
+);
 module.exports = router;

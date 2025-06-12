@@ -168,8 +168,68 @@ const registerAdmin = async (req, res, next) => {
   }
 };
 
+
+/**
+ * GET /api/super-admin/hierarchy
+ * Returns this SuperAdmin’s Admins and, for each Admin, their assigned Marketers.
+ */
+async function listHierarchy(req, res, next) {
+  try {
+    // ensure only SuperAdmins can hit this
+    if (req.user.role !== 'SuperAdmin') {
+      return res.status(403).json({ message: 'Forbidden' });
+    }
+
+    const superUid = req.user.unique_id;
+    // grab their internal numeric ID
+    const { rows: saRows } = await pool.query(
+      `SELECT id FROM users WHERE unique_id = $1 AND role = 'SuperAdmin'`,
+      [superUid]
+    );
+    if (!saRows.length) {
+      return res.status(404).json({ message: 'SuperAdmin not found.' });
+    }
+    const superId = saRows[0].id;
+
+    const sql = `
+      SELECT
+        a.unique_id           AS "adminUniqueId",
+        a.first_name          AS "firstName",
+        a.last_name           AS "lastName",
+        a.email,
+        COALESCE(m.marketers, '[]') AS "marketers"
+      FROM users a
+      LEFT JOIN (
+        SELECT
+          admin_id,
+          json_agg(
+            json_build_object(
+              'uniqueId', u.unique_id,
+              'firstName', u.first_name,
+              'lastName', u.last_name,
+              'email', u.email
+            )
+          ) AS marketers
+        FROM users u
+        WHERE u.role = 'Marketer'
+        GROUP BY u.admin_id
+      ) m ON m.admin_id = a.id
+      WHERE a.role = 'Admin'
+        AND a.super_admin_id = $1
+      ORDER BY a.first_name, a.last_name
+    `;
+
+    const { rows } = await pool.query(sql, [superId]);
+    res.json({ admins: rows });
+
+  } catch (err) {
+    next(err);
+  }
+}
+
 module.exports = {
   getAccountSettings,
   updateAccountSettings,
   registerAdmin,
+  listHierarchy,
 };

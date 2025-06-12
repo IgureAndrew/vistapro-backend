@@ -29,7 +29,6 @@ const {
   listMarketersByAdmin,
   getAllAssignments,
   listAdminsBySuperAdmin,
-  listAdminsWithMarketers,
   getTotalUsers,
   getStats,
   getRecentActivity,
@@ -134,13 +133,7 @@ router.get(
   getAllDealers
 );
 
-// --- SuperAdmin: list its Admins and each Admin’s Marketers ---
-router.get(
-  '/superadmin/hierarchy',
-  verifyToken,
-  verifyRole(['SuperAdmin']),
-  listAdminsWithMarketers
-);
+
 
 // --- Global error handler ---
 router.use((err, req, res, next) => {
