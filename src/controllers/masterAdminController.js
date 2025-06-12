@@ -923,6 +923,70 @@ async function getRecentActivity(req, res, next) {
   }
 }
 
+/**
+ * listAdminsWithMarketers - For a SuperAdmin, list its Admins
+ * and for each Admin include the array of assigned Marketers.
+ */
+const listAdminsWithMarketers = async (req, res, next) => {
+  try {
+    // Only SuperAdmins are allowed
+    if (req.user.role !== 'SuperAdmin') {
+      return res.status(403).json({ message: 'Only a SuperAdmin can view this.' });
+    }
+
+    const superAdminUniqueId = req.user.unique_id;
+
+    // First, ensure this SuperAdmin exists
+    const { rowCount: saCount } = await pool.query(
+      `SELECT 1 FROM users WHERE unique_id = $1 AND role = 'SuperAdmin'`,
+      [superAdminUniqueId]
+    );
+    if (!saCount) {
+      return res.status(404).json({ message: 'SuperAdmin not found.' });
+    }
+
+    // Fetch each Admin plus a JSON array of their Marketers
+    const sql = `
+      SELECT
+        a.unique_id            AS admin_unique_id,
+        a.first_name,
+        a.last_name,
+        a.email,
+        a.location,
+        COALESCE(m.marketers, '[]') AS marketers
+      FROM users a
+      /* left-join a subquery that groups marketers by their admin_id */
+      LEFT JOIN (
+        SELECT
+          admin_id,
+          json_agg(
+            json_build_object(
+              'unique_id', u.unique_id,
+              'first_name', u.first_name,
+              'last_name', u.last_name,
+              'email', u.email,
+              'location', u.location
+            )
+          ) AS marketers
+        FROM users u
+        WHERE u.role = 'Marketer'
+        GROUP BY u.admin_id
+      ) m ON m.admin_id = a.id
+      WHERE a.role = 'Admin'
+        AND a.super_admin_id = (
+          SELECT id FROM users WHERE unique_id = $1
+        )
+      ORDER BY a.first_name, a.last_name
+    `;
+
+    const { rows } = await pool.query(sql, [superAdminUniqueId]);
+
+    return res.status(200).json({ admins: rows });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   registerMasterAdmin,
   registerSuperAdmin,
@@ -941,6 +1005,7 @@ module.exports = {
   unassignAdminsFromSuperadmin,
   listMarketersByAdmin,
   listAdminsBySuperAdmin,
+  listAdminsWithMarketers,
   getAllAssignments,
   getAllDealers,
   getTotalUsers,
