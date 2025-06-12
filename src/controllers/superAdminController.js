@@ -227,10 +227,6 @@ async function listHierarchy(req, res, next) {
   }
 }
 
-/**
- * GET /api/super-admin/orders/history
- * Returns all orders (any status) placed by marketers who roll up under this SuperAdmin.
- */
 async function getOrderHistoryForSuperAdmin(req, res, next) {
   try {
     if (req.user.role !== 'SuperAdmin') {
@@ -264,10 +260,10 @@ async function getOrderHistoryForSuperAdmin(req, res, next) {
         a.unique_id                            AS "adminUniqueId",
         a.first_name || ' ' || a.last_name     AS "adminName",
 
-        -- Product info
-        p.device_name                          AS "deviceName",
-        p.device_model                         AS "deviceModel",
-        p.device_type                          AS "deviceType",
+        -- Product info with fallback for stock pickups
+        COALESCE(p1.device_name, p2.device_name)   AS "deviceName",
+        COALESCE(p1.device_model, p2.device_model) AS "deviceModel",
+        COALESCE(p1.device_type, p2.device_type)   AS "deviceType",
 
         -- IMEIs they entered
         COALESCE(
@@ -277,13 +273,25 @@ async function getOrderHistoryForSuperAdmin(req, res, next) {
         )                                      AS "imeis"
 
       FROM orders o
+
+      -- only include marketers under this SuperAdmin’s admins
       JOIN users m
         ON m.id = o.marketer_id
       JOIN users a
         ON a.id = m.admin_id
        AND a.super_admin_id = $1
-      LEFT JOIN products p
-        ON p.id = o.product_id
+
+      -- first try the confirmed product
+      LEFT JOIN products p1
+        ON p1.id = o.product_id
+
+      -- then fall back to the stock_update’s product
+      LEFT JOIN stock_updates su
+        ON su.id = o.stock_update_id
+      LEFT JOIN products p2
+        ON p2.id = su.product_id
+
+      -- gather any IMEIs recorded at order time
       LEFT JOIN order_items oi
         ON oi.order_id = o.id
       LEFT JOIN inventory_items ii
@@ -302,9 +310,12 @@ async function getOrderHistoryForSuperAdmin(req, res, next) {
         a.unique_id,
         a.first_name,
         a.last_name,
-        p.device_name,
-        p.device_model,
-        p.device_type
+        p1.device_name,
+        p1.device_model,
+        p1.device_type,
+        p2.device_name,
+        p2.device_model,
+        p2.device_type
 
       ORDER BY o.sale_date DESC
     `, [superId]);
