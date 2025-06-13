@@ -488,44 +488,60 @@ async function getWalletsForAdmin(adminUid) {
 async function createWithdrawalRequest(userId, amount, { account_name, account_number, bank_name }) {
   await ensureWallet(userId);
 
-  const fee       = WITHDRAWAL_FEE;            // 100
-  const totalCost = amount + fee;
+  // ─── 0) Enforce one‐per‐month for Admins & SuperAdmins ─────────────────────────
+  const { rows: [userRow] } = await pool.query(
+    `SELECT role FROM users WHERE unique_id = $1`,
+    [userId]
+  );
+  const role = userRow?.role;
+  if (role === 'Admin' || role === 'SuperAdmin') {
+    const { rows: [recent] } = await pool.query(`
+      SELECT COUNT(*)::int AS cnt
+        FROM withdrawal_requests
+       WHERE user_unique_id = $1
+         AND requested_at >= date_trunc('month', now())
+    `, [userId]);
 
-  // open a transaction
-  const client = await pool.connect();
+    if (recent.cnt > 0) {
+      const err = new Error(`${role}s may only make one withdrawal request per month.`);
+      err.status = 429;  // Too Many Requests
+      throw err;
+    }
+  }
+
+  // ─── 1) Proceed with normal withdrawal flow ───────────────────────────────────
+  const fee       = WITHDRAWAL_FEE;
+  const totalCost = amount + fee;
+  const client    = await pool.connect();
+
   try {
     await client.query('BEGIN');
 
-    // lock the wallet row
+    // a) lock & check available_balance
     const { rows: [w] } = await client.query(
-      `SELECT available_balance
-         FROM wallets
-        WHERE user_unique_id = $1
-        FOR UPDATE`,
+      `SELECT available_balance FROM wallets WHERE user_unique_id = $1 FOR UPDATE`,
       [userId]
     );
     const avail = Number(w?.available_balance || 0);
-
     if (avail < totalCost) {
-      throw Object.assign(
-        new Error(`Insufficient funds: ₦${avail.toLocaleString()}, tried ₦${amount.toLocaleString()} + ₦${fee}`),
-        { status: 400 }
-      );
+      const insuff = new Error(`Insufficient funds: ₦${avail.toLocaleString()}`);
+      insuff.status = 400;
+      throw insuff;
     }
 
-    // insert request
+    // b) insert the withdrawal request
     const { rows: [request] } = await client.query(
       `INSERT INTO withdrawal_requests
-         ( user_unique_id, amount_requested, fee, net_amount,
-           account_name, account_number, bank_name,
-           status, requested_at )
+         (user_unique_id, amount_requested, fee, net_amount,
+          account_name, account_number, bank_name,
+          status, requested_at)
        VALUES
          ($1, $2, $3, $4, $5, $6, $7, 'pending', NOW())
        RETURNING *;`,
-      [ userId, amount, fee, amount, account_name, account_number, bank_name ]
+      [userId, amount, fee, amount, account_name, account_number, bank_name]
     );
 
-    // deduct
+    // c) deduct the total (amount + fee) from available_balance
     await client.query(
       `UPDATE wallets
           SET available_balance = available_balance - $2,
@@ -536,6 +552,7 @@ async function createWithdrawalRequest(userId, amount, { account_name, account_n
 
     await client.query('COMMIT');
     return request;
+
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
@@ -543,6 +560,7 @@ async function createWithdrawalRequest(userId, amount, { account_name, account_n
     client.release();
   }
 }
+
 
 // ─── Return sum of all fees collected:
 //   - today
