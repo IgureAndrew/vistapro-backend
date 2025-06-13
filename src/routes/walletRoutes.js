@@ -108,7 +108,12 @@ router.post(
   wc.requestWithdrawal
 )
 
-
+router.get(
+  '/super-admin/withdrawals',    // GET  /api/wallets/super-admin/withdrawals
+  verifyToken,
+  verifyRole(['SuperAdmin']),
+  wc.getMyWithdrawals
+)
 // ─── Admin endpoints ───────────────────────────────────────────
 router.get(
   '/admin/my',                   // GET /api/wallets/admin/my
@@ -127,6 +132,13 @@ router.post(
   verifyToken,
   verifyRole(['Admin']),
   wc.requestWithdrawal
+)
+
+router.get(
+  '/admin/withdrawals',          // GET  /api/wallets/admin/withdrawals
+  verifyToken,
+  verifyRole(['Admin']),
+  wc.getMyWithdrawals
 )
 
 // ─── Common endpoints ──────────────────────────────────────────
