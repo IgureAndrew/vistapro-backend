@@ -814,23 +814,29 @@ async function manualReject(userUniqueId, reviewerUid) {
   try {
     await client.query('BEGIN');
 
-    // 1) Lock and read current withheld_balance
+    // 1) Lock and read the amount that was released
     const { rows: [w] } = await client.query(`
-      SELECT withheld_balance::bigint AS withheld
-        FROM wallets
-       WHERE user_unique_id = $1
-       FOR UPDATE
+      SELECT withheld_balance_before_release  -- you'll need to store this before zeroing in manualRelease
+      FROM wallets
+      WHERE user_unique_id = $1
+      FOR UPDATE
     `, [userUniqueId]);
-
-    const amt = Number(w?.withheld || 0);
+    const amt = Number(w?.withheld_balance_before_release || 0);
     if (amt <= 0) {
       await client.query('ROLLBACK');
       return { rejected: 0 };
     }
 
-    // 2) **No UPDATE on wallets** → leave withheld_balance intact
+    // 2) Put it back: subtract from available, add back to withheld
+    await client.query(`
+      UPDATE wallets
+         SET available_balance = available_balance - $2,
+             withheld_balance  = withheld_balance  + $2,
+             updated_at        = NOW()
+       WHERE user_unique_id = $1
+    `, [userUniqueId, amt]);
 
-    // 3) Record a reject transaction in the ledger
+    // 3) Log the rejection
     await client.query(`
       INSERT INTO wallet_transactions
         (user_unique_id, amount, transaction_type, meta, created_at)
