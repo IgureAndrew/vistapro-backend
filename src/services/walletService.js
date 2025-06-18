@@ -809,30 +809,32 @@ async function manualRelease(userUniqueId, reviewerUid) {
 }
 
 // 3) Reject (clear) all withheld for a single user—but do NOT touch the balance
+// 3) Reject (undo) a withheld‐release by returning funds to withheld only
 async function manualReject(userUniqueId, reviewerUid) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
-    // 1) Lock and read the amount that was released
-    const { rows: [w] } = await client.query(`
-      SELECT withheld_balance_before_release  -- you'll need to store this before zeroing in manualRelease
-      FROM wallets
-      WHERE user_unique_id = $1
-      FOR UPDATE
+    // 1) Find how much was released last time
+    const { rows: [tx] } = await client.query(`
+      SELECT amount
+        FROM wallet_transactions
+       WHERE user_unique_id   = $1
+         AND transaction_type = 'withheld_release'
+       ORDER BY created_at DESC
+       LIMIT 1
     `, [userUniqueId]);
-    const amt = Number(w?.withheld_balance_before_release || 0);
+    const amt = Number(tx?.amount || 0);
     if (amt <= 0) {
       await client.query('ROLLBACK');
       return { rejected: 0 };
     }
 
-    // 2) Put it back: subtract from available, add back to withheld
+    // 2) **Only** restore it into withheld_balance
     await client.query(`
       UPDATE wallets
-         SET available_balance = available_balance - $2,
-             withheld_balance  = withheld_balance  + $2,
-             updated_at        = NOW()
+         SET withheld_balance = withheld_balance + $2,
+             updated_at       = NOW()
        WHERE user_unique_id = $1
     `, [userUniqueId, amt]);
 
@@ -853,6 +855,7 @@ async function manualReject(userUniqueId, reviewerUid) {
     client.release();
   }
 }
+
 
 module.exports = {
   ensureWallet,
